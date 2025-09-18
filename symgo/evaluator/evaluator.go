@@ -72,6 +72,8 @@ type Evaluator struct {
 	step     int
 	maxSteps int
 
+	// memoize enables or disables function analysis memoization.
+	memoize bool
 	// analysisMemo tracks functions that have already been analyzed to avoid redundant work.
 	analysisMemo map[*object.Function]bool
 }
@@ -101,6 +103,13 @@ type Option func(*Evaluator)
 func WithMaxSteps(n int) Option {
 	return func(e *Evaluator) {
 		e.maxSteps = n
+	}
+}
+
+// WithMemoization enables or disables function analysis memoization.
+func WithMemoization(enabled bool) Option {
+	return func(e *Evaluator) {
+		e.memoize = enabled
 	}
 }
 
@@ -3265,13 +3274,15 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	case *object.Function:
 		// Memoization: Check if this function has already been fully analyzed.
-		if e.analysisMemo[fn] {
-			e.logc(ctx, slog.LevelDebug, "skipping already analyzed function (memoized)", "function", name)
-			// Return a placeholder so the caller knows a function was called, but avoid re-evaluating the body.
-			return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "memoized function call"}}
+		if e.memoize {
+			if e.analysisMemo[fn] {
+				e.logc(ctx, slog.LevelDebug, "skipping already analyzed function (memoized)", "function", name)
+				// Return a placeholder so the caller knows a function was called, but avoid re-evaluating the body.
+				return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "memoized function call"}}
+			}
+			// Mark as analyzed before proceeding.
+			e.analysisMemo[fn] = true
 		}
-		// Mark as analyzed before proceeding.
-		e.analysisMemo[fn] = true
 
 		// If the function has no body, it's a declaration (e.g., in an interface, or an external function).
 		// Treat it as an external call and create a symbolic result based on its signature.

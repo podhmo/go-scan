@@ -8,7 +8,7 @@ import (
 	"github.com/podhmo/go-scan/symgo"
 )
 
-func TestMemoization_SkipsReanalysisOfSharedFunctions(t *testing.T) {
+func TestMemoization_IsConfigurableAndWorksAsExpected(t *testing.T) {
 	ctx := context.Background()
 	source := `
 package main
@@ -16,7 +16,6 @@ package main
 func internal() {}
 
 // Shared is called by two different functions.
-// Due to memoization, its body should only be evaluated once.
 func Shared() {
 	internal()
 }
@@ -31,61 +30,58 @@ func CallerB() {
 	Shared()
 }
 `
-	f, s := scantest.NewScanned(t, "main", source)
+	runTest := func(t *testing.T, memoize bool) int {
+		f, s := scantest.NewScanned(t, "main", source)
 
-	// Create a single interpreter instance to be used for all analyses.
-	// This simulates how find-orphans uses the interpreter.
-	interp, err := symgo.New(s.Scanner)
-	if err != nil {
-		t.Fatalf("failed to create interpreter: %+v", err)
+		var interpOpts []symgo.Option
+		// Only enable memoization if the test case requires it.
+		if memoize {
+			interpOpts = append(interpOpts, symgo.WithMemoization(true))
+		}
+
+		interp, err := symgo.New(s.Scanner, interpOpts...)
+		if err != nil {
+			t.Fatalf("failed to create interpreter: %+v", err)
+		}
+
+		internalExecutionCount := 0
+		interp.RegisterIntrinsic("example.com/main.internal", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+			internalExecutionCount++
+			return nil
+		})
+
+		if _, err := interp.Eval(ctx, f.File, f.PackageInfo); err != nil {
+			t.Fatalf("failed to eval package: %+v", err)
+		}
+
+		mainPkg := f.PackageInfo
+		if mainPkg == nil {
+			t.Fatal("main package info is nil")
+		}
+
+		// Analyze both callers
+		callerA, _ := interp.FindObjectInPackage(ctx, "example.com/main", "CallerA")
+		interp.Apply(ctx, callerA, nil, mainPkg)
+
+		callerB, _ := interp.FindObjectInPackage(ctx, "example.com/main", "CallerB")
+		interp.Apply(ctx, callerB, nil, mainPkg)
+
+		return internalExecutionCount
 	}
 
-	// We'll track how many times the `internal` function (called by `Shared`)
-	// is executed by registering an intrinsic.
-	internalExecutionCount := 0
-	interp.RegisterIntrinsic("example.com/main.internal", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		internalExecutionCount++
-		return nil
+	t.Run("memoization disabled (default)", func(t *testing.T) {
+		count := runTest(t, false)
+		// Without memoization, Shared() is evaluated twice, so internal() is called twice.
+		if count != 2 {
+			t.Errorf("expected internal() to be executed 2 times, but was %d", count)
+		}
 	})
 
-	// Load the package into the interpreter's context.
-	// This populates the environment with function definitions.
-	if _, err := interp.Eval(ctx, f.File, f.PackageInfo); err != nil {
-		t.Fatalf("failed to eval package: %+v", err)
-	}
-
-	mainPkg := f.PackageInfo
-	if mainPkg == nil {
-		t.Fatal("main package info is nil")
-	}
-
-	// 1. Analyze the first caller. This should trigger the analysis of Shared and, subsequently, internal.
-	callerA, ok := interp.FindObjectInPackage(ctx, "example.com/main", "CallerA")
-	if !ok {
-		t.Fatal("could not find CallerA")
-	}
-	if _, err := interp.Apply(ctx, callerA, nil, mainPkg); err != nil {
-		t.Fatalf("error applying CallerA: %+v", err)
-	}
-
-	// After the first analysis, the internal function should have been executed once.
-	if internalExecutionCount != 1 {
-		t.Errorf("after analyzing CallerA, expected internal() to be executed once, but was %d", internalExecutionCount)
-	}
-
-	// 2. Analyze the second caller.
-	callerB, ok := interp.FindObjectInPackage(ctx, "example.com/main", "CallerB")
-	if !ok {
-		t.Fatal("could not find CallerB")
-	}
-	if _, err := interp.Apply(ctx, callerB, nil, mainPkg); err != nil {
-		t.Fatalf("error applying CallerB: %+v", err)
-	}
-
-	// 3. Assert that the internal function was NOT executed again.
-	// The call to `applyFunction(Shared)` should have been memoized, preventing its body
-	// from being re-evaluated and the call to `internal()` from being re-traced.
-	if internalExecutionCount != 1 {
-		t.Errorf("after analyzing CallerB, expected internalExecutionCount to remain 1 due to memoization, but it was %d", internalExecutionCount)
-	}
+	t.Run("memoization enabled", func(t *testing.T) {
+		count := runTest(t, true)
+		// With memoization, the second call to Shared() is skipped, so internal() is only called once.
+		if count != 1 {
+			t.Errorf("expected internal() to be executed 1 time, but was %d", count)
+		}
+	})
 }

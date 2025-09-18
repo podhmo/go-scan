@@ -56,6 +56,7 @@ type Interpreter struct {
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
 	maxSteps                   int
+	memoize                    bool
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -105,6 +106,16 @@ func WithScanPolicy(policy object.ScanPolicyFunc) Option {
 func WithMaxSteps(n int) Option {
 	return func(i *Interpreter) {
 		i.maxSteps = n
+	}
+}
+
+// WithMemoization enables or disables function analysis memoization.
+// Memoization can significantly speed up analysis for tools like find-orphans
+// but may be unsuitable for tools that rely on re-evaluating functions with
+// different arguments to get concrete return values. It is disabled by default.
+func WithMemoization(enabled bool) Option {
+	return func(i *Interpreter) {
+		i.memoize = enabled
 	}
 }
 
@@ -179,6 +190,7 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	if i.maxSteps > 0 {
 		evalOpts = append(evalOpts, evaluator.WithMaxSteps(i.maxSteps))
 	}
+	evalOpts = append(evalOpts, evaluator.WithMemoization(i.memoize))
 	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, evalOpts...)
 
 	// Register default intrinsics

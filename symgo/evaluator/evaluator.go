@@ -52,6 +52,8 @@ type Evaluator struct {
 	// evaluationInProgress tracks nodes that are currently being evaluated
 	// to detect and prevent infinite recursion.
 	evaluationInProgress map[ast.Node]bool
+	evaluatingMu         sync.Mutex
+	evaluating           map[string]bool
 
 	// calledInterfaceMethods tracks all method calls on interface types.
 	// The key is the fully qualified method name (e.g., "io.Writer.Write"),
@@ -176,6 +178,8 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		files:                  make([]*FileScope, 0),
 		fileMap:                make(map[string]bool),
 		evaluationInProgress:   make(map[ast.Node]bool),
+		evaluating:             make(map[string]bool),
+		evaluatingMu:           sync.Mutex{},
 		calledInterfaceMethods: make(map[string][]object.Object),
 		seenPackages:           make(map[string]*goscan.Package),
 		UniverseEnv:            universeEnv,
@@ -1229,6 +1233,21 @@ func (e *Evaluator) convertGoConstant(ctx context.Context, val constant.Value, p
 }
 
 func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.Package, error) {
+	e.evaluatingMu.Lock()
+	if e.evaluating[path] {
+		e.evaluatingMu.Unlock()
+		e.logc(ctx, slog.LevelError, "recursion detected: already evaluating package", "path", path)
+		return nil, fmt.Errorf("infinite recursion detected in package loading: %s", path)
+	}
+	e.evaluating[path] = true
+	e.evaluatingMu.Unlock()
+
+	defer func() {
+		e.evaluatingMu.Lock()
+		delete(e.evaluating, path)
+		e.evaluatingMu.Unlock()
+	}()
+
 	e.logc(ctx, slog.LevelDebug, "getOrLoadPackage: requesting package", "path", path)
 	if pkg, ok := e.pkgCache[path]; ok {
 		e.logc(ctx, slog.LevelDebug, "getOrLoadPackage: found in cache", "path", path, "scanned", pkg.ScannedInfo != nil)

@@ -73,104 +73,40 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Architecture Refinements**: Major refactoring to improve analysis scope management and error handling. Introduced explicit analysis scopes with `WithPrimaryAnalysisScope` and `WithSymbolicDependencyScope`, enhanced type information for unresolved types, and improved resolver error handling for better robustness.
 - **Advanced Analysis and Tool Enhancements**: Implemented comprehensive enhancements including structured logging with source stack traces, automatic workspace detection with `go.work` support, advanced interface method call analysis, multi-module workspace support with unified analysis, enhanced reporting capabilities (JSON output), and wildcard pattern support for improved package discovery.
 - **`symgo`: Bounded Recursion**: The symbolic execution engine now uses a bounded recursion strategy to prevent analysis from hanging on deeply recursive functions. The evaluator now halts analysis of a recursive call path after one level, making its behavior consistent with the existing "unroll-once" strategy for loops and improving overall robustness. ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
-
+- **`symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))**
+- **Refactor `symgo` tests with `symgotest`**
+- **Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))**
+- **Fix `symgo` Symbol Collision Bug**
+- **`symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))**
+- **symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))**
+- **`symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))**
+- **`symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))**
+- **`symgo`: Improve Robustness and Reduce Configuration**
+    - [x] **Phase 1: Graceful Handling of Unresolved Types**
+        - [x] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
+        - [x] **Verification:** Confirm `invalid indirect` errors are gone after running `find-orphans`.
+        - [x] **Task 1.2: Fix `selector on unresolved type` error:** Modify `evalSelectorExpr` to return a `SymbolicPlaceholder` for unresolved types.
+        - [x] **Verification:** Confirm `selector on unresolved type` errors are gone after running `find-orphans`.
+    - [x] **Phase 2: Graceful Handling of Operations on Symbolic Values**
+        - [x] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
+        - [x] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
+        - [x] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
+        - [x] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
+    - [x] **Phase 3: Internal Interpreter Fixes**
+        - [x] **Task 3.1: Fix `identifier not found` error:** The `symgo` evaluator now correctly pre-declares named return variables in a function's scope, and the parameter binding logic in `extendFunctionEnv` was refactored to be more robust, fixing errors where they were reported as "identifier not found".
+        - [x] **Verification:** Confirmed `identifier not found` errors are gone after running `find-orphans`.
+    - [x] **Phase 4: Final Validation**
+        - [x] **Task 4.1: Final Verification:** Run `find-orphans` and confirm zero "ERROR" messages in the log and no regressions in the output.
+    - **`symgo`: Robustness Fixes**
+        - [x] **Fix `selector on unresolved type` error:** The evaluator no longer errors when encountering a selector on a raw `*object.UnresolvedType`. It now returns a symbolic placeholder, allowing analysis to continue.
+        - [x] **Fix `undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Instance`) after failing to find a method, allowing for correct field access resolution.
+        - [x] **`undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Pointer`) after failing to find a method, allowing for correct field access resolution.
 
 ## To Be Implemented
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
-- [x] **Core Runner**: Implement the main `symgotest.Run` function to handle test setup, execution, and result reporting.
-- [x] **Step Limiting**: Add `WithMaxSteps` option and integrate step-counting into the `symgo` evaluator to prevent infinite loops.
-- [x] **Execution Tracer**: Implement a tracer to capture evaluation steps and report them on test failure.
-- [x] **Convenience Wrappers**: Add `RunExpression` and `RunStatements` for easier testing of code snippets.
-- [x] **Advanced Options**: Implement `WithTimeout`, `WithScanPolicy`, and `WithIntrinsic` options.
-
-### Refactor `symgo` tests with `symgotest`
-- [x] `symgo/symgo_test.go`
-- [x] `symgo/symgo_const_test.go`
-- [x] `symgo/symgo_scope_test.go`
-- [x] `symgo/symgo_anonymous_type_test.go`
-- [x] `symgo/symgo_extramodule_test.go`
-- [x] `symgo/symgo_intramodule_test.go`
-- **Additional Files Refactored**
-  - [x] `symgo/symgo_array_type_test.go`
-  - [x] `symgo/symgo_assignment_test.go`
-  - [x] `symgo/symgo_external_type_test.go`
-  - [x] `symgo/symgo_extrapackage_test.go`
-  - [x] `symgo/symgo_generics_test.go`
-  - [x] `symgo/symgo_index_assignment_test.go`
-  - [x] `symgo/symgo_interface_binding_test.go`
-  - [x] `symgo/symgo_map_type_test.go`
-  - [x] `symgo/symgo_mismatch_import_test.go`
-  - [x] `symgo/symgo_nested_block_test.go`
-  - [x] `symgo/symgo_recursion_test.go`
-  - [x] `symgo/symgo_sliceselect_test.go`
-  - [x] `symgo/symgo_unexported_const_test.go`
-  - [x] `symgo/symgo_unresolved_kind_test.go`
-  - [x] `symgo/symgo_variable_test.go`
-  - [x] `symgo/features_test.go`
-  - [x] `symgo/symbolic_features_test.go`
-  - [x] `symgo/symgo_stacktrace_test.go`
-  - [x] `symgo/symgo_tracer_test.go`
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
 
-### Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))
-- [x] Implement the full fix as detailed in the continuation document, starting from a clean state.
-
-### Fix `symgo` Symbol Collision Bug 
-- [x] Complete the fix for the symbol collision bug in the `symgo` evaluator and resolve all test regressions.
-
-### `symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))
-- [x] The `isImplementer` function in `evaluator.go` now correctly handles Go's method set rules for both value and pointer receivers.
-- [x] The `resolver.ResolveFunction` method now correctly populates the receiver when creating function objects for methods. A caching layer was added to the interpreter to ensure object identity for functions, fixing recursion detection issues. `TestInterfaceResolution` and its variants now pass.
-- [x] `TestInterfaceBinding` now passes, confirming that manual interface-to-concrete-type bindings are resolved correctly.
-- [x] `TestEval_InterfaceMethodCall_AcrossControlFlow` now passes. The evaluator correctly accumulates possible concrete types for an interface variable across different control-flow branches.
-- [x] `TestDefaultIntrinsic_InterfaceMethodCall` now passes. The test was validated and no regression was found.
-- [x] `TestInterfaceResolution` is now order-independent. The test has been refactored to run its validation logic against all 6 permutations of package discovery order, confirming the `Finalize` mechanism is robust.
-
-### symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))
-- [x] Evaluate package-level var declarations in `ensurePackageEnvPopulated` to fix "identifier not found" errors for unexported symbols.
-- [x] Fix regressions caused by the lazy-evaluation implementation. The core regressions related to variable evaluation, pointer dispatch, and recursion detection have been resolved.
-- [x] Verified that 'formatCode' is no longer reported as an orphan by `find-orphans`.
-
 ### `symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))
-- [x] **Fix Regressions**: Addressed `e2e` test failures in `find-orphans` by generalizing the handling of unresolved functions and fixing an infinite recursion bug.
-- [x] **Trace calls in `for` loop conditions**: Enhance `evalForStmt` to evaluate the `Cond` expression (without using its result for branching) to trace function calls, similar to how `if` conditions are handled. This would improve call graph completeness.
-- [x] **Handle Multi-Return from Unscannable Packages**: The evaluator now correctly handles assignments from multi-return functions from packages outside the scan policy. It infers the number of return values from the left-hand side of the assignment and creates an appropriate number of symbolic placeholders, preventing incorrect warnings. ([docs/trouble-symgo.md](./docs/trouble-symgo.md))
-- [x] **Fix Division-by-Zero Panic**: Made the constant integer evaluator robust against division by zero, returning a symbolic placeholder instead of panicking.
-- [x] **Handle Additional Integer Operators**: The evaluator now recognizes additional integer operators (`%`, `<<`, `>>`, `&`, `|`, `^`) and returns a symbolic placeholder, preventing crashes when analyzing code that uses them.
-- [x] **Fix AST Node Handling**: Added support for `*ast.StarExpr` as an assignment target and handled `*ast.ExprStmt` in type switches, resolving several panics in the `find-orphans` tool.
-- [x] **Propagate `context.Context`**: Replaced `context.Background()` with `ctx` arguments throughout the `symgo` package and its sub-packages to enable proper context propagation and cancellation. This also involved updating several function signatures to accept a `context.Context`.
 - [ ] **DX: Add Timeout Flag to `find-orphans`**: Add a `--timeout` flag to the `find-orphans` CLI for easier debugging.
-- [x] **`symgo`: Embedded Interface Resolution**: The scanner and symbolic execution engine now correctly handle embedded interfaces. The scanner preserves the embedding structure, and the evaluator resolves the full method set at runtime, enabling correct implementation checks and method call resolution for interfaces that embed others.
-- [x] **Resilient Interface Method Resolution**: The evaluator no longer errors when encountering a method call on an interface that is not part of its statically known method set. Instead, it creates a synthetic placeholder for the method, allowing analysis to continue. This makes the engine more robust when analyzing code that depends on packages outside the primary analysis scope.
-- [x] **Cache Synthetic Interface Methods**: Optimized the creation of synthetic methods for interfaces. When a method is called on an interface that is not in its definition, the synthetic method is now created only once and cached within the evaluator, improving performance for repeated calls.
-- [x] **Support `fallthrough` in `switch` statements**: The evaluator now correctly handles the `fallthrough` keyword in `switch` statements, allowing analysis to proceed to the next case clause as expected.
-
-### `symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))
-- [x] **Design & Analysis**: Investigated policy bypasses in the evaluator and created a design document with impact analysis to enforce stricter policy adherence.
-- [x] **Implementation**: Implemented the coordinated fix in the evaluator and resolver to replace policy bypasses with policy-enforcing methods and correct placeholder handling.
-- [x] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
-- [x] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.
-
-### `symgo`: Improve Robustness and Reduce Configuration
-- [ ] **Phase 1: Graceful Handling of Unresolved Types**
-    - [x] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
-    - [ ] **Verification:** Confirm `invalid indirect` errors are gone after running `find-orphans`.
-    - [ ] **Task 1.2: Fix `selector on unresolved type` error:** Modify `evalSelectorExpr` to return a `SymbolicPlaceholder` for unresolved types.
-    - [ ] **Verification:** Confirm `selector on unresolved type` errors are gone after running `find-orphans`.
-- [ ] **Phase 2: Graceful Handling of Operations on Symbolic Values**
-    - [x] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
-    - [ ] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
-    - [x] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
-    - [ ] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
-- [x] **Phase 3: Internal Interpreter Fixes**
-    - [x] **Task 3.1: Fix `identifier not found` error:** The `symgo` evaluator now correctly pre-declares named return variables in a function's scope, fixing errors where they were reported as "identifier not found" when used before being explicitly assigned.
-    - [x] **Verification:** Confirmed `identifier not found` errors are gone after running `find-orphans`.
-- [ ] **Phase 4: Final Validation**
-    - [ ] **Task 4.1: Final Verification:** Run `find-orphans` and confirm zero "ERROR" messages in the log and no regressions in the output.
-- **`symgo`: Robustness Fixes**
-    - [x] **Fix `selector on unresolved type` error:** The evaluator no longer errors when encountering a selector on a raw `*object.UnresolvedType`. It now returns a symbolic placeholder, allowing analysis to continue.
-    - [x] **Fix `undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Instance`) after failing to find a method, allowing for correct field access resolution.
-    - [ ] undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Pointer`) after failing to find a method, allowing for correct field access resolution.
-    

@@ -3552,103 +3552,96 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		}
 	}
 
-	if fn.Parameters == nil {
-		return env, nil
-	}
-
 	// 3. Bind parameters
-	if fn.Def == nil {
+	if fn.Def != nil {
+		// Bind parameters using the reliable FunctionInfo definition
+		argIndex := 0
+		for i, paramDef := range fn.Def.Parameters {
+			var arg object.Object
+			if argIndex < len(args) {
+				arg = args[argIndex]
+				argIndex++
+			} else {
+				arg = &object.SymbolicPlaceholder{Reason: "symbolic parameter for entry point"}
+			}
+
+			if paramDef.Name != "" && paramDef.Name != "_" {
+				v := &object.Variable{
+					Name:        paramDef.Name,
+					Value:       arg,
+					IsEvaluated: true,
+				}
+
+				// The static type from the function signature is the most reliable source.
+				staticFieldType := paramDef.Type
+				if staticFieldType != nil {
+					staticTypeInfo := e.resolver.ResolveType(ctx, staticFieldType)
+					v.SetFieldType(staticFieldType)
+					v.SetTypeInfo(staticTypeInfo)
+				} else {
+					// Fallback to the dynamic type from the argument.
+					v.SetFieldType(arg.FieldType())
+					v.SetTypeInfo(arg.TypeInfo())
+				}
+
+				// If the argument is NIL and we have static type info, preserve it on the object.
+				if nilObj, ok := arg.(*object.Nil); ok && staticFieldType != nil {
+					nilObj.SetFieldType(v.FieldType())
+					nilObj.SetTypeInfo(v.TypeInfo())
+				}
+				env.SetLocal(paramDef.Name, v)
+			}
+
+			// Handle variadic parameters using the flag on the FunctionInfo.
+			if fn.Def.IsVariadic && i == len(fn.Def.Parameters)-1 {
+				// This is the variadic parameter. The logic here would need to collect remaining args into a slice.
+				// For now, we assume the single variadic argument is handled correctly by the caller providing a slice.
+				// This part of the refactoring is left as a TODO if complex variadic cases fail.
+				break
+			}
+		}
+	} else if fn.Parameters != nil {
 		// Fallback for function literals which don't have a FunctionInfo
 		e.logc(ctx, slog.LevelWarn, "function definition not available in extendFunctionEnv, falling back to AST", "function", fn.Name)
-		if fn.Parameters != nil {
-			argIndex := 0
-			for _, field := range fn.Parameters.List {
-				// Handle variadic parameters indicated by Ellipsis in the AST
-				isVariadic := false
-				if _, ok := field.Type.(*ast.Ellipsis); ok {
-					isVariadic = true
-				}
+		argIndex := 0
+		for _, field := range fn.Parameters.List {
+			// Handle variadic parameters indicated by Ellipsis in the AST
+			isVariadic := false
+			if _, ok := field.Type.(*ast.Ellipsis); ok {
+				isVariadic = true
+			}
 
-				for _, name := range field.Names {
-					if argIndex >= len(args) {
-						break
-					}
-					if name.Name != "_" {
-						var valToBind object.Object
-						if isVariadic {
-							// Collect remaining args into a slice for the variadic parameter
-							sliceElements := args[argIndex:]
-							valToBind = &object.Slice{Elements: sliceElements}
-							// We could try to infer a field type here if needed
-						} else {
-							valToBind = args[argIndex]
-						}
-
-						v := &object.Variable{
-							Name:        name.Name,
-							Value:       valToBind,
-							IsEvaluated: true,
-						}
-						v.SetTypeInfo(valToBind.TypeInfo())
-						v.SetFieldType(valToBind.FieldType())
-						env.SetLocal(name.Name, v)
-					}
-					if !isVariadic {
-						argIndex++
-					}
+			for _, name := range field.Names {
+				if argIndex >= len(args) {
+					break
 				}
-				if isVariadic {
-					break // Variadic parameter is always the last one
+				if name.Name != "_" {
+					var valToBind object.Object
+					if isVariadic {
+						// Collect remaining args into a slice for the variadic parameter
+						sliceElements := args[argIndex:]
+						valToBind = &object.Slice{Elements: sliceElements}
+						// We could try to infer a field type here if needed
+					} else {
+						valToBind = args[argIndex]
+					}
+
+					v := &object.Variable{
+						Name:        name.Name,
+						Value:       valToBind,
+						IsEvaluated: true,
+					}
+					v.SetTypeInfo(valToBind.TypeInfo())
+					v.SetFieldType(valToBind.FieldType())
+					env.SetLocal(name.Name, v)
+				}
+				if !isVariadic {
+					argIndex++
 				}
 			}
-		}
-		return env, nil
-	}
-
-	// Bind parameters using the reliable FunctionInfo definition
-	argIndex := 0
-	for i, paramDef := range fn.Def.Parameters {
-		var arg object.Object
-		if argIndex < len(args) {
-			arg = args[argIndex]
-			argIndex++
-		} else {
-			arg = &object.SymbolicPlaceholder{Reason: "symbolic parameter for entry point"}
-		}
-
-		if paramDef.Name != "" && paramDef.Name != "_" {
-			v := &object.Variable{
-				Name:        paramDef.Name,
-				Value:       arg,
-				IsEvaluated: true,
+			if isVariadic {
+				break // Variadic parameter is always the last one
 			}
-
-			// The static type from the function signature is the most reliable source.
-			staticFieldType := paramDef.Type
-			if staticFieldType != nil {
-				staticTypeInfo := e.resolver.ResolveType(ctx, staticFieldType)
-				v.SetFieldType(staticFieldType)
-				v.SetTypeInfo(staticTypeInfo)
-			} else {
-				// Fallback to the dynamic type from the argument.
-				v.SetFieldType(arg.FieldType())
-				v.SetTypeInfo(arg.TypeInfo())
-			}
-
-			// If the argument is NIL and we have static type info, preserve it on the object.
-			if nilObj, ok := arg.(*object.Nil); ok && staticFieldType != nil {
-				nilObj.SetFieldType(v.FieldType())
-				nilObj.SetTypeInfo(v.TypeInfo())
-			}
-			env.SetLocal(paramDef.Name, v)
-		}
-
-		// Handle variadic parameters using the flag on the FunctionInfo.
-		if fn.Def.IsVariadic && i == len(fn.Def.Parameters)-1 {
-			// This is the variadic parameter. The logic here would need to collect remaining args into a slice.
-			// For now, we assume the single variadic argument is handled correctly by the caller providing a slice.
-			// This part of the refactoring is left as a TODO if complex variadic cases fail.
-			break
 		}
 	}
 

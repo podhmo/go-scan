@@ -95,7 +95,8 @@ func (s *Scanner) getAllInterfaceMethods(ctx context.Context, ifaceType *scanner
 	for _, embeddedField := range ifaceType.Interface.Embedded {
 		embeddedTypeInfo, err := embeddedField.Resolve(ctx)
 		if err != nil {
-			s.Logger.WarnContext(ctx, "could not resolve embedded interface", "type", embeddedField.String(), "error", err)
+			posStr := ifaceType.Fset.Position(ifaceType.Node.Pos()).String()
+			s.Logger.WarnContext(ctx, "could not resolve embedded interface", "type", embeddedField.String(), "error", err, "pos", posStr, "field", embeddedField.Name)
 			continue
 		}
 

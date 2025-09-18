@@ -45,6 +45,89 @@ func main() {
 	symgotest.Run(t, tc, action)
 }
 
+func TestFeature_FieldAccessOnPointerToVariable(t *testing.T) {
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/me\n\ngo 1.21\n",
+			"main.go": `
+package main
+type Data struct {
+	Name string
+}
+var V Data
+var P *Data
+func GetName() string {
+	P = &V
+	return P.Name
+}
+`,
+		},
+		EntryPoint: "example.com/me.GetName",
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
+		}
+		ret, ok := r.ReturnValue.(*object.SymbolicPlaceholder)
+		if !ok {
+			t.Fatalf("expected return value to be *object.SymbolicPlaceholder, but got %T", r.ReturnValue)
+		}
+		if !strings.Contains(ret.Reason, "field access on symbolic value") {
+			t.Errorf("expected reason to contain 'field access on symbolic value', but got %q", ret.Reason)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
+func TestFeature_FieldAccessOnPointerToUnresolvedStruct(t *testing.T) {
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/me\n\ngo 1.21\n",
+			"main.go": `
+package main
+import "example.com/me/ext"
+
+func GetName() string {
+	d := &ext.Data{}
+	return d.Name
+}
+`,
+			"ext/ext.go": `
+package ext
+type Data struct {
+	Name string
+}
+`,
+		},
+		EntryPoint: "example.com/me.GetName",
+		Options: []symgotest.Option{
+			symgotest.WithScanPolicy(func(path string) bool {
+				// We can see our own package, but not the external one.
+				return path == "example.com/me"
+			}),
+		},
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
+		}
+		// The result of GetName is a string, which will be a symbolic placeholder
+		// as it comes from an unresolved field.
+		ret, ok := r.ReturnValue.(*object.SymbolicPlaceholder)
+		if !ok {
+			t.Fatalf("expected return value to be *object.SymbolicPlaceholder, but got %T", r.ReturnValue)
+		}
+		if !strings.Contains(ret.Reason, "field access on symbolic value") {
+			t.Errorf("expected reason to contain 'field access on symbolic value', but got %q", ret.Reason)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
 func TestFeature_CharLiteral(t *testing.T) {
 	tc := symgotest.TestCase{
 		Source: map[string]string{

@@ -902,6 +902,11 @@ func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Objec
 }
 
 func (e *Evaluator) evalNumericUnaryExpression(ctx context.Context, op token.Token, right object.Object) object.Object {
+	// If the operand is a symbolic placeholder, the result is also a symbolic placeholder.
+	if _, ok := right.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of unary operator %s on symbolic value", op)}
+	}
+
 	if right.Type() != object.INTEGER_OBJ {
 		// Allow unary minus on floats and complex numbers later if needed.
 		return e.newError(ctx, token.NoPos, "unary operator %s not supported for type %s", op, right.Type())
@@ -974,6 +979,13 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 				ResolvedTypeInfo: t.ResolvedType,
 			},
 		}
+	}
+
+	// If we are trying to dereference a symbolic placeholder that isn't a pointer,
+	// we shouldn't error out, but return another placeholder. This allows analysis
+	// of incorrect but plausible code paths to continue.
+	if _, ok := val.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("dereference of non-pointer symbolic value %s", val.Inspect())}
 	}
 
 	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)

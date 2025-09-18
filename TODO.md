@@ -155,12 +155,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `symgo`: Improve Robustness and Reduce Configuration
 - [ ] **Phase 1: Graceful Handling of Unresolved Types**
-    - [ ] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
+    - [x] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
     - [ ] **Verification:** Confirm `invalid indirect` errors are gone after running `find-orphans`.
     - [ ] **Task 1.2: Fix `selector on unresolved type` error:** Modify `evalSelectorExpr` to return a `SymbolicPlaceholder` for unresolved types.
     - [ ] **Verification:** Confirm `selector on unresolved type` errors are gone after running `find-orphans`.
 - [ ] **Phase 2: Graceful Handling of Operations on Symbolic Values**
-    - [ ] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
+    - [x] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
     - [ ] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
     - [ ] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
     - [ ] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.

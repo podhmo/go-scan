@@ -1,0 +1,49 @@
+package symgo_test
+
+import (
+	"testing"
+
+	"github.com/podhmo/go-scan/symgotest"
+)
+
+func TestUnresolvedOps(t *testing.T) {
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": `
+module mytest
+go 1.24
+`,
+			"ext/def.go": `
+package ext
+type ExternalType struct {
+	N int
+}
+`,
+			"usecase/usecase.go": `
+package usecase
+import "mytest/ext"
+
+func UseIt(p *ext.ExternalType) {
+	v := *p // dereference a pointer to an unresolved type
+	_ = -v.N // unary minus on a field of the unresolved type
+}
+`,
+		},
+		EntryPoint: "mytest/usecase.UseIt",
+		Options: []symgotest.Option{
+			symgotest.WithScanPolicy(func(path string) bool {
+				// Only scan the usecase package, not the 'ext' package.
+				return path == "mytest/usecase"
+			}),
+		},
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+		// The main check is that the execution completes without panicking or returning an error.
+	}
+
+	symgotest.Run(t, tc, action)
+}

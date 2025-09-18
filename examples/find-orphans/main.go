@@ -172,7 +172,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		if len(moduleDirs) == 0 {
 			return fmt.Errorf("no go.mod files found in workspace root %s", workspace)
 		}
-		slog.DebugContext(ctx, "creating locators for workspace", "count", len(moduleDirs), "modules", moduleDirs)
+		logger.DebugContext(ctx, "creating locators for workspace", "count", len(moduleDirs), "modules", moduleDirs)
 		for _, dir := range moduleDirs {
 			loc, err := locator.New(dir, locatorOpts...)
 			if err != nil {
@@ -194,7 +194,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		locators = append(locators, loc)
 	}
 	for _, loc := range locators {
-		slog.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
+		logger.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
 	}
 
 	// Resolve the target packages for reporting. This is always from the positional args.
@@ -202,7 +202,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	if err != nil {
 		return fmt.Errorf("could not resolve target packages: %w", err)
 	}
-	slog.DebugContext(ctx, "resolved target packages for reporting", "count", len(targetPackages), "packages", keys(targetPackages))
+	logger.DebugContext(ctx, "resolved target packages for reporting", "count", len(targetPackages), "packages", keys(targetPackages))
 
 	// Resolve all packages for scanning (the analysis scope).
 	// This is defined by --primary-analysis-scope if provided, otherwise it's the whole workspace.
@@ -214,12 +214,13 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	if err != nil {
 		return fmt.Errorf("could not resolve scan packages: %w", err)
 	}
-	slog.DebugContext(ctx, "resolved scan packages for analysis", "count", len(scanPackages), "packages", keys(scanPackages))
+	logger.DebugContext(ctx, "resolved scan packages for analysis", "count", len(scanPackages), "packages", keys(scanPackages))
 
 	// Now create the main scanner
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+	scannerOpts = append(scannerOpts, goscan.WithLogger(logger))
 
 	if workspace != "" {
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))

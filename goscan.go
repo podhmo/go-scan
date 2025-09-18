@@ -421,6 +421,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	cfg := &Config{
 		fset:    token.NewFileSet(),
 		overlay: make(scanner.Overlay),
+		Logger:  slog.Default(),
 	}
 
 	s := &Scanner{

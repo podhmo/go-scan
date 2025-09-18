@@ -456,7 +456,6 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interpreterOptions := []symgo.Option{
 		symgo.WithLogger(slog.Default()),
 		symgo.WithPrimaryAnalysisScope(analysisScopePatterns...),
-		symgo.WithMemoization(true), // Enable memoization for performance
 	}
 	if a.scanPolicy != nil {
 		interpreterOptions = append(interpreterOptions, symgo.WithScanPolicy(a.scanPolicy))

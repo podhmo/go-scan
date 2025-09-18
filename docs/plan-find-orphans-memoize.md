@@ -1,45 +1,37 @@
-# Implemented: Memoize `find-orphans` Analysis via a Configurable `symgo` Option
+# Memoization for `find-orphans` Performance
 
-## 1. Problem
+## Background
 
-The `find-orphans` tool, particularly in library mode (`--mode=lib`), analyzes every exported function as a potential entry point. This leads to significant performance overhead when multiple entry points share common internal dependencies. For example, if exported functions `A()` and `B()` both call an internal function `C()`, the original implementation would symbolically execute `C()` twice. This redundancy grows with the number of shared functions and entry points, slowing down the analysis.
+The `find-orphans` tool, when run in library mode (`-mode=lib`), analyzes all exported functions in a package. When analyzing multiple packages that share common internal dependencies (e.g., a common utility package with a factory function like `NewService()`), the tool would re-analyze the same shared functions for each entry point. This redundant analysis caused a significant performance bottleneck.
 
-## 2. Goal
+## Goal
 
-A memoization (caching) mechanism was introduced to avoid re-analyzing functions that have already been symbolically executed within a single run. This significantly improves performance for tools like `find-orphans`.
+Improve the performance of `find-orphans` in library mode by caching the results of function analysis. This will prevent the symbolic execution engine from re-evaluating the same function multiple times within a single run.
 
-This optimization was implemented carefully to avoid breaking other tools (like `docgen`) that might rely on re-evaluating functions to obtain concrete return values.
+## Implementation Details
 
-## 3. Implemented Solution
+The solution was to implement a configurable memoization (caching) layer directly within the `symgo` symbolic execution engine.
 
-The memoization logic was implemented directly within the `symgo` symbolic execution engine as a **configurable, opt-in feature**. This provides the best balance of performance for tools that can use it, and correctness for tools that cannot. By default, memoization is **disabled** to ensure backward compatibility and prevent unexpected behavior in existing tools.
+1.  **Configurable Memoization:** A new option, `symgo.WithMemoization(bool)`, was added to the `symgo.Interpreter`. This allows tools built on `symgo` to opt-in to this behavior. It is disabled by default to avoid unintended side effects in tools that might rely on re-evaluating functions.
 
-### 3.1. Implementation Details
+2.  **Cache Implementation:**
+    *   A new cache, `memoizationCache`, was added to the `symgo/evaluator.Evaluator` struct. The cache is a map of `map[*object.Function]object.Object`.
+    *   The key is a pointer to the `object.Function` being executed. Using the function object's pointer ensures that we are caching based on the specific function definition, not just its name.
+    *   The value is the resulting `object.Object` from the function's execution. This is crucial because it caches the actual return value (e.g., an `*object.Instance` or `*object.SymbolicPlaceholder`), not just a boolean flag indicating that the function was run. This allows subsequent code to correctly interact with the cached return value.
 
-1.  **Made Memoization Configurable in `symgo`**:
-    -   In `symgo/symgo.go`, a new option function, `WithMemoization(enabled bool)`, was added.
-    -   A corresponding `memoize` boolean field was added to the `Interpreter` struct. Its default value is `false`.
-    -   The `NewInterpreter` constructor passes this option down to the underlying `evaluator`.
+3.  **Caching Logic:**
+    *   A wrapper function, `applyFunction`, was introduced in the evaluator.
+    *   When a function is about to be applied, this wrapper first checks if memoization is enabled and if a result for the given `*object.Function` already exists in the cache.
+    *   If a cached result is found, it is returned immediately, and the function's body is not re-evaluated.
+    *   If no result is found, the original function `applyFunctionImpl` is called to execute the function body.
+    *   The result of the execution is then stored in the cache before being returned.
 
-2.  **Implemented Caching in the `symgo` Evaluator**:
-    -   In `symgo/evaluator/evaluator.go`, the `Evaluator` struct was modified to include a `memoize` flag and an `analysisMemo` map (`map[*object.Function]bool`).
-    -   The `New` constructor was updated to accept the `memoize` option and initialize the map.
-    -   The core `applyFunction` method was modified. When the `memoize` flag is `true`, it now checks the `analysisMemo` cache before executing a function's body.
-        -   **Cache Hit**: If the function is in the cache, its execution is skipped, and a placeholder value is returned.
-        -   **Cache Miss**: If the function is not in the cache, it is added to the cache, and execution proceeds normally.
+4.  **Integration with `find-orphans`:** The `find-orphans` tool was updated to enable the `WithMemoization(true)` option when creating its `symgo.Interpreter`.
 
-3.  **Enabled Memoization in `find-orphans`**:
-    -   In `examples/find-orphans/main.go`, the call to `symgo.NewInterpreter` was updated to include `symgo.WithMemoization(true)`, explicitly opting in to the performance improvement.
+## Verification
 
-4.  **Added a Verification Test**:
-    -   A new test file, `symgo/evaluator/evaluator_memo_test.go`, was created.
-    -   This test verifies the configurability of the feature. It runs two sub-tests:
-        -   One with memoization disabled (the default), asserting that a shared internal function is executed multiple times.
-        -   One with memoization enabled, asserting that the same internal function is executed only once.
+A new test, `TestMemoization_WithScantest`, was added in `symgo/evaluator/evaluator_memo_test.go`. This test confirms:
+*   When memoization is **enabled**, a shared factory function called by two different entry points is only executed **once**.
+*   When memoization is **disabled**, the same factory function is executed **twice**.
 
-## 4. Outcome
-
--   A new, optional `WithMemoization` flag is available on the `symgo.Interpreter`.
--   The `find-orphans` tool uses this flag to gain a significant performance improvement.
--   Other tools are unaffected by default, ensuring no breaking changes.
--   The new behavior is verified by a dedicated test.
+This confirms the feature is working as intended and is correctly controlled by the configuration option.

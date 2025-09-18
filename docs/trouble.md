@@ -137,3 +137,27 @@ This procedure allowed `cd` commands to work as expected, and subsequent Go comm
 *   `reset_all()` initializes file content but may not reliably reset the CWD to a clean state (e.g., `/app`).
 *   When encountering issues, explicitly changing the directory to `/app` (the presumed repository root) before performing other operations can potentially mitigate CWD-related problems.
 *   This `cd /app` step might act as a "ritual" or workaround for stabilizing CWD behavior in the Jules environment.
+
+## Test Execution and CWD Confusion
+
+### Issue Description
+
+While implementing a memoization feature in the `symgo` package, a series of confusing test execution behaviors were observed.
+
+1.  Running `go test -v ./...` from what was assumed to be the root directory only executed tests for a single example package (`examples/find-orphans`), not the entire project.
+2.  Attempting to run tests for a specific sub-package with `go test -v ./symgo/...` failed with `lstat ./symgo/: no such file or directory`.
+3.  A user hint suggested checking the present working directory (`pwd`). Running `pwd` revealed the CWD was `/app/examples/find-orphans`, not `/app` as expected. This explained why the test commands were behaving strangely.
+
+This confirms that the CWD can be unexpectedly located in a subdirectory, leading to incorrect test scopes and file path errors.
+
+### Resolution and Best Practices
+
+The issue was resolved by adhering to the procedures outlined in `AGENTS.md` and previous entries in this document.
+
+1.  **Verify CWD**: When `go` or `make` commands fail with file-not-found errors, the first step should always be to run `pwd` to verify the current working directory.
+2.  **Change to Root**: If the CWD is incorrect, use `cd /app` to return to the project root before executing further commands.
+3.  **Use `make` for Canonical Tasks**: `AGENTS.md` specifies that `make test` is the correct command to run the entire test suite. This is more reliable than manually invoking `go test ./...`, which can have its meaning changed by the CWD. Similarly, `make format` should be used for formatting.
+
+### Lesson Learned
+
+The CWD in the `run_in_bash_session` is not guaranteed to be `/app`. All build and test tasks that are intended to be project-wide should be preceded by a `cd /app` or, preferably, be executed via the project's `Makefile` targets (`make test`, `make format`), which are designed to be run from the root. This avoids ambiguity and ensures consistent behavior.

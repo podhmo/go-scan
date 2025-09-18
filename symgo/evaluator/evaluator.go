@@ -72,10 +72,9 @@ type Evaluator struct {
 	step     int
 	maxSteps int
 
-	// memoize enables or disables function analysis memoization.
-	memoize bool
-	// analysisMemo tracks functions that have already been analyzed to avoid redundant work.
-	analysisMemo map[*object.Function]bool
+	// memoization
+	memoize          bool
+	memoizationCache map[*object.Function]object.Object
 }
 
 type callFrame struct {
@@ -106,10 +105,11 @@ func WithMaxSteps(n int) Option {
 	}
 }
 
-// WithMemoization enables or disables function analysis memoization.
-func WithMemoization(enabled bool) Option {
+// WithMemoization enables function analysis memoization.
+func WithMemoization() Option {
 	return func(e *Evaluator) {
-		e.memoize = enabled
+		e.memoize = true
+		e.memoizationCache = make(map[*object.Function]object.Object)
 	}
 }
 
@@ -180,7 +180,8 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		seenPackages:           make(map[string]*goscan.Package),
 		UniverseEnv:            universeEnv,
 		syntheticMethods:       make(map[string]map[string]*scan.MethodInfo),
-		analysisMemo:           make(map[*object.Function]bool),
+		memoize:                false,
+		memoizationCache:       nil,
 	}
 	e.accessor = newAccessor(e)
 
@@ -3153,6 +3154,28 @@ func (v inspectValuer) LogValue() slog.Value {
 }
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
+	if f, ok := fn.(*object.Function); ok {
+		if e.memoize {
+			if cachedResult, found := e.memoizationCache[f]; found {
+				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "function", f.Name)
+				return cachedResult
+			}
+		}
+	}
+
+	result := e.applyFunctionImpl(ctx, fn, args, pkg, callPos)
+
+	if f, ok := fn.(*object.Function); ok {
+		if e.memoize && !isError(result) {
+			e.logc(ctx, slog.LevelDebug, "caching result for function", "function", f.Name)
+			e.memoizationCache[f] = result
+		}
+	}
+
+	return result
+}
+
+func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
 	var name string
 
 	if f, ok := fn.(*object.Function); ok {
@@ -3273,17 +3296,6 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 		return &object.ReturnValue{Value: evaluated}
 
 	case *object.Function:
-		// Memoization: Check if this function has already been fully analyzed.
-		if e.memoize {
-			if e.analysisMemo[fn] {
-				e.logc(ctx, slog.LevelDebug, "skipping already analyzed function (memoized)", "function", name)
-				// Return a placeholder so the caller knows a function was called, but avoid re-evaluating the body.
-				return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "memoized function call"}}
-			}
-			// Mark as analyzed before proceeding.
-			e.analysisMemo[fn] = true
-		}
-
 		// If the function has no body, it's a declaration (e.g., in an interface, or an external function).
 		// Treat it as an external call and create a symbolic result based on its signature.
 		if fn.Body == nil {

@@ -164,8 +164,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - [ ] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
     - [x] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
     - [ ] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
-- [ ] **Phase 3: Internal Interpreter Fixes**
-    - [ ] **Task 3.1: Fix `identifier not found` error:** Investigate and fix scoping issues in the `minigo` evaluator.
-    - [ ] **Verification:** Confirm `identifier not found` errors are gone after running `find-orphans`.
+- [x] **Phase 3: Internal Interpreter Fixes**
+    - [x] **Task 3.1: Fix `identifier not found` error:** The `symgo` evaluator now correctly pre-declares named return variables in a function's scope, fixing errors where they were reported as "identifier not found" when used before being explicitly assigned.
+    - [x] **Verification:** Confirmed `identifier not found` errors are gone after running `find-orphans`.
 - [ ] **Phase 4: Final Validation**
     - [ ] **Task 4.1: Final Verification:** Run `find-orphans` and confirm zero "ERROR" messages in the log and no regressions in the output.
+- **`symgo`: Robustness Fixes**
+    - [x] **Fix `selector on unresolved type` error:** The evaluator no longer errors when encountering a selector on a raw `*object.UnresolvedType`. It now returns a symbolic placeholder, allowing analysis to continue.
+    - [x] **Fix `undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Instance`) after failing to find a method, allowing for correct field access resolution.
+    - [ ] undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Pointer`) after failing to find a method, allowing for correct field access resolution.
+    

@@ -34,12 +34,29 @@ Running `make -C examples/find-orphans` on the codebase revealed several categor
 -   **Analysis:** The `evalIncDecStmt` and `evalBangOperatorExpression` functions did not account for symbolic operands. They would default to concrete behavior instead of preserving the symbolic nature of the value.
 -   **Solution:** Both functions were modified to check if their operand is a `*object.SymbolicPlaceholder`. If so, they now return a new `*object.SymbolicPlaceholder`, ensuring that the "unknown" state of the value is correctly propagated through the analysis.
 
+### Problem 4: `identifier not found` for Named Return Values
+
+-   **Symptom:** The `find-orphans` log produced errors like:
+    `level=ERROR msg="identifier not found: varDecls"`
+-   **Analysis:** This error occurred when `symgo` analyzed a Go function that used named return values. Go automatically declares these named returns as variables within the function's scope. The `symgo` evaluator was not mimicking this behavior. When a named return variable was used as a value (e.g., passed to a function like `append`) before its first explicit assignment, the evaluator could not find it in the environment.
+-   **Solution:** The `extendFunctionEnv` function was modified. It now inspects the function's AST (`*ast.FuncDecl`) for named return parameters. If any are found, it pre-declares them as symbolic variables in the function's environment *before* evaluating the body, correctly mirroring Go's scoping rules.
+
+### Problem 5: `expected a package, instance, or pointer...` on Unresolved Type
+
+-   **Symptom:** The `find-orphans` log showed errors like:
+    `level=ERROR msg="expected a package, instance, or pointer on the left side of selector, but got UNRESOLVED_TYPE"`
+-   **Analysis:** This happened when `symgo` encountered a selector expression (`foo.Bar`) where `foo` resolved to a raw `*object.UnresolvedType` object. This typically occurs when accessing a symbol from a package that is not scanned (e.g., due to the scan policy). The `evalSelectorExpr` function was missing a case to handle this specific type, causing it to fall through to a generic error.
+-   **Solution:** A new case for `*object.UnresolvedType` was added to the `switch` statement in `evalSelectorExpr`. This case now gracefully handles the situation by returning a `*object.SymbolicPlaceholder`, representing the unknown result of the selection, which allows analysis to continue.
+
+### Problem 6: `undefined method` on Field Access
+
+-   **Symptom:** The `find-orphans` log showed errors like:
+    `undefined method: Value on github.com/podhmo/go-scan/minigo.Result`
+-   **Analysis:** When evaluating a selector `foo.Bar`, if `foo` was a symbolic instance (`*object.Instance`), the evaluator would only check for a method named `Bar`. It never checked if `Bar` was a field of the struct.
+-   **Solution:** The `case *object.Instance` block in `evalSelectorExpr` was updated. After failing to find a method, it now proceeds to check for a field with the given name using the existing `accessor.findFieldOnType` helper. This allows correct resolution of both method calls and field access on symbolic struct instances.
+
 ## 3. Validation and Remaining Issues
 
-After implementing these fixes, the `find-orphans` example runs without any `invalid indirect`, `undefined method`, or `unary operator` errors. The evaluator is now significantly more resilient to analyzing code with incomplete type information.
+After implementing these fixes, the `find-orphans` example runs with significantly fewer errors. The evaluator is now much more robust in handling common Go patterns and incomplete type information.
 
-However, the `find-orphans` log still shows some remaining errors, primarily:
--   `identifier not found: varDecls`
--   `expected a package, instance, or pointer on the left side of selector, but got UNRESOLVED_TYPE`
-
-These appear to be separate issues, likely related to the `minigo` interpreter integration or other parts of the `symgo` engine, and are noted for future investigation.
+The primary remaining error seen in the logs is `identifier not found: r`, which appears to be related to the complex handling of **method values** (using a method as a value, e.g., `r.handleConvert`, rather than calling it). This is a more subtle issue in the evaluator's environment and scope management and is noted for future investigation.

@@ -1758,9 +1758,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 				return method
 			}
+			// If not a method, check if it's a field on the struct (including embedded).
+			if typeInfo.Struct != nil {
+				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+					return e.resolver.ResolveSymbolicField(ctx, field, val)
+				}
+			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
 	case *object.Pointer:
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.
@@ -1817,6 +1823,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		return placeholder
 
+	case *object.UnresolvedType:
+		// If we are selecting from an unresolved type, we can't know what the field or method is.
+		// We return a placeholder to allow analysis to continue.
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("selection from unresolved type %s.%s", val.PkgPath, val.TypeName),
+		}
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
@@ -3501,11 +3513,50 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 		}
 	}
 
+	// 2. Bind named return values (if any)
+	// This must be done before binding parameters, in case a parameter has the same name.
+	if fn.Decl != nil && fn.Decl.Type.Results != nil {
+		for _, field := range fn.Decl.Type.Results.List {
+			if len(field.Names) == 0 {
+				continue // Unnamed return value
+			}
+			var importLookup map[string]string
+			if file := fn.Package.Fset.File(field.Pos()); file != nil {
+				if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
+					importLookup = e.scanner.BuildImportLookup(astFile)
+				}
+			}
+
+			fieldType := e.scanner.TypeInfoFromExpr(ctx, field.Type, nil, fn.Package, importLookup)
+			resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+			for _, name := range field.Names {
+				if name.Name == "_" {
+					continue
+				}
+				// The zero value for any type in symbolic execution is a placeholder.
+				// This placeholder carries the type information of the variable.
+				zeroValue := &object.SymbolicPlaceholder{
+					Reason:     "zero value for named return",
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+				}
+				v := &object.Variable{
+					Name:        name.Name,
+					Value:       zeroValue,
+					IsEvaluated: true, // It has its zero value.
+				}
+				v.SetFieldType(fieldType)
+				v.SetTypeInfo(resolvedType)
+				env.SetLocal(name.Name, v)
+			}
+		}
+	}
+
 	if fn.Parameters == nil {
 		return env, nil
 	}
 
-	// 2. Bind parameters
+	// 3. Bind parameters
 	if fn.Def == nil {
 		// Fallback for function literals which don't have a FunctionInfo
 		e.logc(ctx, slog.LevelWarn, "function definition not available in extendFunctionEnv, falling back to AST", "function", fn.Name)

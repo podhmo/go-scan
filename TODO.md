@@ -172,3 +172,5 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Robustness Fixes**
     - [x] **Fix `selector on unresolved type` error:** The evaluator no longer errors when encountering a selector on a raw `*object.UnresolvedType`. It now returns a symbolic placeholder, allowing analysis to continue.
     - [x] **Fix `undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Instance`) after failing to find a method, allowing for correct field access resolution.
+    - [ ] undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Pointer`) after failing to find a method, allowing for correct field access resolution.
+    

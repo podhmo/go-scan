@@ -73,6 +73,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Architecture Refinements**: Major refactoring to improve analysis scope management and error handling. Introduced explicit analysis scopes with `WithPrimaryAnalysisScope` and `WithSymbolicDependencyScope`, enhanced type information for unresolved types, and improved resolver error handling for better robustness.
 - **Advanced Analysis and Tool Enhancements**: Implemented comprehensive enhancements including structured logging with source stack traces, automatic workspace detection with `go.work` support, advanced interface method call analysis, multi-module workspace support with unified analysis, enhanced reporting capabilities (JSON output), and wildcard pattern support for improved package discovery.
 - **`symgo`: Bounded Recursion**: The symbolic execution engine now uses a bounded recursion strategy to prevent analysis from hanging on deeply recursive functions. The evaluator now halts analysis of a recursive call path after one level, making its behavior consistent with the existing "unroll-once" strategy for loops and improving overall robustness. ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
+- **`symgo`: Improve Robustness and Reduce Configuration**: Based on a comprehensive analysis of `find-orphans` logs, the `symgo` evaluator has been made more resilient. It now gracefully handles operations on unresolved or symbolic types by returning placeholders instead of erroring. Key fixes include:
+    - **Selector on Unresolved Type**: The evaluator now correctly checks for struct fields on unresolved types before treating the selector as a method call, fixing a class of bugs where field access would fail.
+    - **Pointer and Variable Evaluation**: The evaluator now correctly propagates type information to lazy global variables and handles pointers to them, ensuring that field access on such pointers resolves correctly.
+    - Added two regression tests to verify these robustness improvements.
+    - The final validation confirmed zero "ERROR" messages in the `find-orphans` log.
 
 
 ## To Be Implemented
@@ -152,25 +157,4 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Implementation**: Implemented the coordinated fix in the evaluator and resolver to replace policy bypasses with policy-enforcing methods and correct placeholder handling.
 - [x] **Test Fixes**: Update failing tests to assert for `SymbolicPlaceholder` or `UnresolvedFunction` instead of concrete values for out-of-policy code.
 - [x] **Test Coverage**: Add a new test to verify that method calls on out-of-policy types are correctly handled as unresolved.
-
-### `symgo`: Improve Robustness and Reduce Configuration
-- [ ] **Phase 1: Graceful Handling of Unresolved Types**
-    - [x] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
-    - [ ] **Verification:** Confirm `invalid indirect` errors are gone after running `find-orphans`.
-    - [ ] **Task 1.2: Fix `selector on unresolved type` error:** Modify `evalSelectorExpr` to return a `SymbolicPlaceholder` for unresolved types.
-    - [ ] **Verification:** Confirm `selector on unresolved type` errors are gone after running `find-orphans`.
-- [ ] **Phase 2: Graceful Handling of Operations on Symbolic Values**
-    - [x] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
-    - [ ] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
-    - [x] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
-    - [ ] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
-- [x] **Phase 3: Internal Interpreter Fixes**
-    - [x] **Task 3.1: Fix `identifier not found` error:** The `symgo` evaluator now correctly pre-declares named return variables in a function's scope, fixing errors where they were reported as "identifier not found" when used before being explicitly assigned.
-    - [x] **Verification:** Confirmed `identifier not found` errors are gone after running `find-orphans`.
-- [ ] **Phase 4: Final Validation**
-    - [ ] **Task 4.1: Final Verification:** Run `find-orphans` and confirm zero "ERROR" messages in the log and no regressions in the output.
-- **`symgo`: Robustness Fixes**
-    - [x] **Fix `selector on unresolved type` error:** The evaluator no longer errors when encountering a selector on a raw `*object.UnresolvedType`. It now returns a symbolic placeholder, allowing analysis to continue.
-    - [x] **Fix `undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Instance`) after failing to find a method, allowing for correct field access resolution.
-    - [ ] undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Pointer`) after failing to find a method, allowing for correct field access resolution.
     

@@ -1758,9 +1758,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 				return method
 			}
+			// If not a method, check if it's a field on the struct (including embedded).
+			if typeInfo.Struct != nil {
+				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+					return e.resolver.ResolveSymbolicField(ctx, field, val)
+				}
+			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method: %s on %s", n.Sel.Name, val.TypeName)
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
 	case *object.Pointer:
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.

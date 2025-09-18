@@ -1,4 +1,56 @@
-# `symgo` Robustness Enhancement Report
+# Issue: `find-orphans` Hangs Due to Infinite Recursion in `symgo`
+
+This document outlines an issue where the `find-orphans` tool hangs, the investigation process, and the proposed solution.
+
+## Problem
+
+When running the `find-orphans` end-to-end test via `make -C examples/find-orphans`, the process times out. Verbose logging reveals that the tool enters an infinite loop, generating a massive amount of repetitive log output.
+
+The issue appears to be an infinite recursion bug within the `symgo` symbolic execution engine, specifically in its package loading and dependency resolution logic.
+
+## Reproduction Steps
+
+1.  Navigate to the repository root.
+2.  Run the `find-orphans` test with a timeout. The command will be terminated.
+    ```bash
+    timeout 5s make -C examples/find-orphans
+    ```
+3.  To observe the infinite logging, run the tool with verbose output and redirect to a file. The command will hang until the pipe is closed (e.g., by `head`).
+    ```bash
+    cd examples/find-orphans
+    go run . -v --workspace-root ../.. ./... 2>&1 | head -c 1000000 > find-orphans-verbose-head.log
+    ```
+
+## Log Analysis
+
+The verbose log file (`find-orphans-verbose-head.log`) is filled with a rapidly repeating sequence of debug messages from the `symgo/evaluator`. The key repeating messages are:
+
+- `getOrLoadPackage: requesting package`
+- `ResolvePackage: checking policy`
+- `ScanPackageByImport CACHE HIT`
+- `ensurePackageEnvPopulated: checking package`
+
+This pattern indicates that the evaluator is continuously trying to load and initialize packages it has already processed. The call stack is not correctly tracking which packages are currently under analysis, leading to a recursive reentry. For example, while analyzing package `A` which imports `B`, the evaluator starts analyzing `B`. If `B` (or a dependency of `B`) in turn imports `A`, the evaluator re-enters the analysis for `A` without realizing it's already in progress, leading to an infinite loop.
+
+The issue seems to be triggered by the complex dependency graph of the entire workspace, with `examples/docgen` and `minigo/evaluator` being prominently featured in the logs before the loop becomes uncontrollable.
+
+## Proposed Solution
+
+The root cause is the lack of a mechanism to detect and prevent re-entrant analysis of the same package within a single evaluation stack.
+
+The proposed solution is to introduce a recursion guard in the `symgo` evaluator. This can be implemented by:
+
+1.  Adding a map to the `symgo.Interpreter` or `evaluator.Evaluator` to track the import paths of packages currently being evaluated in the active call stack.
+2.  Before starting the evaluation of a package, the interpreter will check if the package's import path is already in this tracking map.
+3.  If the path is present, it signifies a recursive entry. The interpreter should immediately stop and return a symbolic placeholder or a specific error, rather than re-evaluating the package.
+4.  If the path is not present, it should be added to the map before evaluation begins.
+5.  Crucially, the path must be removed from the map after its evaluation is complete (either successfully or with an error) to allow other, independent analyses to process it. This is typically done using a `defer` statement.
+
+This change will break the infinite loop and allow the `find-orphans` analysis to complete successfully.
+
+---
+
+# Past Issue: `symgo` Robustness Enhancement Report
 
 This document details the analysis and resolution of several robustness issues within the `symgo` symbolic execution engine. These issues were primarily observed when running the `find-orphans` tool on a complex codebase, which exposed edge cases in `symgo`'s handling of unresolved types and symbolic values.
 

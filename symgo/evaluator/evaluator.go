@@ -52,8 +52,8 @@ type Evaluator struct {
 	// evaluationInProgress tracks nodes that are currently being evaluated
 	// to detect and prevent infinite recursion.
 	evaluationInProgress map[ast.Node]bool
-evaluatingMu         sync.Mutex
-evaluating           map[string]bool
+	evaluatingMu         sync.Mutex
+	evaluating           map[string]bool
 
 	// calledInterfaceMethods tracks all method calls on interface types.
 	// The key is the fully qualified method name (e.g., "io.Writer.Write"),

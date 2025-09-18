@@ -56,7 +56,6 @@ type Interpreter struct {
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
 	maxSteps                   int
-
 }
 
 // Option is a functional option for configuring the Interpreter.

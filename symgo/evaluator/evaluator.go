@@ -1321,6 +1321,7 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 						DeclEnv:     env,
 						DeclPkg:     pkgInfo,
 					}
+					lazyVar.SetFieldType(v.Type) // Set the static type from the declaration
 					env.SetLocal(v.Name, lazyVar)
 					break // Found the right spec, move to the next variable in pkgInfo.Variables
 				}
@@ -1374,6 +1375,15 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
 			return method
 		}
+
+		// If it's not a method, check if it's a field on the struct (including embedded).
+		// This must be done *before* the unresolved check, as an unresolved type can still have field info.
+		if typeInfo.Struct != nil {
+			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
+				return e.resolver.ResolveSymbolicField(ctx, field, val)
+			}
+		}
+
 		if typeInfo.Unresolved {
 			placeholder := &object.SymbolicPlaceholder{
 				Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", sel.Name, typeInfo.Name),
@@ -1394,13 +1404,6 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 				}
 			}
 			return placeholder
-		}
-
-		// If it's not a method, check if it's a field on the struct (including embedded).
-		if typeInfo.Struct != nil {
-			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
-				return e.resolver.ResolveSymbolicField(ctx, field, val)
-			}
 		}
 	}
 
@@ -2743,8 +2746,13 @@ func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *s
 	if v.Initializer == nil {
 		// This is a variable declared without a value, like `var x int`.
 		// Its value is the zero value for its type. For symbolic execution,
-		// we'll represent this with a specific placeholder.
-		v.Value = &object.SymbolicPlaceholder{Reason: "zero value for uninitialized variable"}
+		// we represent this with a specific placeholder that carries the type info.
+		placeholder := &object.SymbolicPlaceholder{Reason: "zero value for uninitialized variable"}
+		if ft := v.FieldType(); ft != nil {
+			placeholder.SetFieldType(ft)
+			placeholder.SetTypeInfo(e.resolver.ResolveType(ctx, ft))
+		}
+		v.Value = placeholder
 		v.IsEvaluated = true
 		return v.Value
 	}

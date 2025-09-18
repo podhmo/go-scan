@@ -74,34 +74,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **Advanced Analysis and Tool Enhancements**: Implemented comprehensive enhancements including structured logging with source stack traces, automatic workspace detection with `go.work` support, advanced interface method call analysis, multi-module workspace support with unified analysis, enhanced reporting capabilities (JSON output), and wildcard pattern support for improved package discovery.
 - **`symgo`: Bounded Recursion**: The symbolic execution engine now uses a bounded recursion strategy to prevent analysis from hanging on deeply recursive functions. The evaluator now halts analysis of a recursive call path after one level, making its behavior consistent with the existing "unroll-once" strategy for loops and improving overall robustness. ([docs/plan-symgo-shallow-recursive.md](./docs/plan-symgo-shallow-recursive.md))
 - **`symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))**
-- **Refactor `symgo` tests with `symgotest`**
-- **Fix `symgo` Error on Pointer Operations with Unresolved Types ([docs/cont-unresolved-type-error.md](./docs/cont-unresolved-type-error.md))**
-- **Fix `symgo` Symbol Collision Bug**
 - **`symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))**
-- **symgo: Fix Cross-Package Unexported Symbol Resolution ([docs/trouble-symgo-nested-scope.md](./docs/trouble-symgo-nested-scope.md))**
 - **`symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))**
 - **`symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))**
-- **`symgo`: Improve Robustness and Reduce Configuration**
-    - [x] **Phase 1: Graceful Handling of Unresolved Types**
-        - [x] **Task 1.1: Fix `invalid indirect` error:** Modify `evalStarExpr` to return a `SymbolicPlaceholder` for unresolved types.
-        - [x] **Verification:** Confirm `invalid indirect` errors are gone after running `find-orphans`.
-        - [x] **Task 1.2: Fix `selector on unresolved type` error:** Modify `evalSelectorExpr` to return a `SymbolicPlaceholder` for unresolved types.
-        - [x] **Verification:** Confirm `selector on unresolved type` errors are gone after running `find-orphans`.
-    - [x] **Phase 2: Graceful Handling of Operations on Symbolic Values**
-        - [x] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
-        - [x] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
-        - [x] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
-        - [x] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
-    - [x] **Phase 3: Internal Interpreter Fixes**
-        - [x] **Task 3.1: Fix `identifier not found` error:** The `symgo` evaluator now correctly pre-declares named return variables in a function's scope, and the parameter binding logic in `extendFunctionEnv` was refactored to be more robust, fixing errors where they were reported as "identifier not found".
-        - [x] **Verification:** Confirmed `identifier not found` errors are gone after running `find-orphans`.
-    - [x] **Phase 4: Final Validation**
-        - [x] **Task 4.1: Final Verification:** Run `find-orphans` and confirm zero "ERROR" messages in the log and no regressions in the output.
-    - **`symgo`: Robustness Fixes**
-        - [x] **Fix `selector on unresolved type` error:** The evaluator no longer errors when encountering a selector on a raw `*object.UnresolvedType`. It now returns a symbolic placeholder, allowing analysis to continue.
-        - [x] **Fix `undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Instance`) after failing to find a method, allowing for correct field access resolution.
-        - [x] **`undefined method` on field access:** The evaluator now correctly checks for fields on symbolic instances (`*object.Pointer`) after failing to find a method, allowing for correct field access resolution.
-
+ 
 ## To Be Implemented
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))

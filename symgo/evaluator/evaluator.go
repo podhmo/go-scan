@@ -415,8 +415,9 @@ func (e *Evaluator) evalIncDecStmt(ctx context.Context, n *ast.IncDecStmt, env *
 	case *object.Integer:
 		newInt = v.Value
 	case *object.SymbolicPlaceholder:
-		// If it's a placeholder, we can treat it as starting from 0.
-		newInt = 0
+		// If it's a placeholder, the result of inc/dec is still a placeholder.
+		// We don't change the variable's value, just acknowledge the operation.
+		return nil
 	default:
 		// For other types, we can't meaningfully inc/dec.
 		return nil
@@ -885,6 +886,11 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 }
 
 func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Object {
+	// If the operand is a symbolic placeholder, the result is also a symbolic placeholder.
+	if _, ok := right.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: "result of ! on symbolic value"}
+	}
+
 	switch right {
 	case object.TRUE:
 		return object.FALSE
@@ -1317,6 +1323,77 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 	e.initializedPkgs[pkgObj.Path] = true
 }
 
+// evalSymbolicSelection centralizes the logic for handling a selector expression (e.g., `x.Field` or `x.Method()`)
+// where `x` is a symbolic placeholder. This is a common case when dealing with values of unresolved types.
+func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.SymbolicPlaceholder, sel *ast.Ident, env *object.Environment, receiver object.Object, receiverPos token.Pos) object.Object {
+	typeInfo := val.TypeInfo()
+	if typeInfo == nil {
+		// If we are calling a method on a placeholder that has no type info (e.g., from an
+		// undefined identifier in an out-of-policy package), we can't resolve the method.
+		// Instead of erroring, we return another placeholder representing the result of the call.
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of call to method %q on typeless placeholder", sel.Name)}
+	}
+	fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+	key := fmt.Sprintf("(*%s).%s", fullTypeName, sel.Name)
+	if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+		self := val
+		fn := func(ctx context.Context, args ...object.Object) object.Object {
+			return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+		}
+		return &object.Intrinsic{Fn: fn}
+	}
+	key = fmt.Sprintf("(%s).%s", fullTypeName, sel.Name)
+	if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+		self := val
+		fn := func(ctx context.Context, args ...object.Object) object.Object {
+			return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+		}
+		return &object.Intrinsic{Fn: fn}
+	}
+
+	// Fallback to searching for the method on the instance's type.
+	if typeInfo := val.TypeInfo(); typeInfo != nil {
+		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
+			return method
+		}
+		if typeInfo.Unresolved {
+			placeholder := &object.SymbolicPlaceholder{
+				Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", sel.Name, typeInfo.Name),
+				Receiver: val,
+			}
+			// Try to find method in interface definition if available
+			if typeInfo.Interface != nil {
+				for _, method := range typeInfo.Interface.Methods {
+					if method.Name == sel.Name {
+						// Convert MethodInfo to a temporary FunctionInfo
+						placeholder.UnderlyingFunc = &scan.FunctionInfo{
+							Name:       method.Name,
+							Parameters: method.Parameters,
+							Results:    method.Results,
+						}
+						break
+					}
+				}
+			}
+			return placeholder
+		}
+
+		// If it's not a method, check if it's a field on the struct (including embedded).
+		if typeInfo.Struct != nil {
+			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
+				return e.resolver.ResolveSymbolicField(ctx, field, val)
+			}
+		}
+	}
+
+	// For symbolic placeholders, don't error - return another placeholder
+	// This allows analysis to continue even when types are unresolved
+	return &object.SymbolicPlaceholder{
+		Reason:   "method or field " + sel.Name + " on symbolic type " + val.Inspect(),
+		Receiver: val,
+	}
+}
+
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
 
@@ -1489,72 +1566,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 	switch val := left.(type) {
 	case *object.SymbolicPlaceholder:
-		typeInfo := val.TypeInfo()
-		if typeInfo == nil {
-			// If we are calling a method on a placeholder that has no type info (e.g., from an
-			// undefined identifier in an out-of-policy package), we can't resolve the method.
-			// Instead of erroring, we return another placeholder representing the result of the call.
-			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of call to method %q on typeless placeholder", n.Sel.Name)}
-		}
-		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
-		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name)
-		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			self := val
-			fn := func(ctx context.Context, args ...object.Object) object.Object {
-				return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
-			}
-			return &object.Intrinsic{Fn: fn}
-		}
-		key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name)
-		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-			self := val
-			fn := func(ctx context.Context, args ...object.Object) object.Object {
-				return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
-			}
-			return &object.Intrinsic{Fn: fn}
-		}
-
-		// Fallback to searching for the method on the instance's type.
-		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
-				return method
-			}
-			if typeInfo.Unresolved {
-				placeholder := &object.SymbolicPlaceholder{
-					Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", n.Sel.Name, typeInfo.Name),
-					Receiver: val,
-				}
-				// Try to find method in interface definition if available
-				if typeInfo.Interface != nil {
-					for _, method := range typeInfo.Interface.Methods {
-						if method.Name == n.Sel.Name {
-							// Convert MethodInfo to a temporary FunctionInfo
-							placeholder.UnderlyingFunc = &scan.FunctionInfo{
-								Name:       method.Name,
-								Parameters: method.Parameters,
-								Results:    method.Results,
-							}
-							break
-						}
-					}
-				}
-				return placeholder
-			}
-
-			// If it's not a method, check if it's a field on the struct (including embedded).
-			if typeInfo.Struct != nil {
-				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-					return e.resolver.ResolveSymbolicField(ctx, field, val)
-				}
-			}
-		}
-
-		// For symbolic placeholders, don't error - return another placeholder
-		// This allows analysis to continue even when types are unresolved
-		return &object.SymbolicPlaceholder{
-			Reason:   "method or field " + n.Sel.Name + " on symbolic type " + val.Inspect(),
-			Receiver: val,
-		}
+		return e.evalSymbolicSelection(ctx, val, n.Sel, env, val, n.X.Pos())
 
 	case *object.Package:
 		e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: left is a package", "package", val.Path, "selector", n.Sel.Name)
@@ -1741,14 +1753,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 					return method
 				}
-			}
-		}
-		if instance, ok := pointee.(*object.Instance); ok {
-			if typeInfo := instance.TypeInfo(); typeInfo != nil {
-				// The receiver for the method call is the pointer itself, not the instance.
-				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
-					return method
-				}
 				// If not a method, check for a field on the underlying struct.
 				if typeInfo.Struct != nil {
 					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
@@ -1757,6 +1761,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 			}
 		}
+
+		// Handle pointers to symbolic placeholders, which can occur with pointers to unresolved types.
+		if sp, ok := pointee.(*object.SymbolicPlaceholder); ok {
+			// The logic for selecting from a symbolic placeholder is already well-defined.
+			// We can simulate calling that logic with the pointee. The receiver for any
+			// method call is the pointer `val`, not the placeholder `sp`.
+			// This is effectively doing `(*p).N` where `*p` is a symbolic value.
+			return e.evalSymbolicSelection(ctx, sp, n.Sel, env, val, n.X.Pos())
+		}
+
 		// If the pointee is not an instance or nothing is found, fall through to the error.
 		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
 

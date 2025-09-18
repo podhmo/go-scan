@@ -47,3 +47,57 @@ func UseIt(p *ext.ExternalType) {
 
 	symgotest.Run(t, tc, action)
 }
+
+func TestUnresolvedOps_Comprehensive(t *testing.T) {
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": `
+module mytest
+go 1.24
+`,
+			"ext/def.go": `
+package ext
+type ExternalType struct {
+	N int
+	B bool
+}
+`,
+			"usecase/usecase.go": `
+package usecase
+import "mytest/ext"
+
+func UseIt(p *ext.ExternalType) {
+	v := *p
+
+	// Test case for binary operator
+	b := v.N > 0
+
+	// Test case for logical NOT operator
+	c := !b
+
+	// Test case for increment operator
+	v.N++
+
+	// Test case for field access on a pointer to a symbolic value
+	ptr := &v
+	_ = ptr.N
+}
+`,
+		},
+		EntryPoint: "mytest/usecase.UseIt",
+		Options: []symgotest.Option{
+			symgotest.WithScanPolicy(func(path string) bool {
+				// Only scan the usecase package, not the 'ext' package.
+				return path == "mytest/usecase"
+			}),
+		},
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}

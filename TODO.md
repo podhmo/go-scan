@@ -162,7 +162,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Phase 2: Graceful Handling of Operations on Symbolic Values**
     - [x] **Task 2.1: Fix `unary operator` error:** Modify `evalNumericUnaryExpression` to handle `SymbolicPlaceholder` operands.
     - [ ] **Verification:** Confirm `unary operator - not supported` errors are gone after running `find-orphans`.
-    - [ ] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
+    - [x] **Task 2.2: Fix `undefined method` error:** Modify `evalSelectorExpr` to return a callable `SymbolicPlaceholder` for methods on symbolic pointers.
     - [ ] **Verification:** Confirm `undefined method or field` errors are gone after running `find-orphans`.
 - [ ] **Phase 3: Internal Interpreter Fixes**
     - [ ] **Task 3.1: Fix `identifier not found` error:** Investigate and fix scoping issues in the `minigo` evaluator.

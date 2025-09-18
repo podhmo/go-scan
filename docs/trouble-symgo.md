@@ -60,3 +60,49 @@ Running `make -C examples/find-orphans` on the codebase revealed several categor
 After implementing these fixes, the `find-orphans` example runs with significantly fewer errors. The evaluator is now much more robust in handling common Go patterns and incomplete type information.
 
 The primary remaining error seen in the logs is `identifier not found: r`, which appears to be related to the complex handling of **method values** (using a method as a value, e.g., `r.handleConvert`, rather than calling it). This is a more subtle issue in the evaluator's environment and scope management and is noted for future investigation.
+
+## 4. `invalid indirect` Error on `*object.ReturnValue`
+
+**Manifestation:**
+
+When running `find-orphans` in library mode (`--mode lib`), the symbolic execution engine logs errors like:
+
+```
+level=ERROR msg="invalid indirect of &instance<...> (type *object.ReturnValue)"
+```
+
+This error occurs in `symgo/evaluator/evaluator.go` within the `evalStarExpr` function, which handles the dereference operator (`*`).
+
+**Analysis:**
+
+The root cause is that the evaluator does not properly unwrap `*object.ReturnValue` objects in all contexts. `*object.ReturnValue` is a wrapper used to propagate return values from function calls up the evaluation stack.
+
+The error occurs when an expression involving a dereference is applied to the result of a function call, for example `*MyFunc()`. The evaluation proceeds as follows:
+1. `MyFunc()` is evaluated, and its result is wrapped in an `*object.ReturnValue`.
+2. The `*` operator is evaluated by `evalStarExpr`.
+3. `evalStarExpr` receives the `*object.ReturnValue` object but fails to "unwrap" it to get the actual value that the function returned.
+4. It then attempts to perform a dereference on the `*object.ReturnValue` wrapper itself, which is not a pointer, leading to the "invalid indirect" error.
+
+This issue is more prevalent in library mode for `find-orphans` because it analyzes many generated functions (like those from the `convert` tool) that may not be perfectly formed or may use patterns that expose this unwrapping weakness.
+
+**Solution:**
+
+The solution is to ensure that `evalStarExpr` correctly unwraps any `*object.ReturnValue` it receives before attempting to process the underlying value. This can be done by adding a check at the beginning of the function:
+
+```go
+func (e *Evaluator) evalStarExpr(...) object.Object {
+    val := e.Eval(ctx, node.X, env, pkg)
+    if isError(val) {
+        return val
+    }
+
+    // ADD THIS FIX: Unwrap the return value if present.
+    if ret, ok := val.(*object.ReturnValue); ok {
+        val = ret.Value
+    }
+
+    // ... rest of the function
+}
+```
+
+This ensures that the rest of the function operates on the actual returned value, not the wrapper, resolving the error.

@@ -952,6 +952,11 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		return val
 	}
 
+	// If the expression is a function call, it might be wrapped in a ReturnValue.
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
+	}
+
 	// First, unwrap any variable to get to the underlying value.
 	if v, ok := val.(*object.Variable); ok {
 		val = v.Value

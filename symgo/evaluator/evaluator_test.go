@@ -127,6 +127,63 @@ var x = 10
 	}
 }
 
+func TestEvalStarExpr_ReturnValueUnwrap(t *testing.T) {
+	source := `
+package main
+
+func getPtr() *int {
+	i := 10
+	return &i
+}
+
+func main() {
+	x := *getPtr()
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		// Before the fix, this would return an "invalid indirect" error.
+		// After the fix, it should complete successfully.
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+		}
+		if ret, ok := result.(*object.ReturnValue); ok {
+			if err, ok := ret.Value.(*object.Error); ok {
+				return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+			}
+		}
+
+		// Success is not returning an error.
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func runTest(t *testing.T, source string, action scantest.ActionFunc) {
 	t.Helper()
 	dir, cleanup := scantest.WriteFiles(t, map[string]string{

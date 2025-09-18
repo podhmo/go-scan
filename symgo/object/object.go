@@ -47,6 +47,7 @@ const (
 	VARIADIC_OBJ              ObjectType = "VARIADIC"
 	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
 	UNRESOLVED_TYPE_OBJ       ObjectType = "UNRESOLVED_TYPE"
+	PANIC_OBJ                 ObjectType = "PANIC"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -863,6 +864,28 @@ func getSourceLine(filename string, lineNum int) (string, error) {
 // for formatting the call stack.
 func (e *Error) AttachFileSet(fset *token.FileSet) {
 	e.fset = fset
+}
+
+// --- PanicError Object ---
+
+// PanicError represents a panic that occurred during symbolic evaluation.
+// It is also a Go error, so it can be returned as one.
+type PanicError struct {
+	BaseObject
+	Value Object // The value passed to panic()
+}
+
+// Type returns the type of the PanicError object.
+func (pe *PanicError) Type() ObjectType { return PANIC_OBJ }
+
+// Inspect returns a string representation of the panic.
+func (pe *PanicError) Inspect() string {
+	return fmt.Sprintf("panic: %s", pe.Value.Inspect())
+}
+
+// Error returns a string representation of the panic, satisfying the error interface.
+func (pe *PanicError) Error() string {
+	return pe.Inspect()
 }
 
 // --- UnresolvedFunction Object ---

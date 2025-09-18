@@ -14,17 +14,8 @@ func BuiltinPanic(ctx context.Context, args ...object.Object) object.Object {
 			Message: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args)),
 		}
 	}
-	// In symbolic execution, we treat panic as an error that stops execution.
-	// The message of the panic is wrapped in an Error object.
-	var msg string
-	if str, ok := args[0].(*object.String); ok {
-		msg = str.Value
-	} else {
-		msg = args[0].Inspect()
-	}
-	return &object.Error{
-		Message: fmt.Sprintf("panic: %s", msg),
-	}
+	// In symbolic execution, we treat panic as a distinct control flow object.
+	return &object.PanicError{Value: args[0]}
 }
 
 // BuiltinMake is the intrinsic function for the built-in `make`.

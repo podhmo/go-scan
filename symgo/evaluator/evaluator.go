@@ -2326,7 +2326,7 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 		}
 
 		switch result.(type) {
-		case *object.ReturnValue, *object.Error, *object.Break, *object.Continue:
+		case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue:
 			return result
 		}
 	}
@@ -3346,8 +3346,10 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		}
 
 		evaluated := e.Eval(ctx, fn.Body, extendedEnv, fn.Package)
-		if isError(evaluated) {
-			return evaluated
+		if evaluated != nil {
+			if isError(evaluated) || evaluated.Type() == object.PANIC_OBJ {
+				return evaluated
+			}
 		}
 
 		evaluatedValue := evaluated

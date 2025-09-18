@@ -70,8 +70,13 @@ func TestRun_MaxStepsExceeded(t *testing.T) {
 		t.Fatalf("expected runLogic to fail, but it succeeded")
 	}
 
-	if !strings.Contains(res.Error.Message, "max execution steps (10) exceeded") {
-		t.Errorf("expected error to contain 'max execution steps (10) exceeded', but got: %v", res.Error)
+	err, ok := res.Error.(*object.Error)
+	if !ok {
+		t.Fatalf("expected error to be of type *object.Error, but got %T", res.Error)
+	}
+
+	if !strings.Contains(err.Message, "max execution steps (10) exceeded") {
+		t.Errorf("expected error to contain 'max execution steps (10) exceeded', but got: %v", err)
 	}
 
 	if res == nil {
@@ -145,8 +150,12 @@ func main() {
 		if r.Error == nil {
 			t.Fatalf("expected an error, but got nil")
 		}
-		if !strings.Contains(r.Error.Message, "this is a forced error") {
-			t.Errorf("expected error message to contain 'this is a forced error', but got %q", r.Error.Message)
+		err, ok := r.Error.(*object.Error)
+		if !ok {
+			t.Fatalf("expected error to be of type *object.Error, but got %T", r.Error)
+		}
+		if !strings.Contains(err.Message, "this is a forced error") {
+			t.Errorf("expected error message to contain 'this is a forced error', but got %q", err.Message)
 		}
 	}
 

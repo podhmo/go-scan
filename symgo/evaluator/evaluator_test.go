@@ -490,29 +490,44 @@ func TestEvalBuiltinFunctions(t *testing.T) {
 		expected interface{}
 	}{
 		{
-			name:     "panic",
-			input:    `panic("test panic")`,
-			expected: "panic: test panic",
+			name:  "panic-string",
+			input: `panic("test panic")`,
+			expected: &object.PanicError{
+				Value: &object.String{Value: "test panic"},
+			},
+		},
+		{
+			name:     "panic-nil",
+			input:    `panic(nil)`,
+			expected: &object.PanicError{Value: object.NIL},
 		},
 	}
 
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			evaluated := testEval(t, tt.input)
+
 			switch expected := tt.expected.(type) {
 			case int:
 				testIntegerObject(t, evaluated, int64(expected))
-			case string:
-				errObj, ok := evaluated.(*object.Error)
+			case *object.PanicError:
+				panicErr, ok := evaluated.(*object.PanicError)
 				if !ok {
-					t.Errorf("object is not Error. got=%T (%+v)", evaluated, evaluated)
-					return
+					t.Fatalf("object is not PanicError. got=%T (%+v)", evaluated, evaluated)
 				}
-				if errObj.Message != expected {
-					t.Errorf("wrong error message. expected=%q, got=%q",
-						expected, errObj.Message)
+				// Compare the panic error manually to avoid issues with unexported fields in cmp.Diff.
+				if panicErr.Type() != expected.Type() {
+					t.Errorf("wrong type. want=%s, got=%s", expected.Type(), panicErr.Type())
+				}
+				if expected.Value.Type() == object.NIL_OBJ {
+					if panicErr.Value.Type() != object.NIL_OBJ {
+						t.Errorf("expected panic value to be NIL, got %s", panicErr.Value.Type())
+					}
+				} else {
+					if diff := cmp.Diff(expected.Value, panicErr.Value); diff != "" {
+						t.Errorf("panic value mismatch (-want +got):\n%s", diff)
+					}
 				}
 			}
 		})

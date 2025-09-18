@@ -175,6 +175,9 @@ func runLogic(t *testing.T, tc TestCase) *Result {
 	if err, ok := rawResult.(*object.Error); ok {
 		res.Error = err
 		res.ReturnValue = nil
+	} else if panicErr, ok := rawResult.(*object.PanicError); ok {
+		res.Error = panicErr
+		res.ReturnValue = nil
 	} else {
 		finalReturnValue := rawResult
 		if ret, ok := rawResult.(*object.ReturnValue); ok {
@@ -293,7 +296,7 @@ type Result struct {
 	Trace *ExecutionTracer
 
 	// Error is any runtime error returned by the interpreter during execution.
-	Error *object.Error
+	Error error
 
 	// Interpreter provides access to the configured interpreter for advanced assertions.
 	Interpreter *symgo.Interpreter

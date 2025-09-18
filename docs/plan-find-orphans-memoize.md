@@ -46,3 +46,13 @@ The implementation will consist of three main steps:
 -   Each function body within the analysis scope will be symbolically executed at most once per `find-orphans` run.
 -   The overall execution time for `find-orphans` in library mode will be significantly reduced.
 -   The change is self-contained within `symgo`, ensuring that any other tools using the `symgo` library can also benefit from this performance improvement.
+
+## 5. Known Limitations & Considerations
+
+The current memoization strategy is optimized for call-graph analysis tools like `find-orphans`, where the primary goal is to discover *if* a function is called, not what its specific return value is on each call.
+
+This approach has a significant trade-off:
+
+-   **Impact on Value-Sensitive Tools**: Tools that rely on the concrete return values from symbolically executed functions may not work as expected. For example, a tool like `docgen` might need to re-evaluate a helper function multiple times with different arguments to generate documentation. Because this memoization prevents the function body from being executed more than once, the tool would only see the result from the very first call.
+
+-   **Configuration**: The memoization is currently unconditional. A potential future enhancement would be to make this feature configurable at the `symgo.Interpreter` level (e.g., via a `WithMemoization(bool)` option). This would allow tools like `find-orphans` to enable it for performance while allowing tools like `docgen` to disable it for correctness.

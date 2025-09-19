@@ -37,9 +37,7 @@ The correct solution is to refactor `scanner/scanner.go` to use a multi-pass sys
 Here is a concrete task list to implement the necessary multi-pass scanner architecture:
 
 1.  **Modify Data Structures for Multi-Pass (`scanner/models.go`)**:
-    *   Modify `ConstantInfo` and `VariableInfo` structs.
-    *   Change the `Type` field from `*FieldType` to `TypeExpr ast.Expr` to temporarily store the type's AST node during the first pass, as it cannot be fully resolved yet.
-    *   Alternatively, add a new `TypeExpr ast.Expr` field and populate the existing `Type *FieldType` field during the second pass.
+    *   Modify `ConstantInfo` and `VariableInfo` structs. Add a `TypeExpr ast.Expr` field to temporarily store the type's AST node during the first pass, as it cannot be fully resolved yet. The existing `Type *FieldType` field will be populated during the second pass.
 
 2.  **Implement Multi-Pass Logic in `scanGoFiles` (`scanner/scanner.go`)**:
     *   **Pass 1: Declarations & Placeholders**: Loop through all declarations in all files of the package.
@@ -47,10 +45,10 @@ Here is a concrete task list to implement the necessary multi-pass scanner archi
         *   Populate `PackageInfo.Types` and `PackageInfo.Functions` with these placeholders. This creates a complete symbol table for the package.
         *   For `const` and `var` declarations, collect their raw AST expressions into the `ConstantInfo`/`VariableInfo` structs without trying to evaluate them.
     *   **Pass 2: Detail Population & Resolution**:
-        *   Iterate through the `TypeInfo` list created in Pass 1. For each `TypeInfo`, now parse its full details (struct fields, interface methods, underlying alias types) by calling `s.fillTypeInfoDetails`.
-        *   Iterate through the `FunctionInfo` list. For each, parse its full signature (parameters, results, receiver) by calling `s.fillFuncInfoDetails`. Because Pass 1 is complete, all type lookups within the same package will now succeed.
+        *   Iterate through the `TypeInfo` list created in Pass 1. For each `TypeInfo`, now parse its full details (struct fields, interface methods, underlying alias types) by calling a new `s.fillTypeInfoDetails` helper.
+        *   Iterate through the `FunctionInfo` list. For each, parse its full signature (parameters, results, receiver) by calling a new `s.fillFuncInfoDetails` helper. Because Pass 1 is complete, all type lookups within the same package will now succeed.
     *   **Pass 3: Constant Evaluation**:
-        *   Iterate through the `ConstantInfo` list and evaluate the constant values. This pass runs after all type information is available, though it may require further refinement to handle typed constants correctly.
+        *   Iterate through the `ConstantInfo` list and evaluate the constant values. This pass runs after all type information is available.
 
 3.  **Fix Unit Test Regressions**:
     *   The architectural change in the scanner will likely break existing unit tests in `goscan_test.go`, `minigo_enum_test.go`, `symgo` tests, etc.
@@ -60,4 +58,14 @@ Here is a concrete task list to implement the necessary multi-pass scanner archi
     *   After all unit tests are passing, run `make -C examples/deriving-all e2e` to confirm that the multi-pass refactoring has fixed the original bug.
     *   Run the full `make test` suite one last time.
 
-This document serves as a record of this investigation and a guide for the necessary future work.
+---
+
+## Appendix: Analysis of `ScanPackage` vs. `ScanPackageByImport`
+
+-   **Shared Logic**: Both `goscan.ScanPackage` and `goscan.ScanPackageByImport` are high-level methods in `goscan.go`. They both ultimately delegate the core work of parsing Go source files to the low-level `scanner.Scanner` instance and its `scanGoFiles` method. Therefore, the proposed multi-pass refactoring inside `scanGoFiles` would fundamentally improve the correctness of the `PackageInfo` objects produced by **both** methods.
+
+-   **Key Differences**: The primary difference lies in their purpose and input:
+    -   `ScanPackage(path string)`: Is intended for scanning a package from a **file system directory path**. Its original implementation was designed for incremental scanning within a single `go-scan` session (respecting `visitedFiles`), but this led to the cache-poisoning problem.
+    -   `ScanPackageByImport(importPath string)`: Is intended for scanning a package from a canonical **Go import path**. This is the more robust and commonly used method. It has more sophisticated caching logic, checking the `packageCache` first before resolving the import path to a directory and scanning.
+
+-   **Impact of Refactoring**: The proposed multi-pass refactoring in `scanner/scanner.go` would make the output of both methods more reliable. Even if `ScanPackage` were to return a partial set of files (its original, buggy behavior), the information for those files would be internally consistent and fully resolved thanks to the multi-pass traversal. `ScanPackageByImport`, which performs a full scan, would simply benefit from the improved correctness. The core bug is not in `goscan.go`'s caching or file selection, but in `scanner.go`'s single-pass AST traversal.

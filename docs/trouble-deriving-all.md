@@ -25,47 +25,35 @@ This hypothesis was formed based on the user's crucial feedback that the input w
 -   **Basis for this hypothesis**: If the input is a single file, the problem must be internal to how that one file is processed. I re-analyzed `scanner/scanner.go` (the low-level scanner) and focused on the `scanGoFiles` function. I observed that it processes the file's declarations (`Decls`) sequentially, in the order they appear in the source code.
 -   **Why the current code cannot handle this**: The `deriving-all` use case involves an interface field (`EventData`). To correctly generate code for this, the scanner must know which structs implement this interface. In `models.go`, the `Event` struct (which *uses* the interface) is defined before the methods (`func (UserCreated) isEventData()`) that actually satisfy the interface.
     Because the current implementation is **single-pass**, when it processes the `Event` struct declaration, it has not yet processed the method declarations that appear later in the file. Therefore, at that moment, the `PackageInfo` object being built is incomplete. Any attempt to resolve the `EventData` interface and find its implementers at this stage is doomed to fail.
--   **Why a refactoring is necessary**: A single-pass scanner is fundamentally unable to solve this problem reliably. The only architecturally sound solution is a **multi-pass approach** within the scanner. My final attempt was to implement this.
 
-## Part 3: Conclusion & Recommended Path Forward
+## Part 3: Recommended Solutions
 
-The root cause of the `deriving-all` bug is an architectural limitation in the low-level scanner (`scanner/scanner.go`). Its single-pass AST traversal cannot robustly handle cases where identifiers are used before they are declared within a single file.
+The root cause of the `deriving-all` bug is an architectural limitation in the low-level scanner (`scanner/scanner.go`). Its single-pass AST traversal cannot robustly handle cases where identifiers are used before they are declared within a single file. Two possible solutions were identified.
 
-The correct solution is to refactor `scanner/scanner.go` to use a multi-pass system. My attempt at this refactoring was incomplete due to the complexity and resulting test regressions, but it remains the correct path forward.
+### Solution A: Multi-Pass Logic in the Low-Level Scanner
 
-### Recommended Task List for Refactoring
-Here is a concrete task list to implement the necessary multi-pass scanner architecture:
+This approach involves refactoring `scanner/scanner.go` to use a multi-pass system. My attempt at this was incomplete due to its complexity, but it remains a valid path.
 
-1.  **Modify Data Structures for Multi-Pass (`scanner/models.go`)**:
-    *   Modify `ConstantInfo` and `VariableInfo` structs. Add a `TypeExpr ast.Expr` field to temporarily store the type's AST node during the first pass, as it cannot be fully resolved yet. The existing `Type *FieldType` field will be populated during the second pass.
+-   **Task 1: Modify Data Structures (`scanner/models.go`)**: Modify `ConstantInfo` and `VariableInfo` to temporarily store `ast.Expr` for their types, as they cannot be fully resolved in the first pass.
+-   **Task 2: Implement Multi-Pass Logic in `scanGoFiles` (`scanner/scanner.go`)**:
+    -   **Pass 1 (Declarations):** Loop through all declarations to create placeholder `TypeInfo` and `FunctionInfo` objects. This populates a complete symbol table in `PackageInfo`.
+    -   **Pass 2 (Details & Resolution):** Iterate through the collected symbols and call helper functions (`fillTypeInfoDetails`, `fillFuncInfoDetails`) to parse the full details (fields, signatures, etc.), using the complete symbol table for resolution.
+-   **Task 3: Fix Regressions**: The architectural change will break existing unit tests, which will need to be updated.
+-   **Task 4: Final Verification**: Run all tests, including the `deriving-all` e2e test.
 
-2.  **Implement Multi-Pass Logic in `scanGoFiles` (`scanner/scanner.go`)**:
-    *   **Pass 1: Declarations & Placeholders**: Loop through all declarations in all files of the package.
-        *   For `type` and `func` declarations, create basic, placeholder `TypeInfo` and `FunctionInfo` objects (containing just name, path, etc.). Do not resolve details like struct fields or function signatures yet.
-        *   Populate `PackageInfo.Types` and `PackageInfo.Functions` with these placeholders. This creates a complete symbol table for the package.
-        *   For `const` and `var` declarations, collect their raw AST expressions into the `ConstantInfo`/`VariableInfo` structs without trying to evaluate them.
-    *   **Pass 2: Detail Population & Resolution**:
-        *   Iterate through the `TypeInfo` list created in Pass 1. For each `TypeInfo`, now parse its full details (struct fields, interface methods, underlying alias types) by calling a new `s.fillTypeInfoDetails` helper.
-        *   Iterate through the `FunctionInfo` list. For each, parse its full signature (parameters, results, receiver) by calling a new `s.fillFuncInfoDetails` helper. Because Pass 1 is complete, all type lookups within the same package will now succeed.
-    *   **Pass 3: Constant Evaluation**:
-        *   Iterate through the `ConstantInfo` list and evaluate the constant values. This pass runs after all type information is available.
+### Solution B: Multi-Pass Logic in the High-Level Scanner (Superior Architecture)
 
-3.  **Fix Unit Test Regressions**:
-    *   The architectural change in the scanner will likely break existing unit tests in `goscan_test.go`, `minigo_enum_test.go`, `symgo` tests, etc.
-    *   A dedicated effort is required to systematically fix these tests by updating them to work with the new, more correct scanner behavior.
+This alternative was proposed by the user and is architecturally superior. It promotes better separation of concerns.
 
-4.  **Final Verification**:
-    *   After all unit tests are passing, run `make -C examples/deriving-all e2e` to confirm that the multi-pass refactoring has fixed the original bug.
-    *   Run the full `make test` suite one last time.
-
----
+-   **Concept**: Keep the low-level `scanner.Scanner` as a simple, single-pass AST walker. Move the complexity and orchestration of the multi-pass analysis to the high-level `goscan.Scanner`, specifically within the `ScanPackageByImport` method.
+-   **Mechanism**:
+    1.  `goscan.ScanPackageByImport` would first call the low-level `scanner.scanGoFiles` to get a raw, "declarations-only" `PackageInfo`.
+    2.  `goscan.ScanPackageByImport` would then orchestrate a second pass over the declarations in the `PackageInfo`. It would call new, specialized functions on the low-level scanner (e.g., `FillStructDetails(TypeInfo, PackageInfo)`) to populate the details for each symbol.
+    3.  During this second pass, the low-level scanner would have access to the complete symbol table from the first pass, allowing for correct resolution.
+-   **Benefits**: This design is cleaner. The low-level `scanner` is a "dumb" but fast AST walker. The high-level `goscan` package is the "smart" orchestrator that handles complex logic like caching and multi-pass analysis. This makes the system easier to reason about and maintain. `ScanPackage` could remain a simple wrapper around the single-pass scanner, while `ScanPackageByImport` becomes the robust, multi-pass entry point.
 
 ## Appendix: Analysis of `ScanPackage` vs. `ScanPackageByImport`
 
--   **Shared Logic**: Both `goscan.ScanPackage` and `goscan.ScanPackageByImport` are high-level methods in `goscan.go`. They both ultimately delegate the core work of parsing Go source files to the low-level `scanner.Scanner` instance and its `scanGoFiles` method. Therefore, the proposed multi-pass refactoring inside `scanGoFiles` would fundamentally improve the correctness of the `PackageInfo` objects produced by **both** methods.
-
--   **Key Differences**: The primary difference lies in their purpose and input:
-    -   `ScanPackage(path string)`: Is intended for scanning a package from a **file system directory path**. Its original implementation was designed for incremental scanning within a single `go-scan` session (respecting `visitedFiles`), but this led to the cache-poisoning problem.
-    -   `ScanPackageByImport(importPath string)`: Is intended for scanning a package from a canonical **Go import path**. This is the more robust and commonly used method. It has more sophisticated caching logic, checking the `packageCache` first before resolving the import path to a directory and scanning.
-
--   **Impact of Refactoring**: The proposed multi-pass refactoring in `scanner/scanner.go` would make the output of both methods more reliable. Even if `ScanPackage` were to return a partial set of files (its original, buggy behavior), the information for those files would be internally consistent and fully resolved thanks to the multi-pass traversal. `ScanPackageByImport`, which performs a full scan, would simply benefit from the improved correctness. The core bug is not in `goscan.go`'s caching or file selection, but in `scanner.go`'s single-pass AST traversal.
+-   **Shared Logic**: Both `goscan.ScanPackage` and `goscan.ScanPackageByImport` are high-level methods that ultimately use the same core parsing engine in `scanner/scanner.go`.
+-   **Key Differences**: The primary difference is their input and intended use. `ScanPackage` takes a directory path and is (in its original design) a simpler, incremental scanner. `ScanPackageByImport` takes a Go import path and is the more robust, cache-aware method intended for full package resolution.
+-   **Impact of Refactoring (Solution B)**: If Solution B were implemented, the multi-pass logic would be contained within `ScanPackageByImport`. This would fix the bug while respecting the intended distinction between the two methods. `ScanPackage` could remain a simple, single-pass function, preserving its existing behavior for consumers that might rely on it (like `symgo`). This is the most surgical and least disruptive approach.

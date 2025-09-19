@@ -8,8 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/google/go-cmp/cmp"
 )
 
 // MockResolver is a mock implementation of PackageResolver for tests.
@@ -681,13 +680,17 @@ func main() {
 }
 `
 	err := os.WriteFile(filePath, []byte(code), 0644)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
 
 	// 2. Action: Create a scanner and scan the file.
 	// We use newTestScanner from scanner_test.go to simplify setup.
 	s := newTestScanner(t, "example.com/me", dir)
 	pkg, err := s.ScanFiles(context.Background(), []string{filePath}, dir)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("scanning files: %v", err)
+	}
 
 	// 3. Assertions: Check if the scanner correctly parsed the local alias.
 	var aliasTypeInfo *TypeInfo
@@ -698,18 +701,32 @@ func main() {
 		}
 	}
 
-	require.NotNil(t, aliasTypeInfo, "TypeInfo for Alias should be found")
-	assert.Equal(t, AliasKind, aliasTypeInfo.Kind, "Alias should be of AliasKind")
+	if aliasTypeInfo == nil {
+		t.Fatal("TypeInfo for Alias should be found")
+	}
+	if diff := cmp.Diff(AliasKind, aliasTypeInfo.Kind); diff != "" {
+		t.Errorf("Alias kind mismatch (-want +got):\n%s", diff)
+	}
 
 	underlying := aliasTypeInfo.Underlying
-	require.NotNil(t, underlying, "Alias should have an Underlying type")
-	assert.Equal(t, "S", underlying.Name, "Underlying type name should be S")
+	if underlying == nil {
+		t.Fatal("Alias should have an Underlying type")
+	}
+	if diff := cmp.Diff("S", underlying.Name); diff != "" {
+		t.Errorf("Underlying type name mismatch (-want +got):\n%s", diff)
+	}
 
 	// This is the crucial check: The scanner should resolve the underlying type
 	// and link its full definition.
-	require.NotNil(t, underlying.Definition, "Underlying.Definition should be resolved by the scanner")
-	assert.Equal(t, "S", underlying.Definition.Name, "Definition name should be S")
-	assert.Equal(t, StructKind, underlying.Definition.Kind, "Definition kind should be StructKind")
+	if underlying.Definition == nil {
+		t.Fatal("Underlying.Definition should be resolved by the scanner")
+	}
+	if diff := cmp.Diff("S", underlying.Definition.Name); diff != "" {
+		t.Errorf("Definition name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(StructKind, underlying.Definition.Kind); diff != "" {
+		t.Errorf("Definition kind mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func TestScanner_LocalTypeAlias_WithPointer(t *testing.T) {
@@ -726,12 +743,16 @@ func main() {
 }
 `
 	err := os.WriteFile(filePath, []byte(code), 0644)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
 
 	// 2. Action
 	s := newTestScanner(t, "example.com/me", dir)
 	pkg, err := s.ScanFiles(context.Background(), []string{filePath}, dir)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("scanning files: %v", err)
+	}
 
 	// 3. Assertions
 	var aliasTypeInfo *TypeInfo
@@ -742,19 +763,37 @@ func main() {
 		}
 	}
 
-	require.NotNil(t, aliasTypeInfo, "TypeInfo for Alias should be found")
-	assert.Equal(t, AliasKind, aliasTypeInfo.Kind)
+	if aliasTypeInfo == nil {
+		t.Fatal("TypeInfo for Alias should be found")
+	}
+	if diff := cmp.Diff(AliasKind, aliasTypeInfo.Kind); diff != "" {
+		t.Errorf("Alias kind mismatch (-want +got):\n%s", diff)
+	}
 
 	underlying := aliasTypeInfo.Underlying
-	require.NotNil(t, underlying, "Alias should have an Underlying type")
-	assert.True(t, underlying.IsPointer, "Underlying type should be a pointer")
+	if underlying == nil {
+		t.Fatal("Alias should have an Underlying type")
+	}
+	if !underlying.IsPointer {
+		t.Error("Underlying type should be a pointer")
+	}
 
 	elem := underlying.Elem
-	require.NotNil(t, elem, "Underlying pointer should have an element type")
-	assert.Equal(t, "S", elem.Name)
+	if elem == nil {
+		t.Fatal("Underlying pointer should have an element type")
+	}
+	if diff := cmp.Diff("S", elem.Name); diff != "" {
+		t.Errorf("Element type name mismatch (-want +got):\n%s", diff)
+	}
 
 	// Check that the element's definition is resolved
-	require.NotNil(t, elem.Definition, "Underlying.Elem.Definition should be resolved")
-	assert.Equal(t, "S", elem.Definition.Name)
-	assert.Equal(t, StructKind, elem.Definition.Kind)
+	if elem.Definition == nil {
+		t.Fatal("Underlying.Elem.Definition should be resolved")
+	}
+	if diff := cmp.Diff("S", elem.Definition.Name); diff != "" {
+		t.Errorf("Element definition name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(StructKind, elem.Definition.Kind); diff != "" {
+		t.Errorf("Element definition kind mismatch (-want +got):\n%s", diff)
+	}
 }

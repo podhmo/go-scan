@@ -13,15 +13,15 @@ type User struct {
 	BirthDate time.Time `json:"birthDate"`
 }
 
+type EventData interface {
+	isEventData()
+}
+
 // @deriving:unmarshal
 type Event struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"createdAt"`
 	Data      EventData `json:"data"`
-}
-
-type EventData interface {
-	isEventData()
 }
 
 // @deriving:marshal

@@ -78,11 +78,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))**
 - **`symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))**
 - **`symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))**
+- **`symgo`: Fix Local Type Alias Resolution**: While investigating a failing E2E test, this task was found to be a red herring. The underlying `symgo` feature for local type aliases was already working correctly. The E2E test failure was traced to a separate, order-dependency bug in the main `go-scan` package's parser.
  
 ## To Be Implemented
 
-### `symgo`: Fix Local Type Alias Resolution ([docs/cont-symgo-local-alias.md](./docs/cont-symgo-local-alias.md))
-- [ ] Implement the fix for local type alias resolution as detailed in the continuation document. **Note:** An investigation revealed the e2e test failure in `deriving-all` is not related to `symgo` or local type aliases. The root cause appears to be a subtle bug in `goscan.Scanner.Implements` where it fails to resolve methods correctly in certain contexts, despite the initial package scan appearing correct. The incremental scanning/caching logic in `goscan.go` is the primary suspect.
+### `go-scan`: Fix Order-Dependency in Parser
+-   [ ] The scanner currently processes type declarations in the order they appear in a file. This can cause type resolution to fail if a type is used before it is declared within the same file (e.g., a struct using an interface that is defined later in the file). The fix is to implement a two-pass scanning approach: first, gather all top-level type, func, and const declarations, and then, in a second pass, process all function bodies and field types. This will ensure all types in a package are known before any attempt is made to resolve them.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

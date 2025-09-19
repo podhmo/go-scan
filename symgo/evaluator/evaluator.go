@@ -76,7 +76,7 @@ type Evaluator struct {
 
 	// memoization
 	memoize          bool
-	memoizationCache map[*object.Function]object.Object
+	memoizationCache map[token.Pos]object.Object
 }
 
 type callFrame struct {
@@ -111,7 +111,7 @@ func WithMaxSteps(n int) Option {
 func WithMemoization() Option {
 	return func(e *Evaluator) {
 		e.memoize = true
-		e.memoizationCache = make(map[*object.Function]object.Object)
+		e.memoizationCache = make(map[token.Pos]object.Object)
 	}
 }
 
@@ -3179,8 +3179,8 @@ func (v inspectValuer) LogValue() slog.Value {
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
 	if f, ok := fn.(*object.Function); ok {
-		if e.memoize {
-			if cachedResult, found := e.memoizationCache[f]; found {
+		if e.memoize && f.Decl != nil {
+			if cachedResult, found := e.memoizationCache[f.Decl.Pos()]; found {
 				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "function", f.Name)
 				return cachedResult
 			}
@@ -3190,9 +3190,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	result := e.applyFunctionImpl(ctx, fn, args, pkg, callPos)
 
 	if f, ok := fn.(*object.Function); ok {
-		if e.memoize && !isError(result) {
+		if e.memoize && !isError(result) && f.Decl != nil {
 			e.logc(ctx, slog.LevelDebug, "caching result for function", "function", f.Name)
-			e.memoizationCache[f] = result
+			e.memoizationCache[f.Decl.Pos()] = result
 		}
 	}
 

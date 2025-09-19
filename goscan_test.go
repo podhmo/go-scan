@@ -759,16 +759,18 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		}
 	})
 
-	t.Run("ScanPackage_RespectsVisitedFiles", func(t *testing.T) {
+	t.Run("ScanPackage_AlwaysReturnsFullPackage", func(t *testing.T) {
 		sTest, _ := New(WithWorkDir("./testdata/scanfiles"))
-		// Scan core/user.go via ScanFiles first
+		// Scan core/user.go via ScanFiles first to create a state where
+		// some files in the target package are already "visited".
 		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs})
 		if err != nil {
 			t.Fatalf("ScanFiles(user.go) failed: %v", err)
 		}
 
-		// Now ScanPackage for the whole core package
-		// It should only parse item.go and empty.go as user.go is visited
+		// Now ScanPackage for the whole core package.
+		// The corrected behavior is that it should perform a full scan regardless
+		// of the visited status and return a complete PackageInfo.
 		pkgInfo, err := sTest.ScanPackage(context.Background(), "./testdata/scanfiles/core")
 		if err != nil {
 			t.Fatalf("ScanPackage(core) failed: %v", err)
@@ -778,34 +780,40 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 			t.Fatal("ScanPackage returned nil pkgInfo")
 		}
 
-		// pkgInfo.Files from ScanPackage should only contain newly parsed files (item.go, empty.go)
-		expectedFiles := []string{coreItemPathAbs, coreEmptyPathAbs}
+		// The result should now contain ALL files from the directory.
+		expectedFiles := []string{coreUserPathAbs, coreItemPathAbs, coreEmptyPathAbs}
 		if !equalStringSlices(pkgInfo.Files, expectedFiles) {
-			t.Errorf("ScanPackage(core) after ScanFiles(user.go): expected Files %v, got %v", expectedFiles, pkgInfo.Files)
+			t.Errorf("ScanPackage(core) should return all files: expected %v, got %v", expectedFiles, pkgInfo.Files)
 		}
+		// All types should be present.
 		if findType(pkgInfo.Types, "Item") == nil {
 			t.Error("Type 'Item' should be in ScanPackage result")
 		}
-		if findType(pkgInfo.Types, "User") != nil { // User was already visited
-			t.Error("Type 'User' should NOT be in this ScanPackage result (already visited)")
+		if findType(pkgInfo.Types, "User") == nil {
+			t.Error("Type 'User' should be in ScanPackage result, even though it was pre-visited")
 		}
+
+		// All files from the package should now be marked as visited.
 		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited {
 			t.Error("item.go not marked visited after ScanPackage")
+		}
+		if _, visited := sTest.visitedFiles[coreUserPathAbs]; !visited {
+			t.Error("user.go not marked visited after ScanPackage")
 		}
 		if _, visited := sTest.visitedFiles[coreEmptyPathAbs]; !visited {
 			t.Error("empty.go not marked visited after ScanPackage")
 		}
 
-		// Check package cache for the import path
+		// Check package cache for the import path.
 		sTest.mu.RLock()
 		cachedInfo, found := sTest.packageCache[corePkgImportPath]
 		sTest.mu.RUnlock()
 		if !found {
 			t.Errorf("PackageInfo for %s not found in packageCache after ScanPackage", corePkgImportPath)
 		} else {
-			// The cached info should be the result of this ScanPackage call
+			// The cached info should be the complete package.
 			if !equalStringSlices(cachedInfo.Files, expectedFiles) {
-				t.Errorf("Cached PackageInfo.Files: expected %v, got %v", expectedFiles, cachedInfo.Files)
+				t.Errorf("Cached PackageInfo.Files should be complete: expected %v, got %v", expectedFiles, cachedInfo.Files)
 			}
 		}
 	})

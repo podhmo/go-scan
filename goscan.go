@@ -577,15 +577,10 @@ func listGoFiles(dirPath string, includeTests bool) ([]string, error) {
 }
 
 // ScanPackage scans a single package at a given directory path (absolute or relative to CWD).
-// It parses all .go files (excluding _test.go) in that directory that have not yet been
-// visited (parsed) by this Scanner instance.
-// The returned PackageInfo contains information derived ONLY from the files parsed in THIS specific call.
-// If no unvisited files are found in the package, the returned PackageInfo will be minimal
-// (e.g., Path and ImportPath set, but no types/functions unless a previous cached version for the entire package is returned).
-// The result of this call (representing the newly parsed files, or a prior cached full result if no new files were parsed and cache existed)
-// is stored in an in-memory package cache (s.packageCache) for subsequent calls to ScanPackage or ScanPackageByImport
-// for the same import path.
-// The global symbol cache (s.symbolCache), if enabled, is updated with symbols from the newly parsed files.
+// It now guarantees a full scan of all .go files in the directory, ignoring the s.visitedFiles
+// cache for file selection. This ensures that it always returns a complete PackageInfo for the
+// directory, preventing cache poisoning with partial results from incremental scanning.
+// The complete result is then cached.
 func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
 	absPkgPath, err := filepath.Abs(pkgPath)
 	if err != nil {

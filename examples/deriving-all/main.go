@@ -201,9 +201,16 @@ func main() {
 	// Process directories
 	for _, dirPath := range dirsToScan {
 		slog.InfoContext(ctx, "Scanning directory", "path", dirPath)
-		pkgInfo, err := gscn.ScanPackage(ctx, dirPath)
+		importPath, err := goscan.ResolvePath(ctx, dirPath)
 		if err != nil {
-			slog.ErrorContext(ctx, "Error scanning package", "path", dirPath, slog.Any("error", err))
+			slog.ErrorContext(ctx, "Error resolving directory to import path", "path", dirPath, slog.Any("error", err))
+			errorCount++
+			continue
+		}
+
+		pkgInfo, err := gscn.ForceScanPackageByImport(ctx, importPath)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error scanning package by import path", "importPath", importPath, slog.Any("error", err))
 			errorCount++
 			continue
 		}

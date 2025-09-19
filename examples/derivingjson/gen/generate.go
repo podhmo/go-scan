@@ -113,14 +113,14 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 						interfaceDefiningPkgImportPath = field.Type.FullImportPath
 					} else if interfaceDef.FilePath != "" {
 						interfaceDir := filepath.Dir(interfaceDef.FilePath)
-						// Use ScanPackageByImport to get a complete package view, preventing cache poisoning issues.
-						// First, resolve the directory path to an import path.
-						resolvedImportPath, errResolve := goscan.ResolvePath(ctx, interfaceDir)
-						if errResolve != nil {
-							slog.WarnContext(ctx, "Could not resolve import path for interface's directory, falling back.", "interfaceName", interfaceDef.Name, "dir", interfaceDir, "error", errResolve)
-							interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Fallback
+						scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir)
+						if errPkgScan == nil && scannedPkgForInterfaceFile != nil && scannedPkgForInterfaceFile.ImportPath != "" {
+							interfaceDefiningPkgImportPath = scannedPkgForInterfaceFile.ImportPath
 						} else {
-							interfaceDefiningPkgImportPath = resolvedImportPath
+							interfaceDefiningPkgImportPath = pkgInfo.ImportPath // Fallback
+							if errPkgScan != nil {
+								slog.WarnContext(ctx, "Could not determine import path for interface's defining package, falling back.", "interfaceName", interfaceDef.Name, "filePath", interfaceDef.FilePath, "error", errPkgScan)
+							}
 						}
 					} else {
 						interfaceDefiningPkgImportPath = pkgInfo.ImportPath

@@ -21,8 +21,20 @@ func (s *Scanner) isImplementer(ctx context.Context, concreteType *scanner.TypeI
 	if concreteType == nil || interfaceType == nil || interfaceType.Interface == nil {
 		return false
 	}
-	if concreteType.Kind != scanner.StructKind {
-		return false
+	if concreteType.Kind == scanner.AliasKind {
+		if concreteType.Underlying != nil {
+			// Resolve the underlying type. If it's a struct, use it for the check.
+			underlyingInfo, err := concreteType.Underlying.Resolve(ctx)
+			if err == nil && underlyingInfo != nil && underlyingInfo.Kind == scanner.StructKind {
+				concreteType = underlyingInfo // Continue with the underlying struct type
+			} else {
+				return false // Alias is not to a struct, so it can't implement the interface.
+			}
+		} else {
+			return false // Invalid alias
+		}
+	} else if concreteType.Kind != scanner.StructKind {
+		return false // Not a struct or an alias to a struct.
 	}
 	if interfaceType.Kind != scanner.InterfaceKind {
 		return false

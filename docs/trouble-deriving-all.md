@@ -1,52 +1,57 @@
-# Investigation into `deriving-all` E2E Test Failure
+# Trouble: `deriving-all` e2e Test Failure and Scanner Inconsistency
 
 This document provides a detailed chronological breakdown of the attempts to fix a bug in the `deriving-all` example, and the contradictions that were discovered in the `go-scan` library's behavior.
 
 ## Part 1: The Initial Problem & Hypothesis
 
--   **Initial State**: `make test` passed, but `make -C examples/deriving-all e2e` failed.
+-   **Initial State**: At the start of the task, `make test` passed, but `make -C examples/deriving-all e2e` failed.
 -   **Error**: `json: cannot unmarshal object into Go struct field Event.data of type models.EventData`.
--   **Initial Hypothesis**: The failure was caused by `goscan.Scanner.ScanPackage` performing a partial scan of a package (by respecting a `visitedFiles` cache) and then storing this incomplete `PackageInfo` in the main `packageCache`. This "poisoned" cache would then be used by the `Implements` check, which would fail to find the necessary methods to prove that concrete types implemented the `EventData` interface.
+-   **Analysis**: This error indicated that the code generator failed to produce a custom `UnmarshalJSON` method that could correctly handle the `EventData` interface. This typically happens when the generator cannot identify all the concrete types that implement the interface.
+-   **Initial Hypothesis**: The failure was caused by `goscan.Scanner.ScanPackage` performing a partial scan (by respecting a `visitedFiles` cache) and then storing this incomplete `PackageInfo` in the main `packageCache`. This "poisoned" cache would then be used by subsequent operations (like the `Implements` check), which would fail due to the incomplete information.
 
 ## Part 2: Chronological Debugging Attempts & Contradictions
 
+My attempts to fix the bug based on the initial hypothesis led to a series of contradictions.
+
 ### Attempt 1: Force `ScanPackage` to Perform a Full Scan
--   **Action**: Modified `ScanPackage` in `goscan.go` to always scan all files in a directory, ignoring `visitedFiles`, to prevent cache poisoning.
--   **Result**: `make test` failed. A new regression appeared in the `docgen` example.
--   **Specifics**: The test `TestDocgen_fullParameters` failed with the error `Tracer did not visit the target GetPathValue call expression`.
--   **Contradiction 1**: Making `ScanPackage` more robust by ensuring it always returned complete information broke the downstream `symgo` symbolic execution engine. This implied `symgo` was fragile and depended on the partial-scan behavior, which seemed incorrect.
+-   **My Mental Model**: The `ScanPackage` function's partial-scan behavior is a bug. It should always return a complete view of a package to be robust.
+-   **Action**: I modified `ScanPackage` in `goscan.go` to always scan all files in a directory, ignoring `visitedFiles`.
+-   **Result**: This caused a major regression. `make test` failed.
+-   **Specifics**: The test `TestDocgen_fullParameters` in `examples/docgen/main_test.go` failed with the error `Tracer did not visit the target GetPathValue call expression`.
+-   **Contradiction**: Making `ScanPackage` more robust and predictable broke the downstream `symgo` symbolic execution engine. This implied `symgo` was somehow dependent on the fragile, partial-scan behavior, which seemed illogical.
 
 ### Attempt 2: Investigating the `docgen` Regression
--   **Action**: Hypothesized the `docgen` failure was a separate bug. I found a call to `ScanPackage` with an import path in `type_relation.go` (which is incorrect, as `ScanPackage` expects a directory path) and fixed it to use `ScanPackageByImport`.
--   **Result**: Even with both the full-scan `ScanPackage` and the `type_relation.go` fix, `TestDocgen_fullParameters` still failed with the exact same error.
--   **Conclusion**: The bug in `type_relation.go` was real but unrelated to the `docgen` regression. The mystery of why `symgo` breaks when `ScanPackage` performs a full scan deepened.
+-   **My Mental Model**: The `docgen` failure might be a separate, pre-existing bug exposed by my change.
+-   **Action**: I found a bug in `type_relation.go` where `ScanPackage` was being called with an import path instead of a directory path. I fixed it to use the correct `ScanPackageByImport` function.
+-   **Result**: Even with both the full-scan `ScanPackage` and the `type_relation.go` fix applied, the `docgen` test *still* failed with the exact same error.
+-   **Conclusion**: The bug in `type_relation.go`, while a valid issue, was not the cause of the `docgen` regression.
 
 ### Attempt 3: The "No-Cache" Minimal Fix
--   **Action**: Reverted all changes. Hypothesized that the issue wasn't `ScanPackage` returning partial info, but specifically the *caching* of it. I modified `ScanPackage` to perform a partial scan as before, but to *not* write its result to the `packageCache`.
--   **Result**: Catastrophic failure. `make test` failed with dozens of errors across the test suite, primarily within `symgo` and `goscan`.
--   **Specifics**: Errors were of the type `symgo runtime error: entry point function "..." not found in package "..."` and `s.Implements(...) expected true, got false`.
--   **Conclusion**: This proved that `symgo` and other parts of the system are highly dependent on the `packageCache` being populated by `ScanPackage`. The function has a critical role in providing information to the rest of the system.
+-   **My Mental Model**: If the full-scan is problematic, perhaps the issue is not the partial *return* from `ScanPackage`, but specifically the *caching* of that partial result.
+-   **Action**: I modified `ScanPackage` to perform a partial scan as before, but to *not* write its result to the `packageCache`, to avoid poisoning it.
+-   **Result**: Catastrophic failure of `make test`.
+-   **Specifics**: Dozens of tests failed, primarily within `symgo`, with errors like `symgo runtime error: entry point function "..." not found in package "..."`.
+-   **Conclusion**: This proved that `symgo` and other parts of the system are highly dependent on the `packageCache` being populated by `ScanPackage`.
 
-### Attempt 4: The Core Contradiction
--   **Action**: I reverted all changes to get back to the initial "clean" state where `make test` should have passed.
--   **Result**: `make test` failed on `TestScanFilesAndGetUnscanned`.
--   **Specifics**: The test failed with `ScanPackage(core) after ScanFiles(user.go): expected Files [...item.go, ...empty.go], got [...user.go, ...empty.go, ...item.go]`.
--   **The Contradiction**: This was the most significant finding. The test was written to assert that `ScanPackage` performs a **partial scan** (respecting `visitedFiles`). It failed because the actual code was performing a **full scan** (returning all files). This directly contradicts the initial hypothesis for the `deriving-all` bug, which assumed `ScanPackage` was doing a partial scan. The codebase is in a state where its behavior is inconsistent with its own unit tests.
+### Attempt 4: The "Correct Call Site" Fix (User's Suggestion)
+-   **My Mental Model**: My initial assumption was wrong. As the user suggested, `ScanPackage` is *intended* to be partial, and callers needing a full scan should use `ScanPackageByImport`. The bug must be a misuse of `ScanPackage` at the call site.
+-   **Action**: I identified that `deriving-all/main.go` was the true caller of `ScanPackage` for the failing e2e test. I modified it to resolve the directory to an import path and use `ScanPackageByImport`.
+-   **Result**: `make test` passed, but `make -C examples/deriving-all e2e` *still failed* with the original error.
+-   **Conclusion**: This invalidated the theory that simply using the "correct" function at the top-level call site would work, likely because the cache was still being polluted by some other part of the process.
 
-### Attempt 5: The "Correct Call Site" Fix
--   **Action**: Following user guidance, I left the core scanner alone and fixed the call site. I identified that `deriving-all/main.go` was the true caller of `ScanPackage` for the failing e2e test. I modified it to use `ScanPackageByImport` instead.
--   **Result**: `make test` passed (as the core scanner was untouched), but `make -C examples/deriving-all e2e` still failed with the original error.
--   **Conclusion**: This invalidated the theory that simply using the "correct" function at the top-level call site would work. It implies that cache poisoning (or some other state pollution) is happening from a different part of the process that is not immediately obvious.
-
-### Attempt 6: The "Escape Hatch" (`ForceScanPackageByImport`)
--   **Action**: To definitively rule out cache poisoning, I created a new function `ForceScanPackageByImport` that explicitly bypasses the cache and performs a fresh, full scan. I used this in `deriving-all/main.go`.
+### Attempt 5: The "Escape Hatch" (`ForceScanPackageByImport`)
+-   **My Mental Model**: The cache must be getting polluted somehow, somewhere. The only way to be sure is to explicitly bypass it.
+-   **Action**: I created a new function `ForceScanPackageByImport` that explicitly bypasses the cache and performs a fresh, full scan. I used this in `deriving-all/main.go`.
 -   **Result**: `make test` passed, but `make -C examples/deriving-all e2e` *still* failed with the same error.
--   **Conclusion**: This was the most confusing result. Even when explicitly bypassing the cache and performing a fresh, full scan of the target package, the generator *still* failed to resolve the interface implementations. This strongly suggests the problem is not cache pollution, but lies deeper.
+-   **Conclusion**: This was the most confusing result. Even when explicitly bypassing the cache and performing a fresh, full scan, the generator *still* failed. This points away from cache poisoning and towards a deeper bug.
 
-### Attempt 7: Refactor `scanner/scanner.go` (The User's Final Hypothesis)
--   **Action**: Based on the user's final hint that the issue might be a single-file AST traversal problem, I attempted a major refactoring of `scanner/scanner.go` to use a multi-pass approach (pass 1 to find all declarations, pass 2 to resolve details).
--   **Result**: This deep, architectural change proved too complex to complete successfully in the given time. It broke numerous other unit tests related to constants, generics, and package filtering in subtle ways that I was unable to fully resolve.
+### Attempt 6: The Single-File Traversal Hypothesis (User's Final Hint)
+-   **My Mental Model**: The user provided a new hypothesis: the problem is not about multiple files, but about the AST traversal being order-dependent *within a single file*.
+-   **Action**: I attempted a major refactoring of the low-level `scanner/scanner.go` to use a multi-pass approach (pass 1 to find all declarations, pass 2 to resolve details).
+-   **Result**: This deep, architectural change proved too complex. It broke numerous other unit tests related to constants, generics, and package filtering in subtle ways that I was unable to fully resolve.
 
-## Final Summary of Unresolved Issues
+## Part 3: Final Unresolved State
 
-The codebase is in an inconsistent state regarding the behavior of `ScanPackage`, and the root cause of the `deriving-all` failure is more complex than simple cache poisoning. The final evidence from Attempt #6 (where `ForceScanPackageByImport` still failed) suggests the problem lies in how a `PackageInfo` is constructed from a single file's AST in `scanner/scanner.go`. The multi-pass refactoring (Attempt #7) is likely the correct path forward, but it is a large and delicate task that requires more time and a deeper understanding of the scanner's various consumers. This document is intended to provide a clear record of this investigation to aid that future work.
+The investigation concluded without a successful fix. The final, and most likely correct, hypothesis is that there is an order-of-declaration dependency bug in the single-pass AST traversal logic within `scanner/scanner.go`. However, fixing this requires a significant and delicate refactoring of the scanner's core, which proved to have too many unintended side effects on other parts of the system that I was unable to resolve.
+
+The key takeaway is that the problem is not a simple caching issue, but a fundamental architectural one in the low-level scanner. This document serves as a record of this investigation to aid future work on this complex issue.

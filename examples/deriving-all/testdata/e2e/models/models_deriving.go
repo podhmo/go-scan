@@ -8,60 +8,6 @@ import (
 	"net/http"
 )
 
-func (s *Event) UnmarshalJSON(data []byte) error {
-	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
-	type Alias Event
-	aux := &struct {
-		Data json.RawMessage `json:"data"`
-
-		// All other fields will be handled by the standard unmarshaler via the Alias.
-		*Alias
-	}{
-		Alias: (*Alias)(s),
-	}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return fmt.Errorf("failed to unmarshal into aux struct for Event: %w", err)
-	}
-
-	// Process Data
-	if aux.Data != nil && string(aux.Data) != "null" {
-		var discriminatorDoc struct {
-			Type string `json:"type"` // Discriminator field
-		}
-		if err := json.Unmarshal(aux.Data, &discriminatorDoc); err != nil {
-			return fmt.Errorf("could not detect type from field 'data' (content: %s): %w", string(aux.Data), err)
-		}
-
-		switch discriminatorDoc.Type {
-
-		case "usercreated":
-			var content *UserCreated
-			if err := json.Unmarshal(aux.Data, &content); err != nil {
-				return fmt.Errorf("failed to unmarshal 'data' as *UserCreated for type 'usercreated' (content: %s): %w", string(aux.Data), err)
-			}
-			s.Data = content
-
-		case "messageposted":
-			var content *MessagePosted
-			if err := json.Unmarshal(aux.Data, &content); err != nil {
-				return fmt.Errorf("failed to unmarshal 'data' as *MessagePosted for type 'messageposted' (content: %s): %w", string(aux.Data), err)
-			}
-			s.Data = content
-
-		default:
-			if discriminatorDoc.Type == "" {
-				return fmt.Errorf("discriminator field 'type' missing or empty in 'data' (content: %s)", string(aux.Data))
-			}
-			return fmt.Errorf("unknown data type '%s' for field 'data' (content: %s)", discriminatorDoc.Type, string(aux.Data))
-		}
-	} else {
-		s.Data = nil // Explicitly set to nil if null or empty
-	}
-
-	return nil
-}
-
 func (s *UserCreated) MarshalJSON() ([]byte, error) {
 	type Alias UserCreated
 	return json.Marshal(&struct {

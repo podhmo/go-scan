@@ -78,11 +78,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))**
 - **`symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))**
 - **`symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))**
+- **`symgo`: Fix Local Type Alias Resolution**: The evaluator now correctly handles type aliases defined inside a function body. This includes creating a `TypeInfo` for the alias on-the-fly and correctly resolving composite literals that use the alias, ensuring the underlying type's structure is used for evaluation while preserving the alias's name for type checking. ([docs/cont-symgo-local-alias.md](./docs/cont-symgo-local-alias.md))
  
 ## To Be Implemented
-
-### `symgo`: Fix Local Type Alias Resolution ([docs/cont-symgo-local-alias.md](./docs/cont-symgo-local-alias.md))
-- [ ] Implement the fix for local type alias resolution as detailed in the continuation document.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

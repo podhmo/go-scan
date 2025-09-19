@@ -82,7 +82,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `symgo`: Fix Local Type Alias Resolution ([docs/cont-symgo-local-alias.md](./docs/cont-symgo-local-alias.md))
-- [ ] Implement the fix for local type alias resolution as detailed in the continuation document.
+- [ ] Implement the fix for local type alias resolution as detailed in the continuation document. **Note:** An investigation revealed the e2e test failure in `deriving-all` is not related to `symgo` or local type aliases. The root cause appears to be a subtle bug in `goscan.Scanner.Implements` where it fails to resolve methods correctly in certain contexts, despite the initial package scan appearing correct. The incremental scanning/caching logic in `goscan.go` is the primary suspect.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

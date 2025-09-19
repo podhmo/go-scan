@@ -77,16 +77,13 @@ func New(startPath string, options ...Option) (*Locator, error) {
 
 	rootDir, err := findModuleRoot(absPath)
 	if err != nil {
-		// If resolver is enabled, not finding a go.mod is not a fatal error
-		// as we might be resolving stdlib packages.
-		if !l.UseGoModuleResolver {
-			return nil, err
-		}
-		// We can proceed without a module root, but some features will be limited.
-		// Let's assign rootDir to startPath to have a reference point.
-		rootDir = absPath
+		// Don't fail if go.mod is not found.
+		// Proceed with an empty module context.
+		// The root directory will be the starting path itself.
+		l.rootDir = absPath
+	} else {
+		l.rootDir = rootDir
 	}
-	l.rootDir = rootDir
 
 	var goModContent []byte
 	if l.overlay != nil {

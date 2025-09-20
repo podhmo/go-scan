@@ -84,12 +84,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
-### `goscan` Scanner Refactoring ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
-- [ ] Refactor `ScanPackage` to use `ScanPackageByImport`.
-- [ ] Remove `ScanPackageByPos` and refactor its usage in `examples/docgen`.
-- [ ] Update docstrings for `ScanPackage` and `ScanPackageByImport`.
-- [ ] Normalize `main` package names to `<import-path>.main` in `scanner.Scanner`.
-- [ ] Validate the fix with the full test suite, including `symgo` integration tests.
+### `goscan` Scanner Refactoring and `main` Package Collision Fix ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
+- [ ] **Phase 1: Core Refactoring and Bug Fix**
+  - [ ] Implement `main` package name normalization in `scanner.Scanner`.
+  - [ ] Refactor `ScanPackage` to use `ScanPackageByImport`.
+  - [ ] Remove `ScanPackageByPos` and refactor its usage.
+  - [ ] Update docstrings for affected methods.
+- [ ] **Phase 2: Integration Testing and Verification**
+  - [ ] Run the full test suite, ensuring `symgo`'s `cross_main_package_test.go` passes.
+  - [ ] Debug and fix any regressions from the normalization.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

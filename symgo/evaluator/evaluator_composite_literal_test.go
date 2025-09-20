@@ -54,7 +54,7 @@ func main() {
 
 		// This default intrinsic will be called for every function call.
 		// We use it to record what was called, and what was passed as arguments.
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}
@@ -77,12 +77,15 @@ func main() {
 			return &object.SymbolicPlaceholder{Reason: "intrinsic call"}
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/m")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/m'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
 		}
@@ -167,7 +170,7 @@ func main() {
 		mainPkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		eval.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return nil
 			}
@@ -184,12 +187,15 @@ func main() {
 			return &object.SymbolicPlaceholder{Reason: "intrinsic call"}
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/m")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/m'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
 		}

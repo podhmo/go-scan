@@ -1,78 +1,78 @@
-# `find-orphans`における孤児（Orphan）の定義
+# Definition of an "Orphan" in `find-orphans`
 
-このドキュメントでは、`find-orphans`ツールが検出する「孤児（Orphan）」の技術的な定義について詳述します。
+This document details the technical definition of an "orphan" as detected by the `find-orphans` tool.
 
-## 基本的な定義
+## Basic Definition
 
-孤児とは、**分析スコープ内において、定義された一連の開始点から到達不可能な関数またはメソッド**を指します。
+An orphan is **a function or method that is unreachable from a defined set of entry points within the analysis scope.**
 
-言い換えると、プログラムの実行開始点から呼び出しグラフをたどっていったときに、一度も呼び出されることのない関数やメソッドが孤児と見なされます。
+In other words, a function or method that is never called when tracing the call graph from the program's starting points is considered an orphan.
 
-## 分析の構成要素
+## Components of Analysis
 
-孤児の定義は、以下の3つの重要な要素に依存します。
+The definition of an orphan depends on three key components:
 
-1.  **分析スコープ (Analysis Scope)**
-    -   これは、ツールが関数の使用状況を分析するためにスキャンするコードの「全体集合」です。
-    -   通常、ワークスペース（`--workspace-root`で指定）または単一のGoモジュール全体が含まれます。このスコープ内のすべての関数呼び出しが、使用状況の判断材料となります。
+1.  **Analysis Scope**
+    -   This is the "universe" of code that the tool scans to analyze function usage.
+    -   It typically includes the entire workspace (specified by `--workspace-root`) or a single Go module. All function calls within this scope are used to determine usage.
 
-2.  **ターゲットスコープ (Target Scope)**
-    -   これは、ツールが孤児を**報告する**対象となるパッケージの集合です。
-    -   コマンドライン引数で与えられるパッケージパターン（例: `./...`）によって定義されます。
-    -   分析スコープ内のコードから呼び出しがあったとしても、その関数がターゲットスコープ内に存在しなければ、孤児としては報告されません。
+2.  **Target Scope**
+    -   This is the set of packages for which the tool will **report** orphans.
+    -   It is defined by the package patterns provided as command-line arguments (e.g., `./...`).
+    -   Even if a function is called from code within the analysis scope, if that function does not reside within the target scope, it will not be reported as an orphan.
 
-3.  **分析モードと探索の起点**
-    -   分析は、`--mode`フラグで指定されたモードに基づいて行われます。モードによって、どの関数から呼び出しグラフの探索を始めるか、そして何を「孤児」と判断するかの基準が異なります。
-    -   **グローバル変数の初期化**:
-        -   **探索の起点**: 全てのモード（`app`, `lib`, `auto`）において、分析の第一段階として、**すべてのグローバル変数（`var`）の初期化式**が評価されます。
-        -   **孤児の判定**: これらの初期化式内で呼び出された関数は、即座に「使用済み」とマークされます。これは、`main`や`init`、その他の関数が実行される前に行われるため、分析の最も基本的な起点となります。
-    -   **アプリケーションモード (`app`)**:
-        -   **探索の起点**: `main.main` 関数のみ。
-        -   **孤児の判定**: `main.main`から到達不可能な全ての関数・メソッドが孤児となります。`main.main`自体は、定義上「使用済み」と見なされ、孤児にはなりません。
-        -   **用途**: 実行可能バイナリ内のデッドコード検出に適しています。
-    -   **ライブラリモード (`lib`)**:
-        -   **探索の起点**: 分析スコープ内の**すべてのエクスポートされた（publicな）関数・メソッド、すべての`init`関数、そして`main.main`関数**。
-        -   **孤児の判定**: ライブラリモードの目的は、公開APIの中で実際に使われていないものを発見することです。そのため、探索の起点となるエクスポートされた関数自体も、**他のどのコードからも呼び出されていなければ「孤児」として報告されます**。つまり、エクスポートされた関数は、呼び出しグラフをたどるための起点にはなりますが、それだけで自動的に「使用済み」とは見なされません。
-        -   **用途**: ライブラリとして提供されるAPIのうち、利用されていないものを検出するのに適しています。
-    -   **自動モード (`auto`, デフォルト)**:
-        -   分析スコープ内に `main.main` 関数が存在すればアプリケーションモード、存在しなければライブラリモードが自動的に選択されます。
+3.  **Analysis Mode and Entry Points**
+    -   The analysis is conducted based on the mode specified by the `--mode` flag. The mode determines which functions serve as the starting points for call graph traversal and the criteria for what constitutes an "orphan."
+    -   **Global Variable Initializers**:
+        -   **Entry Point**: In all modes (`app`, `lib`, `auto`), the first step of the analysis is to evaluate the **initializer expressions of all global variables (`var`)**.
+        -   **Orphan Judgment**: Any function called within these initializer expressions is immediately marked as "used." This occurs before the execution of `main`, `init`, or any other function, making it the most fundamental entry point for the analysis.
+    -   **Application Mode (`app`)**:
+        -   **Entry Point**: The `main.main` function only.
+        -   **Orphan Judgment**: Any function or method unreachable from `main.main` is an orphan. `main.main` itself is considered "used" by definition and will not be reported as an orphan.
+        -   **Use Case**: Suitable for detecting dead code in an executable binary.
+    -   **Library Mode (`lib`)**:
+        -   **Entry Points**: **All exported (public) functions and methods, all `init` functions, and the `main.main` function** within the analysis scope.
+        -   **Orphan Judgment**: The purpose of library mode is to find unused parts of a public API. Therefore, an exported function that serves as an entry point will **still be reported as an orphan if it is not called by any other code**. In other words, while exported functions are starting points for traversing the call graph, they are not automatically considered "used" just by virtue of being entry points.
+        -   **Use Case**: Suitable for detecting unused APIs in a library.
+    -   **Auto Mode (`auto`, default)**:
+        -   Automatically selects application mode if a `main.main` function is found in the analysis scope; otherwise, it selects library mode.
 
-## 孤児と判定されるプロセスの要約
+## Summary of the Orphan Detection Process
 
-1.  ツールはまず、分析スコープとターゲットスコープを決定します。
-2.  **アプリケーションモードの場合**: `main.main` を「使用済み」としてマークします。
-3.  シンボリック実行エンジン（`symgo`）が、分析の開始点（アプリケーションモードでは `main.main`、ライブラリモードでは全てのエクスポートされた関数・メソッド）から呼び出しグラフを再帰的にたどります。
-4.  この過程で呼び出された全ての関数とメソッドが「使用済み」としてマークされます。
-    -   ある開始点（例: `exported`な関数A）から到達可能な関数（例: `unexported`な関数f）があり、その関数fが別の関数（例: `exported`な関数H）を呼び出している場合、Hも「使用済み」と見なされます。つまり、同じパッケージ内での呼び出しもすべて考慮されます。
-    -   インターフェースのメソッド呼び出しについては、そのメソッドを実装するすべての具象型のメソッドが「使用済み」と見なされる保守的な分析が行われます。
-    -   **エラーハンドリング**: ライブラリモードで多数の関数を分析する際、特定の関数の解析でエラーが発生しても、ツールは全体を停止させません。エラーをログに出力し、残りの関数の分析を続行します。
-5.  分析完了後、「使用済み」とマークされなかった関数のうち、**ターゲットスコープ**に属するものが孤児として報告されます。結果として、ライブラリモードでは、他のどの関数・メソッドからも呼び出されない `exported` な関数・メソッドも孤児として報告され得ます。
+1.  The tool first determines the analysis and target scopes.
+2.  **In Application Mode**: It marks `main.main` as "used."
+3.  The symbolic execution engine (`symgo`) recursively traverses the call graph starting from the entry points (just `main.main` in app mode; all exported functions/methods in library mode).
+4.  All functions and methods called during this process are marked as "used."
+    -   If an entry point (e.g., exported function A) can reach a function (e.g., unexported function f), and f in turn calls another function (e.g., exported function H), then H is also considered "used." All intra-package calls are taken into account.
+    -   For interface method calls, a conservative analysis is performed where all methods of concrete types that implement the method are considered "used."
+    -   **Error Handling**: When analyzing many functions in library mode, if an error occurs while analyzing a specific function, the tool does not halt. It logs the error and continues analyzing the remaining functions.
+5.  After the analysis is complete, any function that was not marked as "used" and belongs to the **target scope** is reported as an orphan. Consequently, in library mode, an exported function or method that is not called by any other function or method can also be reported as an orphan.
 
-## symgoの評価対象と分析スコープ
+## `symgo` Evaluation Target and Analysis Scope
 
-`find-orphans` は内部的に `symgo` というシンボリック実行エンジンを利用して、関数の利用状況を解析します。`symgo` がどの範囲のコードを評価対象とするかを理解することは、ツールの挙動を把握する上で重要です。
+`find-orphans` internally uses a symbolic execution engine named `symgo` to analyze function usage. Understanding the scope of code that `symgo` evaluates is crucial for comprehending the tool's behavior.
 
--   **分析スコープ (Analysis Scope)**
-    -   `--workspace-root` フラグ（または、指定がない場合はカレントモジュール）によって定義される、`symgo`がソースコードレベルで解析するGoパッケージの集合を「分析スコープ」と呼びます。
-    -   **スコープ内の関数・メソッド**: `symgo`は、これらの関数やメソッドの内部実装をすべて評価します。つまり、関数Aが関数Bを呼び出していれば、その呼び出しを正確にトレースし、Bが「使用済み」であることを記録します。
+-   **Analysis Scope**
+    -   The set of Go packages that `symgo` analyzes at the source code level, defined by the `--workspace-root` flag (or the current module if not specified), is called the "Analysis Scope."
+    -   **Functions/Methods within Scope**: `symgo` evaluates the full implementation of these functions and methods. That is, if function A calls function B, this call is accurately traced, and B is recorded as "used."
 
--   **分析スコープ外の関数・メソッド**
-    -   外部の依存ライブラリ（例: `gopkg.in/yaml.v3`）など、分析スコープに含まれないパッケージの関数がこれに該当します。
-    -   `symgo`はこれらの関数のソースコードを持たないため、関数シグネチャ（引数や返り値の型）は認識できますが、その**内部の動作をトレースすることはできません**。
-    -   例えば、分析スコープ内のコードが外部ライブラリの関数を呼び出した場合、`symgo`はその呼び出しを認識しますが、その外部関数が内部でさらにどの関数を呼び出しているかまでは追跡しません。分析の連鎖はそこで停止します。
+-   **Functions/Methods outside Analysis Scope**
+    -   This includes functions from external dependency libraries (e.g., `gopkg.in/yaml.v3`) that are not part of the analysis scope.
+    -   Since `symgo` does not have the source code for these functions, it can recognize their function signatures (arguments and return types) but **cannot trace their internal behavior**.
+    -   For example, if code within the analysis scope calls a function from an external library, `symgo` recognizes that call but does not track which functions are called internally by that external function. The analysis chain stops there.
 
-> **実装上の注意点**
-> 上記の挙動を実現するため、`find-orphans`ツールは、`symgo`エンジンに渡すパッケージ群を、あらかじめ定義された分析スコープ内に限定する責務を持ちます。もしこの絞り込みに失敗し、分析スコープ外のシンボル情報が`symgo`に渡されると、予期せぬエラーを引き起こす可能性があります。
+> **Implementation Note**
+> To achieve the behavior described above, the `find-orphans` tool is responsible for limiting the packages passed to the `symgo` engine to only those within the predefined analysis scope. If this filtering fails and symbol information from outside the analysis scope is passed to `symgo`, it could lead to unexpected errors.
 
-### 除外されるケース
+### Excluded Cases
 
-以下の関数は、孤児として報告されることはありません。
+The following functions will not be reported as orphans:
 
--   `main.main` 関数および `init` 関数（これらは言語仕様上の特別なエントリーポイントです）。
--   `//go:scan:ignore` アノテーションが付与された関数。
--   `_test.go` ファイル内に存在する、テスト実行の起点となる関数（`TestXxx`, `BenchmarkXxx`など）。これらは分析の開始点として扱われる場合がありますが、それ自体が孤児として報告されることはありません。
+-   `main.main` and `init` functions (as they are special entry points defined by the language specification).
+-   Functions with the `//go:scan:ignore` annotation.
+-   Test entry point functions within `_test.go` files (e.g., `TestXxx`, `BenchmarkXxx`). While they may be treated as analysis entry points, they are not themselves reported as orphans.
 
 ---
 
-関連ドキュメント:
--   `symgo` エンジンの仕様: [`docs/plan-symbolic-execution-like.md`](../../docs/plan-symbolic-execution-like.md)
+Related Documents:
+-   `symgo` Engine Specification: [`docs/plan-symbolic-execution-like.md`](../../docs/plan-symbolic-execution-like.md)

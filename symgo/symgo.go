@@ -22,6 +22,7 @@ type Function = object.Function
 type Error = object.Error
 type Instance = object.Instance
 type String = object.String
+type Integer = object.Integer
 type Pointer = object.Pointer
 type Variable = object.Variable
 type SymbolicPlaceholder = object.SymbolicPlaceholder
@@ -31,13 +32,14 @@ type Nil = object.Nil
 type BaseObject = object.BaseObject
 type Environment = object.Environment
 type Tracer = object.Tracer
+type TraceEvent = object.TraceEvent
 type TracerFunc = object.TracerFunc
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
 var NewEnclosedEnvironment = object.NewEnclosedEnvironment
 
 // IntrinsicFunc defines the signature for a custom function handler.
-type IntrinsicFunc func(eval *Interpreter, args []Object) Object
+type IntrinsicFunc func(ctx context.Context, eval *Interpreter, args []Object) Object
 
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.
 type ScanPolicyFunc = object.ScanPolicyFunc
@@ -53,6 +55,8 @@ type Interpreter struct {
 	scanPolicy                 object.ScanPolicyFunc // This will be built from primary scope
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
+	maxSteps                   int
+	memoize                    bool // Flag to enable/disable memoization
 }
 
 // Option is a functional option for configuring the Interpreter.
@@ -95,6 +99,24 @@ func WithSymbolicDependencyScope(patterns ...string) Option {
 func WithScanPolicy(policy object.ScanPolicyFunc) Option {
 	return func(i *Interpreter) {
 		i.scanPolicy = policy
+	}
+}
+
+// WithMaxSteps sets the maximum number of evaluation steps for the underlying evaluator.
+func WithMaxSteps(n int) Option {
+	return func(i *Interpreter) {
+		i.maxSteps = n
+	}
+}
+
+// WithMemoization enables or disables function analysis memoization.
+// When enabled, the interpreter will cache the results of function analysis
+// to avoid re-evaluating the same function multiple times.
+// This is off by default to prevent unexpected behavior in tools that
+// might rely on re-evaluation.
+func WithMemoization(enabled bool) Option {
+	return func(i *Interpreter) {
+		i.memoize = enabled
 	}
 }
 
@@ -165,10 +187,19 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 		}
 	}
 
-	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy)
+	evalOpts := []evaluator.Option{}
+	if i.maxSteps > 0 {
+		evalOpts = append(evalOpts, evaluator.WithMaxSteps(i.maxSteps))
+	}
+	if i.memoize {
+		evalOpts = append(evalOpts, evaluator.WithMemoization())
+	}
+	i.eval = evaluator.New(scanner, i.logger, i.tracer, i.scanPolicy, evalOpts...)
 
 	// Register default intrinsics
-	i.RegisterIntrinsic("fmt.Sprintf", i.intrinsicSprintf)
+	i.RegisterIntrinsic("fmt.Sprintf", func(ctx context.Context, eval *Interpreter, args []Object) Object {
+		return i.intrinsicSprintf(ctx, args)
+	})
 
 	return i, nil
 }
@@ -187,7 +218,7 @@ func matches(pattern, path string) bool {
 // specific concrete type during analysis.
 // The interface name is the fully qualified name (e.g., "io.Writer").
 // The concrete type name can be a pointer or non-pointer type name (e.g., "*bytes.Buffer").
-func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName string) error {
+func (i *Interpreter) BindInterface(ctx context.Context, ifaceTypeName string, concreteTypeName string) error {
 	isPointer := strings.HasPrefix(concreteTypeName, "*")
 	if isPointer {
 		concreteTypeName = strings.TrimPrefix(concreteTypeName, "*")
@@ -198,7 +229,7 @@ func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName strin
 		return fmt.Errorf("concrete type name must be fully qualified (e.g., 'bytes.Buffer'), got %s", concreteTypeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	pkg, err := i.scanner.ScanPackageFromImportPath(ctx, pkgPath)
 	if err != nil {
 		return fmt.Errorf("could not scan package %q for concrete type: %w", pkgPath, err)
 	}
@@ -216,19 +247,19 @@ func (i *Interpreter) BindInterface(ifaceTypeName string, concreteTypeName strin
 	}
 
 	// The binding in the evaluator needs the fully qualified name.
-	i.eval.BindInterface(ifaceTypeName, foundType)
+	i.eval.BindInterface(ifaceTypeName, foundType, isPointer)
 	return nil
 }
 
 // NewSymbolic creates a new symbolic variable with a given type.
 // This is a helper for setting up analysis entrypoints.
-func (i *Interpreter) NewSymbolic(name string, typeName string) (Object, error) {
+func (i *Interpreter) NewSymbolic(ctx context.Context, name string, typeName string) (Object, error) {
 	pkgPath, simpleTypeName := splitQualifiedName(typeName)
 	if pkgPath == "" {
 		return nil, fmt.Errorf("type name must be fully qualified (e.g., 'io.Writer'), got %s", typeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(context.Background(), pkgPath)
+	pkg, err := i.scanner.ScanPackageFromImportPath(ctx, pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not scan package %q for symbolic var type: %w", pkgPath, err)
 	}
@@ -273,13 +304,13 @@ func splitQualifiedName(name string) (pkgPath, typeName string) {
 	// For "bytes.Buffer", the import path is "bytes".
 	// For "mypackage.MyType" in the current module, it might be "mymodule/mypackage".
 	// The scanner handles resolving this. We just need to provide the parts.
-	// The logic in BindInterface and NewSymbolic which calls scanner.ScanPackageByImport
+	// The logic in BindInterface and NewSymbolic which calls scanner.ScanPackageFromImportPath
 	// with the pkgCandidate works correctly for both "bytes" and "github.com/foo/bar".
 	return pkgCandidate, typeName
 }
 
 // intrinsicSprintf provides a basic implementation of fmt.Sprintf for the symbolic engine.
-func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object {
+func (i *Interpreter) intrinsicSprintf(ctx context.Context, args []Object) Object {
 	if len(args) == 0 {
 		return &Error{Message: "Sprintf requires at least one argument", Pos: token.NoPos}
 	}
@@ -314,10 +345,24 @@ func (i *Interpreter) intrinsicSprintf(eval *Interpreter, args []Object) Object 
 
 			if verb == 's' || verb == 'd' || verb == 'v' {
 				arg := args[argIndex]
-				replacement := arg.Inspect()
-				if str, ok := arg.(*String); ok {
-					replacement = str.Value
+				var replacement string
+				switch v := arg.(type) {
+				case *String:
+					replacement = v.Value
+				case *Integer:
+					replacement = fmt.Sprintf("%d", v.Value)
+				case *SymbolicPlaceholder:
+					// When a symbolic placeholder for a zero-value variable is formatted,
+					// provide a sensible zero value representation based on the verb.
+					if verb == 'd' {
+						replacement = "0"
+					} else {
+						replacement = "" // for %s, %v
+					}
+				default:
+					replacement = arg.Inspect()
 				}
+
 				newStr.WriteString(replacement)
 				argIndex++
 				i++ // skip the verb
@@ -355,8 +400,8 @@ func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 }
 
 // ApplyFunction is a test helper to expose the evaluator's ApplyFunction method.
-func (i *Interpreter) ApplyFunction(call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
-	return i.eval.ApplyFunction(call, fn, args, fscope)
+func (i *Interpreter) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
+	return i.eval.ApplyFunction(ctx, call, fn, args, fscope)
 }
 
 // EvaluatorForTest returns the evaluator for testing.
@@ -377,18 +422,18 @@ func (i *Interpreter) EvalWithEnv(ctx context.Context, node ast.Node, env *Envir
 // The key is the fully qualified function name, e.g., "fmt.Println".
 func (i *Interpreter) RegisterIntrinsic(key string, handler IntrinsicFunc) {
 	// Wrap the user-friendly IntrinsicFunc into the evaluator's required signature.
-	wrappedHandler := func(args ...object.Object) object.Object {
+	wrappedHandler := func(ctx context.Context, args ...object.Object) object.Object {
 		// The handler passed by the user gets the interpreter instance, allowing
 		// it to perform powerful operations if needed.
-		return handler(i, args)
+		return handler(ctx, i, args)
 	}
 	i.eval.RegisterIntrinsic(key, wrappedHandler)
 }
 
 // RegisterDefaultIntrinsic registers a default function to be called for any function call.
 func (i *Interpreter) RegisterDefaultIntrinsic(handler IntrinsicFunc) {
-	wrappedHandler := func(args ...object.Object) object.Object {
-		return handler(i, args)
+	wrappedHandler := func(ctx context.Context, args ...object.Object) object.Object {
+		return handler(ctx, i, args)
 	}
 	i.eval.RegisterDefaultIntrinsic(wrappedHandler)
 }
@@ -411,6 +456,17 @@ func (i *Interpreter) FindObject(name string) (Object, bool) {
 	return i.globalEnv.Get(name)
 }
 
+// FindObjectInPackage looks up an object in a specific package's environment.
+// This is primarily a test helper to bypass the global environment and check
+// the state of a single package.
+func (i *Interpreter) FindObjectInPackage(ctx context.Context, pkgPath string, name string) (Object, bool) {
+	pkgObj, err := i.eval.GetOrLoadPackageForTest(ctx, pkgPath)
+	if err != nil {
+		return nil, false
+	}
+	return pkgObj.Env.Get(name)
+}
+
 // Apply is a wrapper around the internal evaluator's applyFunction.
 // It is intended for advanced use cases like docgen where direct function invocation is needed.
 func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *scanner.PackageInfo) (Object, error) {
@@ -420,4 +476,19 @@ func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *
 		return nil, errors.New(err.Inspect())
 	}
 	return result, nil
+}
+
+// Finalize performs the final analysis step after evaluation, resolving interface method calls.
+func (i *Interpreter) Finalize(ctx context.Context) {
+	i.eval.Finalize(ctx)
+}
+
+// CalledInterfaceMethodsForTest returns the map of called interface methods for testing.
+func (i *Interpreter) CalledInterfaceMethodsForTest() map[string][]object.Object {
+	return i.eval.CalledInterfaceMethodsForTest()
+}
+
+// SeenPackagesForTest returns the map of seen packages for testing.
+func (i *Interpreter) SeenPackagesForTest() map[string]*goscan.Package {
+	return i.eval.SeenPackagesForTest()
 }

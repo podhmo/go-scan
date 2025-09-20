@@ -47,7 +47,11 @@ var result = %s
 					}
 				}
 
-				val, ok := env.Get("result")
+				pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+				if !ok {
+					return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+				}
+				val, ok := pkgEnv.Get("result")
 				if !ok {
 					return fmt.Errorf("variable 'result' not found")
 				}
@@ -115,7 +119,11 @@ func main() {
 		}
 
 		// Find the main function from the populated environment.
-		mainObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
 		}
@@ -178,7 +186,11 @@ var result = %s
 					}
 				}
 
-				val, ok := env.Get("result")
+				pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+				if !ok {
+					return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+				}
+				val, ok := pkgEnv.Get("result")
 				if !ok {
 					return fmt.Errorf("variable 'result' not found")
 				}

@@ -58,7 +58,7 @@ The logic within `Resolve` is as follows:
 
 3.  **Defer Cleanup:** A `defer` statement ensures the identifier is removed from the `resolving` map before the function returns, cleaning up the state for the next independent resolution task.
 
-4.  **Proceed with Resolution:** It continues with the standard resolution logic (checking cache, calling `ScanPackageByImport`, etc.).
+4.  **Proceed with Resolution:** It continues with the standard resolution logic (checking cache, calling `ScanPackageFromImportPath`, etc.).
 
 5.  **Cache Result:** Upon successfully finding a `TypeInfo`, it caches it in `ft.Definition` before returning. This is crucial for subsequent lookups, including those that break cycles.
 

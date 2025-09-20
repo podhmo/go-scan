@@ -1,71 +1,160 @@
-# Symgo Engine Troubleshooting and Fixes
+# Issue: `find-orphans` Hangs Due to Infinite Recursion in `symgo`
 
-This document tracks issues found and fixed in the `symgo` symbolic execution engine, serving as a log for future development and debugging.
+This document outlines an issue where the `find-orphans` tool hangs, the investigation process, and the proposed solution.
 
-## 1. Nested Function Calls
+## Problem
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/nested_function_calls`
--   **Code**: `add(add(1, 2), 3)`
--   **Status**: **Fixed**
+When running the `find-orphans` end-to-end test via `make -C examples/find-orphans`, the process times out. Verbose logging reveals that the tool enters an infinite loop, generating a massive amount of repetitive log output.
 
-### Problem Description
+The issue appears to be an infinite recursion bug within the `symgo` symbolic execution engine, specifically in its package loading and dependency resolution logic.
 
-The test for nested function calls was failing because the intrinsic (mock) for the `add` function was never being called. The evaluator was instead trying to evaluate the *actual* body of the `add` function.
+## Reproduction Steps
 
-### Root Cause Analysis
+1.  Navigate to the repository root.
+2.  Run the `find-orphans` test with a timeout. The command will be terminated.
+    ```bash
+    timeout 5s make -C examples/find-orphans
+    ```
+3.  To observe the infinite logging, run the tool with verbose output and redirect to a file. The command will hang until the pipe is closed (e.g., by `head`).
+    ```bash
+    cd examples/find-orphans
+    go run . -v --workspace-root ../.. ./... 2>&1 | head -c 1000000 > find-orphans-verbose-head.log
+    ```
 
-The root cause was the lookup order within the `evalIdent` function, which is responsible for resolving identifiers like `add`. The function was implemented to check the local environment for a function declaration *before* checking the intrinsic registry.
+## Log Analysis
 
-1.  The evaluator would first parse the file and place an `*object.Function` for `add` into the environment.
-2.  The test would then register an `*object.Intrinsic` for `add`.
-3.  When `evalIdent` was called for `add`, it would find the `*object.Function` in the environment first and return it, never reaching the code that checks for the intrinsic.
+The verbose log file (`find-orphans-verbose-head.log`) is filled with a rapidly repeating sequence of debug messages from the `symgo/evaluator`. The key repeating messages are:
 
-### Solution
+- `getOrLoadPackage: requesting package`
+- `ResolvePackage: checking policy`
+- `ScanPackageFromImportPath CACHE HIT`
+- `ensurePackageEnvPopulated: checking package`
 
-The fix was to reverse the lookup order in `evalIdent`. The function now checks for a registered intrinsic **first**, and only if one is not found does it proceed to check the environment. This allows tests to correctly override and mock functions that exist in the package being analyzed. This change was made in `symgo/evaluator/evaluator.go`.
+This pattern indicates that the evaluator is continuously trying to load and initialize packages it has already processed. The call stack is not correctly tracking which packages are currently under analysis, leading to a recursive reentry. For example, while analyzing package `A` which imports `B`, the evaluator starts analyzing `B`. If `B` (or a dependency of `B`) in turn imports `A`, the evaluator re-enters the analysis for `A` without realizing it's already in progress, leading to an infinite loop.
 
-## 2. Method Calls on Composite Literals
+The issue seems to be triggered by the complex dependency graph of the entire workspace, with `examples/docgen` and `minigo/evaluator` being prominently featured in the logs before the loop becomes uncontrollable.
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/method_call_on_a_struct_literal`
--   **Code**: `S{}.Do()`
--   **Status**: **Fixed**
+## Proposed Solution
 
-### Problem Description
+The root cause is the lack of a mechanism to detect and prevent re-entrant analysis of the same package within a single evaluation stack.
 
-The evaluator could not handle a method call where the receiver was a composite literal (a struct being instantiated directly, like `S{}`). The test failed because the `Do` method's intrinsic was never found or called.
+The proposed solution is to introduce a recursion guard in the `symgo` evaluator. This can be implemented by:
 
-### Root Cause Analysis
+1.  Adding a map to the `symgo.Interpreter` or `evaluator.Evaluator` to track the import paths of packages currently being evaluated in the active call stack.
+2.  Before starting the evaluation of a package, the interpreter will check if the package's import path is already in this tracking map.
+3.  If the path is present, it signifies a recursive entry. The interpreter should immediately stop and return a symbolic placeholder or a specific error, rather than re-evaluating the package.
+4.  If the path is not present, it should be added to the map before evaluation begins.
+5.  Crucially, the path must be removed from the map after its evaluation is complete (either successfully or with an error) to allow other, independent analyses to process it. This is typically done using a `defer` statement.
 
-The issue was two-fold:
+This change will break the infinite loop and allow the `find-orphans` analysis to complete successfully.
 
-1.  **Missing `CompositeLit` Evaluation**: The main `Eval` function did not have a case for `*ast.CompositeLit` nodes. When the evaluator encountered `S{}`, it didn't know what to do with it and couldn't produce a symbolic object that `evalSelectorExpr` could use.
-2.  **Incomplete Type Name Resolution**: The initial implementation for handling composite literals did not correctly form a fully-qualified type name (e.g., `example.com/me.S`). It resolved the type name to just `S`, which caused a mismatch with the key used to register the intrinsic in the test.
+---
 
-### Solution
+# Past Issue: `symgo` Robustness Enhancement Report
 
-The fix involved several changes in `symgo/evaluator/evaluator.go`:
+This document details the analysis and resolution of several robustness issues within the `symgo` symbolic execution engine. These issues were primarily observed when running the `find-orphans` tool on a complex codebase, which exposed edge cases in `symgo`'s handling of unresolved types and symbolic values.
 
-1.  A new case for `*ast.CompositeLit` was added to the `Eval` function's switch statement.
-2.  A new function, `evalCompositeLit`, was implemented. This function uses the `scanner` to resolve the type of the literal and creates a symbolic `*object.Instance` to represent it.
-3.  The logic within `evalCompositeLit` was refined to correctly construct a fully-qualified type name by combining the package's import path with the type's local name, ensuring it matches the intrinsic keys.
-4.  The `evalSelectorExpr` function was also improved to check for methods on both value (`(T).Method`) and pointer (`(*T).Method`) receivers, making it more robust.
+## 1. The Goal: A More Resilient `symgo`
 
-## 3. Method Chaining
+The `find-orphans` tool is a key application of the `symgo` engine. Initial testing revealed that its effectiveness was hampered by `symgo`'s strictness. When the engine encountered code it could not fully analyze (e.g., types or functions from unscanned packages), it would frequently halt with an error.
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/method_chaining`
--   **Code**: `NewGreeter("world").WithName("gopher").Greet()`
--   **Status**: **Fixed**
+The goal of this effort was to make `symgo` more resilient, allowing it to "gracefully fail" when encountering unknown entities. Instead of erroring, the engine should treat these unknowns as symbolic placeholders and continue the analysis. This removes the need for users to provide complex, tool-specific configurations (like intrinsics or exhaustive dependency lists) just to make the analysis complete.
 
-### Problem Description
+## 2. Problems Found and Solutions Implemented
 
-The test for method chaining was failing. The final method in the chain, `Greet`, was never being called, and the test assertions failed as a result.
+Running `make -C examples/find-orphans` on the codebase revealed several categories of errors. The following sections describe each problem and the fix that was implemented in `symgo/evaluator/evaluator.go`.
 
-### Root Cause Analysis
+### Problem 1: `invalid indirect` on Unresolved Types
 
-The problem was a simple but crucial error in the test setup. The keys used to register the intrinsics for the `Greeter` methods were not using fully-qualified type names. For example, the test was registering `(*main.Greeter).Greet` instead of the correct `(*example.com/me.Greeter).Greet`.
+-   **Symptom:** The `find-orphans` run produced numerous errors like:
+    `level=ERROR msg="invalid indirect of <Unresolved Type: strings.Builder> (type *object.UnresolvedType)"`
+-   **Analysis:** This error occurred when `symgo` attempted to evaluate a dereference expression (`*T`) where `T` was a type from an unscanned package. The evaluator correctly identified `T` as an `*object.UnresolvedType`, but the `evalStarExpr` function had no logic to handle this specific object type and fell through to a final error case.
+-   **Solution:** A new case was added to `evalStarExpr` to specifically check for `*object.UnresolvedType`. When found, the function now returns a `*object.SymbolicPlaceholder`, representing an instance of that unresolved type, allowing analysis to continue without error.
 
-The evaluator was correctly resolving the types and looking for the fully-qualified keys, but since the test had registered the wrong keys, no match was found.
+### Problem 2: `undefined method or field` on Pointers to Symbolic Values
 
-### Solution
+-   **Symptom:** Tests failed with the error:
+    `undefined method or field: N for pointer type SYMBOLIC_PLACEHOLDER`
+-   **Analysis:** This occurred when accessing a field on a pointer where the pointee was a symbolic placeholder (e.g., `p.N` where `p` is `*SymbolicPlaceholder`). The logic for selector expressions on `*object.Pointer` in `evalSelectorExpr` only handled cases where the pointee was a concrete `*object.Instance`, not a symbolic value.
+-   **Solution:** The `case *object.Pointer` block in `evalSelectorExpr` was enhanced. It now detects when the pointee is a `*object.SymbolicPlaceholder` and re-uses the existing logic for handling selections on symbolic values, correctly resolving the field or method. This involved refactoring the symbolic selection logic into a new `evalSymbolicSelection` helper function for clarity and reuse.
 
-The fix was to update the "method chaining" test case in `symgo/evaluator/evaluator_call_test.go` to use programmatically-generated, fully-qualified names for the intrinsic keys. This was done by using `fmt.Sprintf` with the package's import path (`pkg.ImportPath`) to build the correct keys at test runtime. This ensures the keys registered in the test match the keys the evaluator is looking for, allowing the method chain to be resolved correctly.
+### Problem 3: Incorrect Handling of Operations on Symbolic Values
+
+-   **Symptom:** While not always fatal, various operators behaved incorrectly when applied to symbolic placeholders.
+    -   `v.N++`: Treated the symbolic `v.N` as `0` and converted it to a concrete integer `1`.
+    -   `!b`: Treated the symbolic boolean `b` as "truthy" and returned a concrete `false`.
+-   **Analysis:** The `evalIncDecStmt` and `evalBangOperatorExpression` functions did not account for symbolic operands. They would default to concrete behavior instead of preserving the symbolic nature of the value.
+-   **Solution:** Both functions were modified to check if their operand is a `*object.SymbolicPlaceholder`. If so, they now return a new `*object.SymbolicPlaceholder`, ensuring that the "unknown" state of the value is correctly propagated through the analysis.
+
+### Problem 4: `identifier not found` for Named Return Values
+
+-   **Symptom:** The `find-orphans` log produced errors like:
+    `level=ERROR msg="identifier not found: varDecls"`
+-   **Analysis:** This error occurred when `symgo` analyzed a Go function that used named return values. Go automatically declares these named returns as variables within the function's scope. The `symgo` evaluator was not mimicking this behavior. When a named return variable was used as a value (e.g., passed to a function like `append`) before its first explicit assignment, the evaluator could not find it in the environment.
+-   **Solution:** The `extendFunctionEnv` function was modified. It now inspects the function's AST (`*ast.FuncDecl`) for named return parameters. If any are found, it pre-declares them as symbolic variables in the function's environment *before* evaluating the body, correctly mirroring Go's scoping rules.
+
+### Problem 5: `expected a package, instance, or pointer...` on Unresolved Type
+
+-   **Symptom:** The `find-orphans` log showed errors like:
+    `level=ERROR msg="expected a package, instance, or pointer on the left side of selector, but got UNRESOLVED_TYPE"`
+-   **Analysis:** This happened when `symgo` encountered a selector expression (`foo.Bar`) where `foo` resolved to a raw `*object.UnresolvedType` object. This typically occurs when accessing a symbol from a package that is not scanned (e.g., due to the scan policy). The `evalSelectorExpr` function was missing a case to handle this specific type, causing it to fall through to a generic error.
+-   **Solution:** A new case for `*object.UnresolvedType` was added to the `switch` statement in `evalSelectorExpr`. This case now gracefully handles the situation by returning a `*object.SymbolicPlaceholder`, representing the unknown result of the selection, which allows analysis to continue.
+
+### Problem 6: `undefined method` on Field Access
+
+-   **Symptom:** The `find-orphans` log showed errors like:
+    `undefined method: Value on github.com/podhmo/go-scan/minigo.Result`
+-   **Analysis:** When evaluating a selector `foo.Bar`, if `foo` was a symbolic instance (`*object.Instance`), the evaluator would only check for a method named `Bar`. It never checked if `Bar` was a field of the struct.
+-   **Solution:** The `case *object.Instance` block in `evalSelectorExpr` was updated. After failing to find a method, it now proceeds to check for a field with the given name using the existing `accessor.findFieldOnType` helper. This allows correct resolution of both method calls and field access on symbolic struct instances.
+
+## 3. Validation and Remaining Issues
+
+After implementing these fixes, the `find-orphans` example runs with significantly fewer errors. The evaluator is now much more robust in handling common Go patterns and incomplete type information.
+
+The primary remaining error seen in the logs is `identifier not found: r`, which appears to be related to the complex handling of **method values** (using a method as a value, e.g., `r.handleConvert`, rather than calling it). This is a more subtle issue in the evaluator's environment and scope management and is noted for future investigation.
+
+## 4. `invalid indirect` Error on `*object.ReturnValue`
+
+**Manifestation:**
+
+When running `find-orphans` in library mode (`--mode lib`), the symbolic execution engine logs errors like:
+
+```
+level=ERROR msg="invalid indirect of &instance<...> (type *object.ReturnValue)"
+```
+
+This error occurs in `symgo/evaluator/evaluator.go` within the `evalStarExpr` function, which handles the dereference operator (`*`).
+
+**Analysis:**
+
+The root cause is that the evaluator does not properly unwrap `*object.ReturnValue` objects in all contexts. `*object.ReturnValue` is a wrapper used to propagate return values from function calls up the evaluation stack.
+
+The error occurs when an expression involving a dereference is applied to the result of a function call, for example `*MyFunc()`. The evaluation proceeds as follows:
+1. `MyFunc()` is evaluated, and its result is wrapped in an `*object.ReturnValue`.
+2. The `*` operator is evaluated by `evalStarExpr`.
+3. `evalStarExpr` receives the `*object.ReturnValue` object but fails to "unwrap" it to get the actual value that the function returned.
+4. It then attempts to perform a dereference on the `*object.ReturnValue` wrapper itself, which is not a pointer, leading to the "invalid indirect" error.
+
+This issue is more prevalent in library mode for `find-orphans` because it analyzes many generated functions (like those from the `convert` tool) that may not be perfectly formed or may use patterns that expose this unwrapping weakness.
+
+**Solution:**
+
+The solution is to ensure that `evalStarExpr` correctly unwraps any `*object.ReturnValue` it receives before attempting to process the underlying value. This can be done by adding a check at the beginning of the function:
+
+```go
+func (e *Evaluator) evalStarExpr(...) object.Object {
+    val := e.Eval(ctx, node.X, env, pkg)
+    if isError(val) {
+        return val
+    }
+
+    // ADD THIS FIX: Unwrap the return value if present.
+    if ret, ok := val.(*object.ReturnValue); ok {
+        val = ret.Value
+    }
+
+    // ... rest of the function
+}
+```
+
+This ensures that the rest of the function operates on the actual returned value, not the wrapper, resolving the error.

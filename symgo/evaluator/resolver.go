@@ -77,9 +77,9 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 }
 
 // ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
-func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
+func (r *Resolver) ResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
 	if r.ScanPolicy(pkg.Path) {
-		return &object.Function{
+		fn := &object.Function{
 			Name:       funcInfo.AstDecl.Name,
 			Parameters: funcInfo.AstDecl.Type.Params,
 			Body:       funcInfo.AstDecl.Body,
@@ -88,6 +88,20 @@ func (r *Resolver) ResolveFunction(pkg *object.Package, funcInfo *scanner.Functi
 			Package:    pkg.ScannedInfo,
 			Def:        funcInfo,
 		}
+
+		// If the function is a method, create a placeholder for the receiver.
+		if funcInfo.Receiver != nil {
+			receiverVar := &object.Variable{
+				Name: funcInfo.Receiver.Name,
+			}
+			receiverVar.SetFieldType(funcInfo.Receiver.Type)
+			// The receiver's type info can be resolved from its field type.
+			// This must respect the scan policy.
+			receiverVar.SetTypeInfo(r.ResolveType(ctx, funcInfo.Receiver.Type))
+			fn.Receiver = receiverVar
+		}
+
+		return fn
 	}
 	// For out-of-policy packages, exported functions become placeholders.
 	return &object.SymbolicPlaceholder{
@@ -139,13 +153,16 @@ func (r *Resolver) ResolveSymbolicField(ctx context.Context, field *scanner.Fiel
 
 // ResolvePackage is a helper to get package info while respecting the scan policy.
 func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*scanner.PackageInfo, error) {
+	r.logger.DebugContext(ctx, "ResolvePackage: checking policy", "path", path)
 	if !r.ScanPolicy(path) {
+		r.logger.DebugContext(ctx, "ResolvePackage: denied by policy", "path", path)
 		return nil, fmt.Errorf("package %q is excluded by scan policy", path)
 	}
+	r.logger.DebugContext(ctx, "ResolvePackage: allowed by policy, scanning", "path", path)
 	return r.resolvePackageWithoutPolicyCheck(ctx, path)
 }
 
 // resolvePackageWithoutPolicyCheck resolves a package without enforcing the scan policy.
 func (r *Resolver) resolvePackageWithoutPolicyCheck(ctx context.Context, path string) (*scanner.PackageInfo, error) {
-	return r.scanner.ScanPackageByImport(ctx, path)
+	return r.scanner.ScanPackageFromImportPath(ctx, path)
 }

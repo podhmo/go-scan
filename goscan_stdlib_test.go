@@ -18,7 +18,7 @@ func TestScanStdlib_SucceedsWithoutOverride(t *testing.T) {
 		t.Fatalf("New() failed: %+v", err)
 	}
 
-	pkg, err := s.ScanPackageByImport(ctx, "time")
+	pkg, err := s.ScanPackageFromImportPath(ctx, "time")
 	if err != nil {
 		t.Fatalf("expected no error when scanning stdlib package 'time', but got: %v", err)
 	}

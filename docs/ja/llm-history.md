@@ -520,7 +520,7 @@ func main() {
 	}
 
 	// Scan a package located at a specific path.
-	pkgInfo, err := scanner.ScanPackage("./path/to/your/package")
+	pkgInfo, err := scanner.ScanPackageFromFilePath("./path/to/your/package")
 	if err != nil {
 		log.Fatalf("Failed to scan package: %v", err)
 	}
@@ -847,8 +847,8 @@ func New() *Scanner {
 	return &Scanner{}
 }
 
-// ScanPackage parses all .go files in a given directory and returns PackageInfo.
-func (s *Scanner) ScanPackage(dirPath string) (*PackageInfo, error) {
+// ScanPackageFromFilePath parses all .go files in a given directory and returns PackageInfo.
+func (s *Scanner) ScanPackageFromFilePath(dirPath string) (*PackageInfo, error) {
 	pkgs, err := parser.ParseDir(token.NewFileSet(), dirPath, func(fi os.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, parser.ParseComments)
@@ -1058,11 +1058,11 @@ import (
 	"testing"
 )
 
-func TestScanPackageBasic(t *testing.T) {
+func TestScanPackageFromFilePathBasic(t *testing.T) {
 	s := New()
-	pkgInfo, err := s.ScanPackage(filepath.Join("..", "testdata", "basic"))
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("..", "testdata", "basic"))
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 
 	if pkgInfo.Name != "basic" {
@@ -1108,11 +1108,11 @@ func TestScanPackageBasic(t *testing.T) {
 	}
 }
 
-func TestScanPackageComplex(t *testing.T) {
+func TestScanPackageFromFilePathComplex(t *testing.T) {
 	s := New()
-	pkgInfo, err := s.ScanPackage(filepath.Join("..", "testdata", "complex"))
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("..", "testdata", "complex"))
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 
 	var profileStruct *TypeInfo
@@ -1190,9 +1190,9 @@ func New(startPath string) (*Scanner, error) {
 	}, nil
 }
 
-// ScanPackage scans a single package at a given directory path.
+// ScanPackageFromFilePath scans a single package at a given directory path.
 // The path should be relative to the project root or an absolute path.
-func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackageFromFilePath(pkgPath string) (*scanner.PackageInfo, error) {
 	info, err := os.Stat(pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not stat path %s: %w", pkgPath, err)
@@ -1202,17 +1202,17 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 		return nil, fmt.Errorf("path %s is not a directory", pkgPath)
 	}
 
-	return s.scanner.ScanPackage(pkgPath, nil) // Pass nil resolver for old tests
+	return s.scanner.ScanPackageFromFilePath(pkgPath, nil) // Pass nil resolver for old tests
 }
 
-// ScanPackageByImport scans a single package using its Go import path.
+// ScanPackageFromImportPath scans a single package using its Go import path.
 // e.g., "github.com/your/project/models"
-func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackageFromImportPath(importPath string) (*scanner.PackageInfo, error) {
 	dirPath, err := s.locator.FindPackageDir(importPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
-	return s.ScanPackage(dirPath)
+	return s.ScanPackageFromFilePath(dirPath)
 }
 ````
 
@@ -1245,16 +1245,16 @@ func TestNew_Integration(t *testing.T) {
 	}
 }
 
-// TestScanPackage_Integration tests the full scanning process on the basic testdata.
-func TestScanPackage_Integration(t *testing.T) {
+// TestScanPackageFromFilePath_Integration tests the full scanning process on the basic testdata.
+func TestScanPackageFromFilePath_Integration(t *testing.T) {
 	s, err := New(".")
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkgInfo, err := s.ScanPackage("./testdata/basic")
+	pkgInfo, err := s.ScanPackageFromFilePath("./testdata/basic")
 	if err != nil {
-		t.Fatalf("ScanPackage() failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath() failed: %v", err)
 	}
 
 	if pkgInfo.Name != "basic" {
@@ -1265,17 +1265,17 @@ func TestScanPackage_Integration(t *testing.T) {
 	}
 }
 
-// TestScanPackageByImport_Integration tests scanning using a Go-style import path.
-func TestScanPackageByImport_Integration(t *testing.T) {
+// TestScanPackageFromImportPath_Integration tests scanning using a Go-style import path.
+func TestScanPackageFromImportPath_Integration(t *testing.T) {
 	s, err := New(".")
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 
 	importPath := "github.com/vvakame/goscan/testdata/multipkg/models"
-	pkgInfo, err := s.ScanPackageByImport(importPath)
+	pkgInfo, err := s.ScanPackageFromImportPath(importPath)
 	if err != nil {
-		t.Fatalf("ScanPackageByImport() failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath() failed: %v", err)
 	}
 
 	if pkgInfo.Name != "models" {
@@ -1293,9 +1293,9 @@ func TestMultiPackageReference(t *testing.T) {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkgInfo, err := s.ScanPackage(filepath.Join("testdata", "multipkg", "api"))
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("testdata", "multipkg", "api"))
 	if err != nil {
-		t.Fatalf("ScanPackage() failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath() failed: %v", err)
 	}
 
 	var handlerStruct *scanner.TypeInfo
@@ -1619,7 +1619,7 @@ func main() {
 	}
 
 	// Scan a package located at a specific path.
-	pkgInfo, err := scanner.ScanPackage("./path/to/your/package")
+	pkgInfo, err := scanner.ScanPackageFromFilePath("./path/to/your/package")
 	if err != nil {
 		log.Fatalf("Failed to scan package: %v", err)
 	}
@@ -1964,8 +1964,8 @@ func New() *Scanner {
 	return &Scanner{}
 }
 
-// ScanPackage parses all .go files in a given directory and returns PackageInfo.
-func (s *Scanner) ScanPackage(dirPath string) (*PackageInfo, error) {
+// ScanPackageFromFilePath parses all .go files in a given directory and returns PackageInfo.
+func (s *Scanner) ScanPackageFromFilePath(dirPath string) (*PackageInfo, error) {
 	pkgs, err := parser.ParseDir(token.NewFileSet(), dirPath, func(fi os.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, parser.ParseComments)
@@ -2202,11 +2202,11 @@ import (
 	"testing"
 )
 
-func TestScanPackageBasic(t *testing.T) {
+func TestScanPackageFromFilePathBasic(t *testing.T) {
 	s := New()
-	pkgInfo, err := s.ScanPackage(filepath.Join("..", "testdata", "basic"))
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("..", "testdata", "basic"))
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 
 	if pkgInfo.Name != "basic" {
@@ -2252,11 +2252,11 @@ func TestScanPackageBasic(t *testing.T) {
 	}
 }
 
-func TestScanPackageComplex(t *testing.T) {
+func TestScanPackageFromFilePathComplex(t *testing.T) {
 	s := New()
-	pkgInfo, err := s.ScanPackage(filepath.Join("..", "testdata", "complex"))
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("..", "testdata", "complex"))
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 
 	var profileStruct *TypeInfo
@@ -2302,11 +2302,11 @@ func TestScanPackageComplex(t *testing.T) {
 	}
 }
 
-func TestScanPackageFeatures(t *testing.T) {
+func TestScanPackageFromFilePathFeatures(t *testing.T) {
 	s := New()
-	pkgInfo, err := s.ScanPackage(filepath.Join("..", "testdata", "features"))
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("..", "testdata", "features"))
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 
 	types := make(map[string]*TypeInfo)
@@ -2408,9 +2408,9 @@ func New(startPath string) (*Scanner, error) {
 	}, nil
 }
 
-// ScanPackage scans a single package at a given directory path.
+// ScanPackageFromFilePath scans a single package at a given directory path.
 // The path should be relative to the project root or an absolute path.
-func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackageFromFilePath(pkgPath string) (*scanner.PackageInfo, error) {
 	info, err := os.Stat(pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not stat path %s: %w", pkgPath, err)
@@ -2420,17 +2420,17 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 		return nil, fmt.Errorf("path %s is not a directory", pkgPath)
 	}
 
-	return s.scanner.ScanPackage(pkgPath)
+	return s.scanner.ScanPackageFromFilePath(pkgPath)
 }
 
-// ScanPackageByImport scans a single package using its Go import path.
+// ScanPackageFromImportPath scans a single package using its Go import path.
 // e.g., "github.com/your/project/models"
-func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackageFromImportPath(importPath string) (*scanner.PackageInfo, error) {
 	dirPath, err := s.locator.FindPackageDir(importPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
-	return s.ScanPackage(dirPath)
+	return s.ScanPackageFromFilePath(dirPath)
 }
 ````
 
@@ -2463,16 +2463,16 @@ func TestNew_Integration(t *testing.T) {
 	}
 }
 
-// TestScanPackage_Integration tests the full scanning process on the basic testdata.
-func TestScanPackage_Integration(t *testing.T) {
+// TestScanPackageFromFilePath_Integration tests the full scanning process on the basic testdata.
+func TestScanPackageFromFilePath_Integration(t *testing.T) {
 	s, err := New(".")
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkgInfo, err := s.ScanPackage("./testdata/basic")
+	pkgInfo, err := s.ScanPackageFromFilePath("./testdata/basic")
 	if err != nil {
-		t.Fatalf("ScanPackage() failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath() failed: %v", err)
 	}
 
 	if pkgInfo.Name != "basic" {
@@ -2483,17 +2483,17 @@ func TestScanPackage_Integration(t *testing.T) {
 	}
 }
 
-// TestScanPackageByImport_Integration tests scanning using a Go-style import path.
-func TestScanPackageByImport_Integration(t *testing.T) {
+// TestScanPackageFromImportPath_Integration tests scanning using a Go-style import path.
+func TestScanPackageFromImportPath_Integration(t *testing.T) {
 	s, err := New(".")
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 
 	importPath := "github.com/podhmo/go-scan/testdata/multipkg/models"
-	pkgInfo, err := s.ScanPackageByImport(importPath)
+	pkgInfo, err := s.ScanPackageFromImportPath(importPath)
 	if err != nil {
-		t.Fatalf("ScanPackageByImport() failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath() failed: %v", err)
 	}
 
 	if pkgInfo.Name != "models" {
@@ -2511,9 +2511,9 @@ func TestMultiPackageReference(t *testing.T) {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkgInfo, err := s.ScanPackage(filepath.Join("testdata", "multipkg", "api"))
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("testdata", "multipkg", "api"))
 	if err != nil {
-		t.Fatalf("ScanPackage() failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath() failed: %v", err)
 	}
 
 	var handlerStruct *scanner.TypeInfo
@@ -2996,7 +2996,7 @@ func main() {
 		log.Fatalf("Failed to create scanner: %v", err)
 	}
 
-	pkgInfo, err := scanner.ScanPackageByImport("github.com/vvakame/goscan/testdata/multipkg/api")
+	pkgInfo, err := scanner.ScanPackageFromImportPath("github.com/vvakame/goscan/testdata/multipkg/api")
 	if err != nil {
 		log.Fatalf("Failed to scan package: %v", err)
 	}
@@ -3269,7 +3269,7 @@ const (
 // PackageResolver is an interface that can resolve an import path to a package definition.
 // It is implemented by the top-level typescanner.Scanner to enable lazy, cached lookups.
 type PackageResolver interface {
-	ScanPackageByImport(importPath string) (*PackageInfo, error)
+	ScanPackageFromImportPath(importPath string) (*PackageInfo, error)
 }
 
 // PackageInfo holds all the extracted information from a single package.
@@ -3331,7 +3331,7 @@ func (ft *FieldType) Resolve() (*TypeInfo, error) {
 		return nil, fmt.Errorf("type %q cannot be resolved: no resolver or import path available", ft.Name)
 	}
 
-	pkgInfo, err := ft.resolver.ScanPackageByImport(ft.fullImportPath)
+	pkgInfo, err := ft.resolver.ScanPackageFromImportPath(ft.fullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.fullImportPath, ft.typeName, err)
 	}
@@ -3388,8 +3388,8 @@ func New() *Scanner {
 	return &Scanner{}
 }
 
-// ScanPackage parses all .go files in a given directory and returns PackageInfo.
-func (s *Scanner) ScanPackage(dirPath string, resolver PackageResolver) (*PackageInfo, error) {
+// ScanPackageFromFilePath parses all .go files in a given directory and returns PackageInfo.
+func (s *Scanner) ScanPackageFromFilePath(dirPath string, resolver PackageResolver) (*PackageInfo, error) {
 	s.resolver = resolver
 	pkgs, err := parser.ParseDir(token.NewFileSet(), dirPath, func(fi os.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
@@ -3639,21 +3639,21 @@ import (
 
 // MockResolver is a mock implementation of PackageResolver for tests.
 type MockResolver struct {
-	ScanPackageByImportFunc func(importPath string) (*PackageInfo, error)
+	ScanPackageFromImportPathFunc func(importPath string) (*PackageInfo, error)
 }
 
-func (m *MockResolver) ScanPackageByImport(importPath string) (*PackageInfo, error) {
-	if m.ScanPackageByImportFunc != nil {
-		return m.ScanPackageByImportFunc(importPath)
+func (m *MockResolver) ScanPackageFromImportPath(importPath string) (*PackageInfo, error) {
+	if m.ScanPackageFromImportPathFunc != nil {
+		return m.ScanPackageFromImportPathFunc(importPath)
 	}
 	return nil, nil
 }
 
-func TestScanPackageFeatures(t *testing.T) {
+func TestScanPackageFromFilePathFeatures(t *testing.T) {
 	s := New()
-	pkgInfo, err := s.ScanPackage(filepath.Join("..", "testdata", "features"), &MockResolver{})
+	pkgInfo, err := s.ScanPackageFromFilePath(filepath.Join("..", "testdata", "features"), &MockResolver{})
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 
 	types := make(map[string]*TypeInfo)
@@ -3705,7 +3705,7 @@ func TestScanPackageFeatures(t *testing.T) {
 func TestFieldType_Resolve(t *testing.T) {
 	// Setup a mock resolver that returns a predefined package info
 	resolver := &MockResolver{
-		ScanPackageByImportFunc: func(importPath string) (*PackageInfo, error) {
+		ScanPackageFromImportPathFunc: func(importPath string) (*PackageInfo, error) {
 			if importPath == "example.com/models" {
 				return &PackageInfo{
 					Types: []*TypeInfo{
@@ -3738,7 +3738,7 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 
 	// Second call should use the cache (we can't easily test this, but we can nil out the func)
-	resolver.ScanPackageByImportFunc = nil
+	resolver.ScanPackageFromImportPathFunc = nil
 	def2, err := ft.Resolve()
 	if err != nil {
 		t.Fatalf("Second Resolve() call failed: %v", err)
@@ -3791,9 +3791,9 @@ func New(startPath string) (*Scanner, error) {
 	}, nil
 }
 
-// ScanPackage scans a single package at a given directory path.
+// ScanPackageFromFilePath scans a single package at a given directory path.
 // The path should be relative to the project root or an absolute path.
-func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackageFromFilePath(pkgPath string) (*scanner.PackageInfo, error) {
 	info, err := os.Stat(pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not stat path %s: %w", pkgPath, err)
@@ -3803,12 +3803,12 @@ func (s *Scanner) ScanPackage(pkgPath string) (*scanner.PackageInfo, error) {
 		return nil, fmt.Errorf("path %s is not a directory", pkgPath)
 	}
 
-	return s.scanner.ScanPackage(pkgPath, s)
+	return s.scanner.ScanPackageFromFilePath(pkgPath, s)
 }
 
-// ScanPackageByImport scans a single package using its Go import path.
+// ScanPackageFromImportPath scans a single package using its Go import path.
 // It uses a cache to avoid re-scanning the same package multiple times.
-func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, error) {
+func (s *Scanner) ScanPackageFromImportPath(importPath string) (*scanner.PackageInfo, error) {
 	// Check cache first
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
@@ -3823,7 +3823,7 @@ func (s *Scanner) ScanPackageByImport(importPath string) (*scanner.PackageInfo, 
 		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
 	}
 
-	pkgInfo, err := s.ScanPackage(dirPath)
+	pkgInfo, err := s.ScanPackageFromFilePath(dirPath)
 	if err != nil {
 		return nil, err
 	}
@@ -3874,9 +3874,9 @@ func TestLazyResolution_Integration(t *testing.T) {
 
 	// Scan the 'api' package, which depends on the 'models' package.
 	apiImportPath := "example.com/multipkg-test/api"
-	pkgInfo, err := s.ScanPackageByImport(apiImportPath)
+	pkgInfo, err := s.ScanPackageFromImportPath(apiImportPath)
 	if err != nil {
-		t.Fatalf("ScanPackageByImport() failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath() failed: %v", err)
 	}
 
 	// Find the Handler struct

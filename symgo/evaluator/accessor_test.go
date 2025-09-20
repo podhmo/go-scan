@@ -62,7 +62,7 @@ func (s *S) GetName() string {
 
 		t.Run("findMethodOnType", func(t *testing.T) {
 			receiver := &object.SymbolicPlaceholder{Reason: "test receiver"}
-			method, err := eval.accessor.findMethodOnType(ctx, sTypeInfo, "GetName", eval.UniverseEnv, receiver)
+			method, err := eval.accessor.findMethodOnType(ctx, sTypeInfo, "GetName", eval.UniverseEnv, receiver, 0)
 			if err != nil {
 				t.Fatalf("findMethodOnType failed: %+v", err)
 			}
@@ -76,7 +76,7 @@ func (s *S) GetName() string {
 		return nil
 	}
 
-	_, err := scantest.Run(t, context.Background(), dir, []string{"."}, action)
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action)
 	if err != nil {
 		t.Fatalf("scantest.Run failed: %+v", err)
 	}

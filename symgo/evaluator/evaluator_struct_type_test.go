@@ -34,10 +34,14 @@ func main() {
 		// Evaluate the file to populate functions etc.
 		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
 
-		// Get the main function
-		mainFunc, ok := env.Get("main")
+		// Get the main function from the package environment
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
 		if !ok {
-			return fmt.Errorf("function 'main' not found")
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found in package %s", pkg.ImportPath)
 		}
 
 		// Execute main. We expect this to run without "not implemented" errors.

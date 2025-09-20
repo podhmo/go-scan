@@ -42,7 +42,7 @@ func main() {
 		pkg := pkgs[0]
 		e := New(s, s.Logger, nil, nil)
 
-		e.RegisterDefaultIntrinsic(func(args ...object.Object) object.Object {
+		e.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			fnObj := args[0]
 			fnArgs := args[1:]
 
@@ -69,7 +69,11 @@ func main() {
 			e.Eval(ctx, astFile, env, pkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := e.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}

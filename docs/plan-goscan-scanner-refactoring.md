@@ -1,51 +1,58 @@
-# Plan: Unify Scanner Pathing Logic and Remove `ScanPackageByPos`
+# Plan: Add Unique ID to `PackageInfo` and Unify Scanner Logic
 
-This document outlines a plan to refactor the `goscan.Scanner`. The primary goals are to unify the divergent path-handling logic between `ScanPackage` and `ScanPackageByImport`, and to remove the deprecated `ScanPackageByPos` method. This work is necessary to improve the scanner's maintainability and robustness.
+This document outlines a plan to refactor the `goscan.Scanner`. The core of this task is to introduce a new, unique `ID` field to `scanner.PackageInfo` to definitively solve the ambiguity of `main` packages for downstream tools. This change necessitates unifying the path-handling logic in the scanner's public methods.
 
-## 1. The Core Problem: Divergent Path Logic
+## 1. The Core Problem & The New Approach
 
-A subtle but critical discrepancy exists between `ScanPackage` (which takes a file path like `./foo`) and `ScanPackageByImport` (which takes a canonical package key like `example.com/module/foo`). This becomes apparent when scanning packages that are not inside the primary module's directory, such as those included via a `replace` directive in `go.mod`.
+### The Ambiguity of `main`
+Downstream tools like `symgo` need a way to distinguish between different `main` packages when analyzing a whole project or workspace. Currently, `go-scan` sets `PackageInfo.Name` to `"main"` for all such packages, creating ambiguity.
 
-- **`ScanPackageByImport` is Robust**: This method works with a canonical package key. It correctly handles complex scenarios by using a special `isExternalModule` check. If the package's directory is outside the scanner's main root directory, it calls a special low-level parse function (`scanner.ScanFilesWithKnownImportPath`) that is given the correct key. This ensures the resulting `PackageInfo` is correct.
+### The Solution: A New `ID` Field
+Per user direction, we will solve this by introducing a new field to `scanner.PackageInfo`:
+```go
+type PackageInfo struct {
+    // ... existing fields
+    ID string // A unique, canonical key for the package.
+}
+```
 
-- **`ScanPackage` is Fragile**: This method takes a raw file path. It contains a fragile "calculate-and-correct" workflow. It first correctly determines the canonical package key using the `locator`. However, it then calls a naive low-level parse function (`scanner.ScanFiles`) which incorrectly recalculates the key. `ScanPackage` then "fixes" this by overwriting the incorrect key on the returned object with the correct one it calculated initially.
+This `ID` will serve as the stable, unique identifier for a package. Its generation logic will be:
+- For a **normal package**, the `ID` is its canonical import path.
+  - e.g., `example.com/foo/bar` -> `ID: "example.com/foo/bar"`
+- For a **`main` package**, the `ID` is its canonical import path with a `.main` suffix.
+  - e.g., a `main` package at `example.com/cmd/app` -> `ID: "example.com/cmd/app.main"`
 
-- **The `symgo` Test Scenario**: The `cross_main_package_test.go` test works because the `symgotest` harness calls `scanner.Scan("./...")`, which uses the file-path-based `ScanPackage`. The fragile logic inside `ScanPackage` correctly handles the test's ad-hoc local modules. A naive refactoring of `ScanPackage` could break this by losing the necessary file path context.
+Crucially, existing fields will **not** be changed:
+- `PackageInfo.Name` will remain `"main"` for main packages.
+- `PackageInfo.ImportPath` will remain the canonical import path (without the `.main` suffix).
 
-The goal is to unify these two methods, ensuring the resulting single implementation is robust and that the correct **canonical package key** (the unique, fully-resolved package path calculated from an input like `./foo`) is used throughout.
+This provides a clean, explicit key for consumers like `symgo` to use for disambiguation, without altering the meaning of existing fields.
 
-## 2. The `main` Package Ambiguity
+### The Refactoring Necessity
+To implement this correctly, the scanner's methods must be able to robustly determine the canonical import path for any given input (be it a file path, relative path, or import path). Currently, `ScanPackage` and `ScanPackageByImport` have different, fragile logic for this. Unifying them is a necessary step to ensure the new `ID` field is always populated correctly.
 
-A related task is to address the ambiguity of `package main`. The user has clarified that **`PackageInfo.Name` must remain `"main"`**.
+## 2. Detailed Plan
 
-The "key" that disambiguates different `main` packages is their unique, canonical package path (which this document refers to as the "key"). The `symgotest` harness demonstrates the correct pattern: it uses this key to retrieve a specific package's environment, and then looks for the `main` function within that unique context.
+### Step 1: Add the `ID` field
+- Modify the `scanner.PackageInfo` struct in `scanner/models.go` to include the new `ID` field.
 
-The problem is that the logic to do this reliably is split across the scanner and the test harness. The refactoring must ensure that the scanner consistently produces a correct and canonical key in `PackageInfo.ImportPath` for all packages, including `main` packages, so that consumers like `symgo` can rely on it for disambiguation.
+### Step 2: Implement ID Generation and Unify Pathing Logic
+- **Create a new private method `scan` in `goscan.go`**: This method will contain the unified and robust logic.
+    1. It will accept a generic `path` string.
+    2. It will determine if the input `path` is a file path or a canonical package path.
+    3. It will robustly find the correct `locator` for the path, even in workspace mode.
+    4. It will resolve the input to a **canonical import path** and an **absolute directory path**.
+    5. It will call the low-level `scanner.scanGoFiles`, passing it the canonical import path.
+    6. Inside `scanner.scanGoFiles`, after determining the `packageName`, the new `ID` field will be generated based on the `packageName` and the canonical import path.
+- **Refactor `ScanPackage` and `ScanPackageByImport`**: These methods will become simple wrappers around the new private `scan` method.
 
-## 3. Detailed Plan
+### Step 3: Remove `ScanPackageByPos`
+- The deprecated `ScanPackageByPos` method will be deleted.
+- Its usage in `examples/docgen/analyzer.go` will be updated to use the robust `ScanPackage`.
 
-### Step 1: Unify and Refactor `goscan.Scanner`
-
-The core of the work is to refactor `ScanPackage` and `ScanPackageByImport` into a single, robust implementation.
-
-- **New private method `scan`**: A new private method, `scan(ctx, path string)`, will be created. This method will contain the unified logic.
-    - It will determine if the input `path` is a canonical package key or a file path.
-    - It will robustly find the correct `locator` (in workspace mode).
-    - It will correctly determine the canonical package key (`PackageInfo.ImportPath`) and the absolute directory path, regardless of the input type.
-    - It will use the `isExternalModule` check and call the appropriate low-level parser (`ScanFiles` or `ScanFilesWithKnownImportPath`), always providing the correct canonical key.
-    - It will handle all caching, using the canonical package key.
-
-- **Refactor `ScanPackage`**: Its body will be replaced with a call to `s.scan(ctx, pkgPath)`.
-
-- **Refactor `ScanPackageByImport`**: Its body will be replaced with a call to `s.scan(ctx, importPath)`.
-
-### Step 2: Remove `ScanPackageByPos`
-
-The `ScanPackageByPos` method will be deleted. Its usage in `examples/docgen/analyzer.go` will be refactored to use the newly-robust `ScanPackage`.
-
-### Step 3: Update Docstrings and Verify
-
-The docstrings for `ScanPackage` and `ScanPackageByImport` will be updated to clarify their behavior and use of file paths vs. canonical package keys. The full test suite, including the `symgo` tests, will be run to ensure no regressions and that the `cross_main_package_test` continues to pass.
+### Step 4: Verification
+- Update docstrings for all affected structs and methods.
+- Run the full test suite. The `symgo` test `cross_main_package_test.go` will need to be adapted to use the new `ID` for its entry point, and with that change, it should pass. All other tests should continue to pass.
 
 ---
 *This document will be submitted for review before any code modifications are undertaken.*

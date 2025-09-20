@@ -84,12 +84,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
-### Unify `goscan.Scanner` Pathing Logic ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
-- [ ] Create a new private `scan` method with unified and robust path resolution logic.
-- [ ] Refactor `ScanPackage` and `ScanPackageByImport` to use the new private `scan` method.
-- [ ] Remove the deprecated `ScanPackageByPos` method and refactor its usage.
-- [ ] Update docstrings for the scanner methods.
-- [ ] Run the full test suite to ensure all tests, including `cross_main_package_test.go`, continue to pass.
+### Add `ID` to `PackageInfo` and Unify Scanner Logic ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
+- [ ] Add new `ID` field to `scanner.PackageInfo` struct.
+- [ ] Implement a unified private `scan` method in `goscan.Scanner` that robustly resolves paths and canonical keys.
+- [ ] Implement logic in the low-level scanner to generate the new `ID` (`<import-path>` or `<import-path>.main`).
+- [ ] Refactor `ScanPackage` and `ScanPackageByImport` to use the new unified `scan` method.
+- [ ] Remove the deprecated `ScanPackageByPos` method and update its call site.
+- [ ] Update documentation and adapt tests (`cross_main_package_test.go`) to use the new `ID` field.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

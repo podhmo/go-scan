@@ -31,9 +31,9 @@ func TestPackageID_SimpleModule(t *testing.T) {
 	}
 
 	t.Run("standard library package", func(t *testing.T) {
-		pkg, err := s.ScanPackageByImport(context.Background(), "example.com/simple/lib")
+		pkg, err := s.ScanPackageFromImportPath(context.Background(), "example.com/simple/lib")
 		if err != nil {
-			t.Fatalf("ScanPackageByImport failed: %v", err)
+			t.Fatalf("ScanPackageFromImportPath failed: %v", err)
 		}
 		const expectedID = "example.com/simple/lib"
 		if pkg.ID != expectedID {
@@ -45,9 +45,9 @@ func TestPackageID_SimpleModule(t *testing.T) {
 	})
 
 	t.Run("main package", func(t *testing.T) {
-		pkg, err := s.ScanPackageByImport(context.Background(), "example.com/simple/cmd/app")
+		pkg, err := s.ScanPackageFromImportPath(context.Background(), "example.com/simple/cmd/app")
 		if err != nil {
-			t.Fatalf("ScanPackageByImport failed: %v", err)
+			t.Fatalf("ScanPackageFromImportPath failed: %v", err)
 		}
 		const expectedID = "example.com/simple/cmd/app.main"
 		const expectedImportPath = "example.com/simple/cmd/app"
@@ -97,9 +97,9 @@ func TestPackageID_Workspace(t *testing.T) {
 	}
 
 	t.Run("first main package", func(t *testing.T) {
-		pkg, err := s.ScanPackageByImport(context.Background(), "example.com/workspace/app1")
+		pkg, err := s.ScanPackageFromImportPath(context.Background(), "example.com/workspace/app1")
 		if err != nil {
-			t.Fatalf("ScanPackageByImport for app1 failed: %v", err)
+			t.Fatalf("ScanPackageFromImportPath for app1 failed: %v", err)
 		}
 		const expectedID = "example.com/workspace/app1.main"
 		if pkg.ID != expectedID {
@@ -108,9 +108,9 @@ func TestPackageID_Workspace(t *testing.T) {
 	})
 
 	t.Run("second main package", func(t *testing.T) {
-		pkg, err := s.ScanPackageByImport(context.Background(), "example.com/workspace/app2")
+		pkg, err := s.ScanPackageFromImportPath(context.Background(), "example.com/workspace/app2")
 		if err != nil {
-			t.Fatalf("ScanPackageByImport for app2 failed: %v", err)
+			t.Fatalf("ScanPackageFromImportPath for app2 failed: %v", err)
 		}
 		const expectedID = "example.com/workspace/app2.main"
 		if pkg.ID != expectedID {
@@ -168,9 +168,9 @@ replace example.com/util => ` + utilModuleDir + `
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkg, err := s.ScanPackageByImport(context.Background(), "example.com/util/helper")
+	pkg, err := s.ScanPackageFromImportPath(context.Background(), "example.com/util/helper")
 	if err != nil {
-		t.Fatalf("ScanPackageByImport failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath failed: %v", err)
 	}
 	const expectedID = "example.com/util/helper"
 	if pkg.ID != expectedID {

@@ -1,16 +1,16 @@
 # Plan: Unify Scanner Logic & Introduce a Unique Package ID
 
 This document outlines a plan to refactor the `goscan.Scanner`. This refactoring addresses two core issues simultaneously:
-1.  Unifying the divergent and fragile path-handling logic between `ScanPackage` and `ScanPackageByImport`.
+1.  Unifying the divergent and fragile path-handling logic between `ScanPackageFromFilePath` and `ScanPackageFromImportPath`.
 2.  Introducing a new, unique `ID` field to `scanner.PackageInfo` to definitively solve the ambiguity of `main` packages for downstream tools.
 
 ## 1. Background: The Two Core Problems
 
 ### Problem 1: The Scanner Method Refactoring Story (Divergent Path Logic)
-A subtle but critical discrepancy exists between `goscan.Scanner`'s two main methods: `ScanPackage` (which takes a file path like `./foo`) and `ScanPackageByImport` (which takes a canonical package path like `example.com/module/foo`). This becomes apparent when scanning packages that are not inside the primary module's directory, such as those included via a `go.mod` `replace` directive.
+A subtle but critical discrepancy exists between `goscan.Scanner`'s two main methods: `ScanPackageFromFilePath` (which takes a file path like `./foo`) and `ScanPackageFromImportPath` (which takes a canonical package path like `example.com/module/foo`). This becomes apparent when scanning packages that are not inside the primary module's directory, such as those included via a `go.mod` `replace` directive.
 
-- **`ScanPackageByImport` is Robust**: This method correctly handles these "external" packages. It uses an `isExternalModule` check. If the package's resolved directory is outside the main module root, it calls a special low-level parse function (`scanner.ScanFilesWithKnownImportPath`) that is given the correct, canonical package path. This works.
-- **`ScanPackage` is Fragile**: This method has its own "calculate-and-correct" workflow for external paths. It first correctly determines the canonical package path using the `locator`. However, it then calls the naive low-level parse function (`scanner.ScanFiles`), which incorrectly recalculates the path. `ScanPackage` then "fixes" this by overwriting the incorrect path on the returned object with the correct one it calculated initially. This workflow is brittle and a source of potential bugs.
+- **`ScanPackageFromImportPath` is Robust**: This method correctly handles these "external" packages. It uses an `isExternalModule` check. If the package's resolved directory is outside the main module root, it calls a special low-level parse function (`scanner.ScanFilesWithKnownImportPath`) that is given the correct, canonical package path. This works.
+- **`ScanPackageFromFilePath` is Fragile**: This method has its own "calculate-and-correct" workflow for external paths. It first correctly determines the canonical package path using the `locator`. However, it then calls the naive low-level parse function (`scanner.ScanFiles`), which incorrectly recalculates the path. `ScanPackageFromFilePath` then "fixes" this by overwriting the incorrect path on the returned object with the correct one it calculated initially. This workflow is brittle and a source of potential bugs.
 
 The core of the refactoring is to eliminate this fragile, divergent logic. We must unify the methods so they share a single, robust implementation that handles all pathing scenarios correctly.
 
@@ -36,8 +36,8 @@ Downstream tools like `symgo` need a way to distinguish between different `main`
 - **Low-Level Call**: The method will use the `isExternalModule` check to call the correct low-level parser (`ScanFiles` or `ScanFilesWithKnownImportPath`), ensuring the canonical package path is always passed down.
 
 ### Step 3: Refactor Public Methods
-- `ScanPackage` and `ScanPackageByImport` will be refactored to be simple wrappers around the new private `scan` method.
-- The deprecated `ScanPackageByPos` method will be deleted, and its call site in `examples/docgen` will be updated to use the robust `ScanPackage`.
+- `ScanPackageFromFilePath` and `ScanPackageFromImportPath` will be refactored to be simple wrappers around the new private `scan` method.
+- The deprecated `ScanPackageFromFilePathByPos` method will be deleted, and its call site in `examples/docgen` will be updated to use the robust `ScanPackageFromFilePath`.
 
 ### Step 4: Update Documentation and Verify
 - Docstrings for all affected structs and methods will be updated, clarifying the role of the new `ID` field and the behavior of the refactored methods.

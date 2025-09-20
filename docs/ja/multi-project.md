@@ -32,7 +32,7 @@ Go言語におけるコードジェネレーションは、ボイラープレー
 
 `scanner/scanner.go` と `scanner/models.go` のコード調査に基づき、`go-scan` の現在の主要なコンポーネントとデータフローは以下のように理解されます。
 
-*   **`Scanner`**: Goソースコードをパースし、型情報を抽出する中心的役割を担います。`token.FileSet` を保持し、`ScanPackage` や `ScanFiles` メソッドを通じて、パッケージ内の型、関数、定数などの情報を集約した `PackageInfo` オブジェクトを生成します。
+*   **`Scanner`**: Goソースコードをパースし、型情報を抽出する中心的役割を担います。`token.FileSet` を保持し、`ScanPackageFromFilePath` や `ScanFiles` メソッドを通じて、パッケージ内の型、関数、定数などの情報を集約した `PackageInfo` オブジェクトを生成します。
 *   **`PackageInfo`**: 単一パッケージのスキャン結果のコンテナです。複数ジェネレータ間で共有されるべき主要な情報単位となります。
 *   **`TypeInfo`, `FieldInfo`, `FieldType`**: それぞれ型定義、構造体フィールド（または関数のパラメータ/リザルト）、フィールドの型に関する詳細情報を格納するモデルです。特に `FieldType` は、`IsPointer`, `IsSlice`, `Elem` などの属性を持ち、`Resolve(ctx context.Context)` メソッドを通じて、`PackageResolver` を介した外部パッケージ型の遅延解決をサポートします。
 *   **`PackageResolver`**: `Scanner` がインポート宣言を解決し、他のパッケージの `PackageInfo` を取得（スキャンまたはキャッシュから）するために用いるインターフェースです。
@@ -199,7 +199,7 @@ func (b *ScanBroker) getPackageByImportPath(ctx context.Context, importPath stri
 		return nil, fmt.Errorf("failed to create scanner for %s: %w", importPath, err)
 	}
 
-	scannedPkgInfo, err := scn.ScanPackage(ctx, actualDirPath, b.resolver)
+	scannedPkgInfo, err := scn.ScanPackageFromFilePath(ctx, actualDirPath, b.resolver)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %s (dir %s): %w", importPath, actualDirPath, err)
 	}
@@ -243,8 +243,8 @@ type BrokerPackageResolver struct {
 	broker *ScanBroker
 }
 
-// ScanPackageByImport is called by scanner.Scanner for resolving imported packages.
-func (r *BrokerPackageResolver) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+// ScanPackageFromImportPath is called by scanner.Scanner for resolving imported packages.
+func (r *BrokerPackageResolver) ScanPackageFromImportPath(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
 	slog.DebugContext(ctx, "BrokerPackageResolver: Request to resolve import", slog.String("importPath", importPath))
 	return r.broker.getPackageByImportPath(ctx, importPath) // Pass context
 }

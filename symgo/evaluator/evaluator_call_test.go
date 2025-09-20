@@ -695,7 +695,7 @@ func main() {
 
 		// Manually create the placeholder for the external function call
 		// This simulates what would happen inside the evaluator when it encounters helper.GetPair
-		helperPkg, err := s.ScanPackageByImport(ctx, "example.com/me/helper")
+		helperPkg, err := s.ScanPackageFromImportPath(ctx, "example.com/me/helper")
 		if err != nil {
 			return fmt.Errorf("failed to scan helper package: %w", err)
 		}

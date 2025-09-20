@@ -16,7 +16,7 @@ This plan outlines an approach to solve this by creating a robust, lazy-loading 
 The main `goscan.Scanner` instance will be treated as the single source of truth. It will maintain a cache of all packages that have been scanned during its lifecycle.
 
 -   **Role**: To manage the global `packageCache` (`map[string]*scanner.PackageInfo`).
--   **Functionality**: All package scanning operations, like `ScanPackageByImport`, will be idempotent. They will first check the cache and only perform a file scan if the package has not been previously loaded.
+-   **Functionality**: All package scanning operations, like `ScanPackageFromImportPath`, will be idempotent. They will first check the cache and only perform a file scan if the package has not been previously loaded.
 
 ### 2.2. Lazy Scanning via `FieldType.Resolve()`
 

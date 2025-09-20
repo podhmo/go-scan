@@ -83,12 +83,12 @@ func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeI
 	return fieldType.Resolve(ctxWithPath)
 }
 
-// ScanPackageByImport makes scanner.Scanner implement the PackageResolver interface.
-func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
+// ScanPackageFromImportPath makes scanner.Scanner implement the PackageResolver interface.
+func (s *Scanner) ScanPackageFromImportPath(ctx context.Context, importPath string) (*PackageInfo, error) {
 	if s.resolver == nil {
 		return nil, fmt.Errorf("scanner's internal resolver is not set, cannot scan by import path %q", importPath)
 	}
-	return s.resolver.ScanPackageByImport(ctx, importPath)
+	return s.resolver.ScanPackageFromImportPath(ctx, importPath)
 }
 
 // ScanFiles parses a specific list of .go files and returns PackageInfo.
@@ -118,8 +118,8 @@ func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []
 	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath)
 }
 
-// ScanPackageImports parses only the import declarations from a set of Go files.
-func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageImports, error) {
+// ScanPackageFromFilePathImports parses only the import declarations from a set of Go files.
+func (s *Scanner) ScanPackageFromFilePathImports(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageImports, error) {
 	info := &PackageImports{
 		ImportPath:  canonicalImportPath,
 		FileImports: make(map[string][]string),

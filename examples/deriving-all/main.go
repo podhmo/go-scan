@@ -201,7 +201,7 @@ func main() {
 	// Process directories
 	for _, dirPath := range dirsToScan {
 		slog.InfoContext(ctx, "Scanning directory", "path", dirPath)
-		pkgInfo, err := gscn.ScanPackage(ctx, dirPath)
+		pkgInfo, err := gscn.ScanPackageFromFilePath(ctx, dirPath)
 		if err != nil {
 			slog.ErrorContext(ctx, "Error scanning package", "path", dirPath, slog.Any("error", err))
 			errorCount++

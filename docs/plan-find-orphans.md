@@ -44,7 +44,7 @@ The prohibition on `go/packages` and `go/types` in this repository's `AGENTS.md`
 
 - Use `go-scan`'s `ModuleWalker` to find all packages in the module.
 - For each package, use the `scanner` to parse the files and collect a comprehensive list of all defined functions and methods.
-- Store these definitions in a map, let's call it `allDeclarations`. The key will be the fully qualified name (e.g., `github.com/podhmo/go-scan/scanner.ScanPackage`) and the value will be an object containing information about the definition (e.g., `*scanner.Func`, its position, etc.).
+- Store these definitions in a map, let's call it `allDeclarations`. The key will be the fully qualified name (e.g., `github.com/podhmo/go-scan/scanner.ScanPackageFromFilePath`) and the value will be an object containing information about the definition (e.g., `*scanner.Func`, its position, etc.).
 
 ### Step 3: Track Usage via Symbolic Execution
 
@@ -76,7 +76,7 @@ To validate this plan, we can simulate the process on the `go-scan` codebase its
 
 - **Target**: `github.com/podhmo/go-scan`
 - **Simulation**:
-    1.  `go-scan` would first collect all functions, e.g., `goscan.New`, `scanner.Scanner.ScanPackage`, `astwalk.Walk`, etc.
+    1.  `go-scan` would first collect all functions, e.g., `goscan.New`, `scanner.Scanner.ScanPackageFromFilePath`, `astwalk.Walk`, etc.
     2.  `symgo` would then be configured with the usage-tracking intrinsic.
     3.  The tool would start symbolically executing functions, for example `goscan.New`.
     4.  Inside `goscan.New`, it sees calls to `locator.FindModuleRoot`, `modulewalker.New`, etc. The intrinsic fires for each, adding them to the `usageMap`.
@@ -113,7 +113,7 @@ While `symgo` is a powerful foundation, its current implementation has several g
 - **Resolution**: This limitation has been resolved by making the `goscan.Scanner` itself workspace-aware.
     - A new `WithModuleDirs` option allows the `Scanner` to be initialized with multiple module roots.
     - The `Scanner` now manages a list of `locator.Locator` instances, one for each module.
-    - Its `ScanPackageByImport` method was enhanced to automatically use the correct module's locator when resolving a package, thus providing a unified view to the `symgo` interpreter without requiring changes to `symgo` itself.
+    - Its `ScanPackageFromImportPath` method was enhanced to automatically use the correct module's locator when resolving a package, thus providing a unified view to the `symgo` interpreter without requiring changes to `symgo` itself.
 
 ## 6. Implementation Task List
 
@@ -170,7 +170,7 @@ The `find-orphans` tool now supports analyzing a "workspace" containing multiple
 Instead of creating a separate management layer or multiple `Scanner` instances, the core `goscan.Scanner` was made workspace-aware.
 
 1.  **Workspace-Aware Scanner**: The `goscan.Scanner` can be initialized with a list of module directories via a new `WithModuleDirs` option. When this option is used, the scanner creates and manages a `locator.Locator` for each module.
-2.  **Unified Package Resolution**: The `Scanner.ScanPackageByImport` method was enhanced to be workspace-aware. When asked to resolve a package, it first determines which module the package belongs to and uses the corresponding `locator`. This allows it to seamlessly find and parse packages from any module in the workspace. Standard library packages are also handled correctly.
+2.  **Unified Package Resolution**: The `Scanner.ScanPackageFromImportPath` method was enhanced to be workspace-aware. When asked to resolve a package, it first determines which module the package belongs to and uses the corresponding `locator`. This allows it to seamlessly find and parse packages from any module in the workspace. Standard library packages are also handled correctly.
 3.  **Package Discovery**: The `find-orphans` tool's analysis logic was updated. In workspace mode, it constructs absolute path patterns for each module (e.g., `/path/to/moduleA/...`, `/path/to/moduleB/...`) and passes this combined list to the `ModuleWalker`. This ensures that the initial discovery phase finds all packages across all modules in a single walk.
 
 ## 8. Future Enhancement: Automatic `go.work` Detection

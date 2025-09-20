@@ -143,7 +143,7 @@ func (a *Analyzer) analyzeTopLevelHandleFunc(ctx context.Context, interp *symgo.
 
 // Analyze analyzes the package starting from a specific entrypoint function.
 func (a *Analyzer) Analyze(ctx context.Context, importPath string, entrypoint string) error {
-	pkg, err := a.Scanner.ScanPackageByImport(ctx, importPath)
+	pkg, err := a.Scanner.ScanPackageFromImportPath(ctx, importPath)
 	if err != nil {
 		return fmt.Errorf("failed to load sample API package: %w", err)
 	}
@@ -370,8 +370,8 @@ func (a *Analyzer) analyzeHandlerBody(ctx context.Context, handler *symgo.Functi
 	a.operationStack = append(a.operationStack, op)
 
 	// The handler's package is already available on the symgo.Function object.
-	// We can use ScanPackageByImport, which is more robust and fits the new design.
-	pkg, err := a.Scanner.ScanPackageByImport(ctx, handler.Package.ImportPath)
+	// We can use ScanPackageFromImportPath, which is more robust and fits the new design.
+	pkg, err := a.Scanner.ScanPackageFromImportPath(ctx, handler.Package.ImportPath)
 	if err != nil {
 		a.logger.WarnContext(ctx, "failed to get package for handler",
 			"handler", handler.Name.Name,

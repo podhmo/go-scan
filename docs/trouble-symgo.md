@@ -27,7 +27,7 @@ The verbose log file (`find-orphans-verbose-head.log`) is filled with a rapidly 
 
 - `getOrLoadPackage: requesting package`
 - `ResolvePackage: checking policy`
-- `ScanPackageByImport CACHE HIT`
+- `ScanPackageFromImportPath CACHE HIT`
 - `ensurePackageEnvPopulated: checking package`
 
 This pattern indicates that the evaluator is continuously trying to load and initialize packages it has already processed. The call stack is not correctly tracking which packages are currently under analysis, leading to a recursive reentry. For example, while analyzing package `A` which imports `B`, the evaluator starts analyzing `B`. If `B` (or a dependency of `B`) in turn imports `A`, the evaluator re-enters the analysis for `A` without realizing it's already in progress, leading to an infinite loop.

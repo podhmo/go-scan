@@ -79,7 +79,7 @@ func main() {
 	// Replace with an actual import path from your project or testdata.
 	// The example below uses testdata included in this repository.
 	pkgImportPath := "github.com/podhmo/go-scan/testdata/multipkg/api"
-	pkgInfo, err := scanner.ScanPackageByImport(pkgImportPath)
+	pkgInfo, err := scanner.ScanPackageFromImportPath(pkgImportPath)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to scan package", slog.String("package", pkgImportPath), slog.Any("error", err))
 		os.Exit(1)

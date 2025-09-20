@@ -99,7 +99,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 - A `minigo.Interpreter` struct will hold a `goscan.Scanner` instance.
 - When `Run` is called, it will first use `go/parser.ParseFile` to get the AST for the user's script (`.mgo` file).
-- The interpreter will walk the declarations of the script AST. When it encounters an `import` statement, it will use its internal `goscan.Scanner` to lazily `ScanPackageByImport` when a symbol from that package is first accessed (e.g., `fmt.Println`).
+- The interpreter will walk the declarations of the script AST. When it encounters an `import` statement, it will use its internal `goscan.Scanner` to lazily `ScanPackageFromImportPath` when a symbol from that package is first accessed (e.g., `fmt.Println`).
 - `go-scan` will handle finding the package, parsing it, and returning its exported symbols (`PackageInfo`), which the interpreter will then load into its environment.
 
 ### 3.2.1. Lazy Loading of Imports and Symbols

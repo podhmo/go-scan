@@ -82,7 +82,7 @@ func TestEnumScanning_LazyLoaded(t *testing.T) {
 
 	pkgCache := make(map[string]*PackageInfo)
 	mockResolver := &MockResolver{
-		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
+		ScanPackageFromImportPathFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if pkg, found := pkgCache[importPath]; found {
 				return pkg, nil
 			}

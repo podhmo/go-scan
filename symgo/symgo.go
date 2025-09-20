@@ -229,7 +229,7 @@ func (i *Interpreter) BindInterface(ctx context.Context, ifaceTypeName string, c
 		return fmt.Errorf("concrete type name must be fully qualified (e.g., 'bytes.Buffer'), got %s", concreteTypeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(ctx, pkgPath)
+	pkg, err := i.scanner.ScanPackageFromImportPath(ctx, pkgPath)
 	if err != nil {
 		return fmt.Errorf("could not scan package %q for concrete type: %w", pkgPath, err)
 	}
@@ -259,7 +259,7 @@ func (i *Interpreter) NewSymbolic(ctx context.Context, name string, typeName str
 		return nil, fmt.Errorf("type name must be fully qualified (e.g., 'io.Writer'), got %s", typeName)
 	}
 
-	pkg, err := i.scanner.ScanPackageByImport(ctx, pkgPath)
+	pkg, err := i.scanner.ScanPackageFromImportPath(ctx, pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not scan package %q for symbolic var type: %w", pkgPath, err)
 	}
@@ -304,7 +304,7 @@ func splitQualifiedName(name string) (pkgPath, typeName string) {
 	// For "bytes.Buffer", the import path is "bytes".
 	// For "mypackage.MyType" in the current module, it might be "mymodule/mypackage".
 	// The scanner handles resolving this. We just need to provide the parts.
-	// The logic in BindInterface and NewSymbolic which calls scanner.ScanPackageByImport
+	// The logic in BindInterface and NewSymbolic which calls scanner.ScanPackageFromImportPath
 	// with the pkgCandidate works correctly for both "bytes" and "github.com/foo/bar".
 	return pkgCandidate, typeName
 }

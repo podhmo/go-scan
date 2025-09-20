@@ -110,12 +110,12 @@ func TestInterfaceResolution(t *testing.T) {
 
 			ctx := t.Context()
 			for _, pkgPath := range p {
-				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+				if _, err := s.ScanPackageFromImportPath(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
 				}
 			}
 
-			mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+			mainPkgInfo, err := s.ScanPackageFromImportPath(ctx, "example.com/me")
 			if err != nil {
 				t.Fatalf("could not get main package: %v", err)
 			}
@@ -239,12 +239,12 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 
 			ctx := t.Context()
 			for _, pkgPath := range p {
-				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+				if _, err := s.ScanPackageFromImportPath(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
 				}
 			}
 
-			mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+			mainPkgInfo, err := s.ScanPackageFromImportPath(ctx, "example.com/me")
 			if err != nil {
 				t.Fatalf("could not get main package: %v", err)
 			}
@@ -369,12 +369,12 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 
 			ctx := t.Context()
 			for _, pkgPath := range p {
-				if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+				if _, err := s.ScanPackageFromImportPath(ctx, pkgPath); err != nil {
 					t.Fatalf("could not scan package %s: %v", pkgPath, err)
 				}
 			}
 
-			mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+			mainPkgInfo, err := s.ScanPackageFromImportPath(ctx, "example.com/me")
 			if err != nil {
 				t.Fatalf("could not get main package: %v", err)
 			}
@@ -498,12 +498,12 @@ func TestInterfaceResolutionWithEmbeddedInterfaces(t *testing.T) {
 
 	ctx := t.Context()
 	for _, pkgPath := range []string{"example.com/me/def", "example.com/me/impl", "example.com/me"} {
-		if _, err := s.ScanPackageByImport(ctx, pkgPath); err != nil {
+		if _, err := s.ScanPackageFromImportPath(ctx, pkgPath); err != nil {
 			t.Fatalf("could not scan package %s: %v", pkgPath, err)
 		}
 	}
 
-	mainPkgInfo, err := s.ScanPackageByImport(ctx, "example.com/me")
+	mainPkgInfo, err := s.ScanPackageFromImportPath(ctx, "example.com/me")
 	if err != nil {
 		t.Fatalf("could not get main package: %v", err)
 	}

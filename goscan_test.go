@@ -54,9 +54,9 @@ func TestLazyResolution_Integration(t *testing.T) {
 
 	// Scan the 'api' package, which depends on the 'models' package.
 	apiImportPath := "example.com/multipkg-test/api"
-	pkgInfo, err := s.ScanPackageByImport(context.Background(), apiImportPath)
+	pkgInfo, err := s.ScanPackageFromImportPath(context.Background(), apiImportPath)
 	if err != nil {
-		t.Fatalf("ScanPackageByImport() failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath() failed: %v", err)
 	}
 
 	// Find the Handler struct
@@ -147,9 +147,9 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			}
 		}()
 
-		_, err = s.ScanPackageByImport(context.Background(), apiImportPath)
+		_, err = s.ScanPackageFromImportPath(context.Background(), apiImportPath)
 		if err != nil {
-			t.Fatalf("ScanPackageByImport(%s) failed: %v", apiImportPath, err)
+			t.Fatalf("ScanPackageFromImportPath(%s) failed: %v", apiImportPath, err)
 		}
 
 		handlerSymbolFullName := apiImportPath + ".Handler"
@@ -201,9 +201,9 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 			}
 		}
 
-		_, err = s.ScanPackageByImport(context.Background(), modelsImportPath)
+		_, err = s.ScanPackageFromImportPath(context.Background(), modelsImportPath)
 		if err != nil {
-			t.Fatalf("ScanPackageByImport(%s) failed: %v", modelsImportPath, err)
+			t.Fatalf("ScanPackageFromImportPath(%s) failed: %v", modelsImportPath, err)
 		}
 
 		userSymbolFullName := modelsImportPath + ".User"
@@ -329,9 +329,9 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 
 		defer func() { s.SaveSymbolCache(context.Background()) }()
 
-		_, err = s.ScanPackageByImport(context.Background(), apiImportPath)
+		_, err = s.ScanPackageFromImportPath(context.Background(), apiImportPath)
 		if err != nil {
-			t.Fatalf("ScanPackageByImport failed: %v", err)
+			t.Fatalf("ScanPackageFromImportPath failed: %v", err)
 		}
 
 		if errSave := s.SaveSymbolCache(context.Background()); errSave != nil {
@@ -469,7 +469,7 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 	}
 	s.SetExternalTypeOverrides(context.Background(), overrides)
 
-	pkgInfo, err := s.ScanPackageByImport(context.Background(), "example.com/externaltypes")
+	pkgInfo, err := s.ScanPackageFromImportPath(context.Background(), "example.com/externaltypes")
 	if err != nil {
 		t.Fatalf("Failed to scan package 'example.com/externaltypes': %v", err)
 	}
@@ -535,7 +535,7 @@ func TestScannerWithExternalTypeOverrides(t *testing.T) {
 	}
 	sBasic.SetExternalTypeOverrides(context.Background(), nil)
 
-	pkgBasic, err := sBasic.ScanPackageByImport(context.Background(), "github.com/podhmo/go-scan/testdata/basic")
+	pkgBasic, err := sBasic.ScanPackageFromImportPath(context.Background(), "github.com/podhmo/go-scan/testdata/basic")
 	if err != nil {
 		t.Fatalf("Failed to scan basic package: %v", err)
 	}
@@ -759,7 +759,7 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		}
 	})
 
-	t.Run("ScanPackage_RespectsVisitedFiles", func(t *testing.T) {
+	t.Run("ScanPackageFromFilePath_RespectsVisitedFiles", func(t *testing.T) {
 		sTest, _ := New(WithWorkDir("./testdata/scanfiles"))
 		// Scan core/user.go via ScanFiles first
 		_, err := sTest.ScanFiles(context.Background(), []string{coreUserPathAbs})
@@ -767,33 +767,33 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 			t.Fatalf("ScanFiles(user.go) failed: %v", err)
 		}
 
-		// Now ScanPackage for the whole core package
+		// Now ScanPackageFromFilePath for the whole core package
 		// It should only parse item.go and empty.go as user.go is visited
-		pkgInfo, err := sTest.ScanPackage(context.Background(), "./testdata/scanfiles/core")
+		pkgInfo, err := sTest.ScanPackageFromFilePath(context.Background(), "./testdata/scanfiles/core")
 		if err != nil {
-			t.Fatalf("ScanPackage(core) failed: %v", err)
+			t.Fatalf("ScanPackageFromFilePath(core) failed: %v", err)
 		}
 
 		if pkgInfo == nil {
-			t.Fatal("ScanPackage returned nil pkgInfo")
+			t.Fatal("ScanPackageFromFilePath returned nil pkgInfo")
 		}
 
-		// pkgInfo.Files from ScanPackage should only contain newly parsed files (item.go, empty.go)
+		// pkgInfo.Files from ScanPackageFromFilePath should only contain newly parsed files (item.go, empty.go)
 		expectedFiles := []string{coreItemPathAbs, coreEmptyPathAbs}
 		if !equalStringSlices(pkgInfo.Files, expectedFiles) {
-			t.Errorf("ScanPackage(core) after ScanFiles(user.go): expected Files %v, got %v", expectedFiles, pkgInfo.Files)
+			t.Errorf("ScanPackageFromFilePath(core) after ScanFiles(user.go): expected Files %v, got %v", expectedFiles, pkgInfo.Files)
 		}
 		if findType(pkgInfo.Types, "Item") == nil {
-			t.Error("Type 'Item' should be in ScanPackage result")
+			t.Error("Type 'Item' should be in ScanPackageFromFilePath result")
 		}
 		if findType(pkgInfo.Types, "User") != nil { // User was already visited
-			t.Error("Type 'User' should NOT be in this ScanPackage result (already visited)")
+			t.Error("Type 'User' should NOT be in this ScanPackageFromFilePath result (already visited)")
 		}
 		if _, visited := sTest.visitedFiles[coreItemPathAbs]; !visited {
-			t.Error("item.go not marked visited after ScanPackage")
+			t.Error("item.go not marked visited after ScanPackageFromFilePath")
 		}
 		if _, visited := sTest.visitedFiles[coreEmptyPathAbs]; !visited {
-			t.Error("empty.go not marked visited after ScanPackage")
+			t.Error("empty.go not marked visited after ScanPackageFromFilePath")
 		}
 
 		// Check package cache for the import path
@@ -801,9 +801,9 @@ func TestScanFilesAndGetUnscanned(t *testing.T) {
 		cachedInfo, found := sTest.packageCache[corePkgImportPath]
 		sTest.mu.RUnlock()
 		if !found {
-			t.Errorf("PackageInfo for %s not found in packageCache after ScanPackage", corePkgImportPath)
+			t.Errorf("PackageInfo for %s not found in packageCache after ScanPackageFromFilePath", corePkgImportPath)
 		} else {
-			// The cached info should be the result of this ScanPackage call
+			// The cached info should be the result of this ScanPackageFromFilePath call
 			if !equalStringSlices(cachedInfo.Files, expectedFiles) {
 				t.Errorf("Cached PackageInfo.Files: expected %v, got %v", expectedFiles, cachedInfo.Files)
 			}
@@ -824,25 +824,25 @@ func TestImplements(t *testing.T) {
 	ctx := context.Background()
 	// Setup: Initialize scanner relative to the project root,
 	// as testdata/implements is not a separate Go module.
-	// We'll use ScanPackage with a direct path.
+	// We'll use ScanPackageFromFilePath with a direct path.
 	s, err := New(WithWorkDir(".")) // Assuming tests are run from project root
 	if err != nil {
 		t.Fatalf("New(\".\") failed: %v", err)
 	}
 
 	// Scan the testdata/implements package
-	// Note: ScanPackage's import path resolution might be tricky for non-module testdata.
+	// Note: ScanPackageFromFilePath's import path resolution might be tricky for non-module testdata.
 	// We rely on the absolute path for scanning and then manually construct import path if needed by TypeInfo.
 	// However, Implements itself doesn't directly use import paths from TypeInfo for resolution,
 	// it uses PkgName and Name from FieldType, which are derived by the scanner.
 	// The crucial part is that all types and functions are loaded into one PackageInfo.
 	pkgPath := "./testdata/implements"
-	pkgInfo, err := s.ScanPackage(ctx, pkgPath)
+	pkgInfo, err := s.ScanPackageFromFilePath(ctx, pkgPath)
 	if err != nil {
-		t.Fatalf("ScanPackage(%q) failed: %v", pkgPath, err)
+		t.Fatalf("ScanPackageFromFilePath(%q) failed: %v", pkgPath, err)
 	}
 	if pkgInfo == nil {
-		t.Fatalf("ScanPackage(%q) returned nil PackageInfo", pkgPath)
+		t.Fatalf("ScanPackageFromFilePath(%q) returned nil PackageInfo", pkgPath)
 	}
 	// For types within the same package, PkgName in FieldType might be empty or the package name.
 	// This detail affects how compareFieldTypes works if it were to compare PkgName.
@@ -1191,7 +1191,7 @@ func findFunction(pkgInfo *scanner.PackageInfo, name string) *scanner.FunctionIn
 // This was already defined in the file, ensure it's used or make a new one if needed.
 // func findType(types []*scanner.TypeInfo, name string) *scanner.TypeInfo { ... }
 
-func TestScanner_ScanPackage_Generics(t *testing.T) {
+func TestScanner_ScanPackageFromFilePath_Generics(t *testing.T) {
 	s, err := New(WithWorkDir("./testdata/generics")) // Scanner relative to the "generics" module/directory
 	if err != nil {
 		t.Fatalf("New() for generics testdata failed: %v", err)
@@ -1204,12 +1204,12 @@ func TestScanner_ScanPackage_Generics(t *testing.T) {
 	// if go.mod is not present in testdata/generics.
 	// For this test, we are more interested in the structure parsing than cross-package resolution.
 
-	pkgInfo, err := s.ScanPackage(context.Background(), "./testdata/generics")
+	pkgInfo, err := s.ScanPackageFromFilePath(context.Background(), "./testdata/generics")
 	if err != nil {
-		t.Fatalf("ScanPackage() for './testdata/generics' failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath() for './testdata/generics' failed: %v", err)
 	}
 	if pkgInfo == nil {
-		t.Fatal("ScanPackage() for './testdata/generics' returned nil PackageInfo")
+		t.Fatal("ScanPackageFromFilePath() for './testdata/generics' returned nil PackageInfo")
 	}
 
 	// --- Assertions for Generic Functions ---
@@ -1626,9 +1626,9 @@ type NotAnImplementer struct{}
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkgInfo, err := s.ScanPackage(ctx, tmpdir)
+	pkgInfo, err := s.ScanPackageFromFilePath(ctx, tmpdir)
 	if err != nil {
-		t.Fatalf("ScanPackage(%q) failed: %v", tmpdir, err)
+		t.Fatalf("ScanPackageFromFilePath(%q) failed: %v", tmpdir, err)
 	}
 
 	// Find the interface

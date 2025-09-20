@@ -111,8 +111,8 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath s
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	// Use ScanPackageByImport to leverage the scanner's configured locator.
-	scannedPkg, err := s.ScanPackageByImport(ctx, pkgpath)
+	// Use ScanPackageFromImportPath to leverage the scanner's configured locator.
+	scannedPkg, err := s.ScanPackageFromImportPath(ctx, pkgpath)
 	if err != nil {
 		return fmt.Errorf("failed to scan package %q: %w", pkgpath, err)
 	}

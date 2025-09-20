@@ -49,8 +49,31 @@ func BuiltinMake(ctx context.Context, args ...object.Object) object.Object {
 	}
 
 	if fieldType.IsSlice {
+		var length, capacity int64
+		if len(args) < 2 {
+			return &object.Error{Message: "make for slice expects at least 2 arguments"}
+		}
+		if l, ok := args[1].(*object.Integer); ok {
+			length = l.Value
+		} else {
+			// If length is not a constant, it's symbolic.
+			length = -1 // Use -1 to indicate symbolic length
+		}
+
+		if len(args) >= 3 {
+			if c, ok := args[2].(*object.Integer); ok {
+				capacity = c.Value
+			} else {
+				capacity = -1 // Symbolic capacity
+			}
+		} else {
+			capacity = length // If cap is omitted, it's equal to len.
+		}
+
 		slice := &object.Slice{
 			SliceFieldType: fieldType,
+			Len:            length,
+			Cap:            capacity,
 		}
 		slice.SetFieldType(fieldType)
 		slice.SetTypeInfo(typeArg.TypeInfo())
@@ -84,7 +107,38 @@ func BuiltinLen(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: len expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "len(...) call"}
+
+	arg := args[0]
+	// Recursively unwrap variables to get to the underlying object.
+	for {
+		v, ok := arg.(*object.Variable)
+		if !ok {
+			break
+		}
+		arg = v.Value
+	}
+
+	switch arg := arg.(type) {
+	case *object.Slice:
+		// If the slice itself has a concrete length, use it.
+		if arg.Len >= 0 {
+			return &object.Integer{Value: arg.Len}
+		}
+		// Otherwise, it's symbolic.
+		return &object.SymbolicPlaceholder{Reason: "len on symbolic slice"}
+	case *object.String:
+		return &object.Integer{Value: int64(len(arg.Value))}
+	case *object.Map:
+		return &object.Integer{Value: int64(len(arg.Pairs))}
+	case *object.SymbolicPlaceholder:
+		// If we have a symbolic placeholder with length info (e.g., from an out-of-policy `make`), use it.
+		if arg.Len != -1 {
+			return &object.Integer{Value: arg.Len}
+		}
+		return &object.SymbolicPlaceholder{Reason: "len on symbolic value"}
+	default:
+		return &object.Error{Message: fmt.Sprintf("argument to `len` not supported, got %s", arg.Type())}
+	}
 }
 
 // BuiltinCap is the intrinsic function for the built-in `cap`.
@@ -92,7 +146,30 @@ func BuiltinCap(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: cap expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "cap(...) call"}
+	arg := args[0]
+	// Recursively unwrap variables to get to the underlying object.
+	for {
+		v, ok := arg.(*object.Variable)
+		if !ok {
+			break
+		}
+		arg = v.Value
+	}
+
+	switch arg := arg.(type) {
+	case *object.Slice:
+		if arg.Cap >= 0 {
+			return &object.Integer{Value: arg.Cap}
+		}
+		return &object.SymbolicPlaceholder{Reason: "cap on symbolic slice"}
+	case *object.SymbolicPlaceholder:
+		if arg.Cap != -1 {
+			return &object.Integer{Value: arg.Cap}
+		}
+		return &object.SymbolicPlaceholder{Reason: "cap on symbolic value"}
+	default:
+		return &object.Error{Message: fmt.Sprintf("argument to `cap` not supported, got %s", arg.Type())}
+	}
 }
 
 // BuiltinNew is the intrinsic function for the built-in `new`.

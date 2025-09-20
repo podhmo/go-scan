@@ -390,6 +390,11 @@ type SymbolicPlaceholder struct {
 	// Cache for the Inspect() result to avoid repeated string building
 	inspectCache string
 	cacheValid   bool
+
+	// For symbolic slices/maps, we can sometimes know the length and capacity
+	// even if the contents are unknown. -1 indicates unknown.
+	Len int64
+	Cap int64
 }
 
 // Type returns the type of the SymbolicPlaceholder object.
@@ -488,6 +493,8 @@ type Slice struct {
 	BaseObject
 	Elements       []Object
 	SliceFieldType *scanner.FieldType
+	Len            int64
+	Cap            int64
 }
 
 // Type returns the type of the Slice object.
@@ -513,6 +520,7 @@ func (s *Slice) Inspect() string {
 type Map struct {
 	BaseObject
 	MapFieldType *scanner.FieldType
+	Pairs        map[Object]Object // Simplified representation for symbolic analysis
 }
 
 // Type returns the type of the Map object.

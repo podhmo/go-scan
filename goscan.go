@@ -562,53 +562,12 @@ func listGoFiles(dirPath string, includeTests bool) ([]string, error) {
 	return files, nil
 }
 
-// privateScan is the new unified, core scanning logic.
-// It takes a `key` which can be either an import path or a directory path.
-// The `isImportPath` flag distinguishes between the two.
-// It handles path resolution, caching, scanning, and ID generation.
-func (s *Scanner) privateScan(ctx context.Context, key string, isImportPath bool) (*scanner.PackageInfo, error) {
-	var importPath, pkgDirAbs string
-	var err error
-
-	// 1. Resolve path and import path from the key.
-	if isImportPath {
-		importPath = key
-		loc, err := s.locatorForImportPath(importPath)
-		if err != nil {
-			return nil, fmt.Errorf("privateScan: %w", err)
-		}
-		pkgDirAbs, err = loc.FindPackageDir(importPath)
-		if err != nil {
-			return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
-		}
-	} else { // key is a directory path
-		pkgDirAbs, err = filepath.Abs(key)
-		if err != nil {
-			return nil, fmt.Errorf("could not get absolute path for %s: %w", key, err)
-		}
-		// Since we have the directory, we need to find the corresponding import path.
-		// This is a critical step that must handle main module, workspace modules, and replaced modules.
-		importPath, err = s.locator.PathToImport(pkgDirAbs)
-		if err != nil {
-			// Try other locators in workspace mode
-			if s.isWorkspace {
-				for _, loc := range s.locators {
-					if loc == s.locator {
-						continue // Already tried
-					}
-					importPath, err = loc.PathToImport(pkgDirAbs)
-					if err == nil {
-						break // Found it
-					}
-				}
-			}
-			if err != nil {
-				return nil, fmt.Errorf("could not determine import path for directory %s: %w", pkgDirAbs, err)
-			}
-		}
-	}
-
-	// 2. Check cache using the canonical import path as the key.
+// privateScan is the new unified, core scanning logic. It assumes that the
+// caller has already resolved the absolute directory path and the canonical
+// import path for the package.
+// Its responsibilities are: caching, scanning files, and generating the package ID.
+func (s *Scanner) privateScan(ctx context.Context, pkgDirAbs string, importPath string) (*scanner.PackageInfo, error) {
+	// 1. Check cache using the canonical import path as the key.
 	s.mu.RLock()
 	cachedPkg, found := s.packageCache[importPath]
 	s.mu.RUnlock()
@@ -618,7 +577,7 @@ func (s *Scanner) privateScan(ctx context.Context, key string, isImportPath bool
 	}
 	slog.DebugContext(ctx, "privateScan CACHE MISS", slog.String("importPath", importPath))
 
-	// 3. Scan files.
+	// 2. Scan files.
 	allGoFilesInPkg, err := listGoFiles(pkgDirAbs, s.IncludeTests)
 	if err != nil {
 		return nil, fmt.Errorf("privateScan: failed to list go files in %s: %w", pkgDirAbs, err)
@@ -699,9 +658,34 @@ func (s *Scanner) privateScan(ctx context.Context, key string, isImportPath bool
 }
 
 // ScanPackage scans a single package at a given directory path.
-// It is a wrapper around the unified scanning logic.
 func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
-	return s.privateScan(ctx, pkgPath, false)
+	pkgDirAbs, err := filepath.Abs(pkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not get absolute path for %s: %w", pkgPath, err)
+	}
+
+	// Since we have the directory, we need to find the corresponding import path.
+	// This is a critical step that must handle main module, workspace modules, and replaced modules.
+	importPath, err := s.locator.PathToImport(pkgDirAbs)
+	if err != nil {
+		// Try other locators in workspace mode
+		if s.isWorkspace {
+			for _, loc := range s.locators {
+				if loc == s.locator {
+					continue // Already tried
+				}
+				importPath, err = loc.PathToImport(pkgDirAbs)
+				if err == nil {
+					break // Found it
+				}
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("could not determine import path for directory %s: %w", pkgDirAbs, err)
+		}
+	}
+
+	return s.privateScan(ctx, pkgDirAbs, importPath)
 }
 
 // resolveFilePath attempts to resolve a given path string (rawPath) into an absolute file path.
@@ -939,9 +923,16 @@ func isDir(path string) bool {
 }
 
 // ScanPackageByImport scans a single Go package identified by its import path.
-// It is a wrapper around the unified scanning logic.
 func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
-	return s.privateScan(ctx, importPath, true)
+	loc, err := s.locatorForImportPath(importPath)
+	if err != nil {
+		return nil, fmt.Errorf("ScanPackageByImport: %w", err)
+	}
+	pkgDirAbs, err := loc.FindPackageDir(importPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not find directory for import path %s: %w", importPath, err)
+	}
+	return s.privateScan(ctx, pkgDirAbs, importPath)
 }
 
 // getOrCreateSymbolCache ensures the symbolCache is initialized.

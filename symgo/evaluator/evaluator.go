@@ -1532,169 +1532,68 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 }
 
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
-	e.logger.Debug("evalSelectorExpr", "selector", n.Sel.Name)
-
-	// New, more robust check for interface method calls.
-	// Instead of relying on the scanner's static analysis of the expression, we look up
-	// the variable in our own environment and check the static type info we have stored on it.
-	if ident, ok := n.X.(*ast.Ident); ok {
-		if obj, found := env.Get(ident.Name); found {
-			var staticType *scan.TypeInfo
-			if v, isVar := obj.(*object.Variable); isVar {
-				if ft := v.FieldType(); ft != nil {
-					resolved, err := ft.Resolve(ctx)
-					if err == nil && resolved != nil {
-						staticType = resolved
-					}
-				} else if ti := v.TypeInfo(); ti != nil {
-					staticType = ti
-				}
-			} else if sp, isSym := obj.(*object.SymbolicPlaceholder); isSym {
-				if ti := sp.TypeInfo(); ti != nil {
-					staticType = ti
-				}
-			}
-
-			if staticType != nil && staticType.Kind == scan.InterfaceKind {
-				// Check for a registered intrinsic for this interface method call.
-				key := fmt.Sprintf("(%s.%s).%s", staticType.PkgPath, staticType.Name, n.Sel.Name)
-				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-					// Create a closure that prepends the receiver to the arguments.
-					boundIntrinsic := func(ctx context.Context, args ...object.Object) object.Object {
-						return intrinsicFn(ctx, append([]object.Object{obj}, args...)...)
-					}
-					return &object.Intrinsic{Fn: boundIntrinsic}
-				}
-
-				// Check for a manual interface binding.
-				bindingKey := fmt.Sprintf("%s.%s", staticType.PkgPath, staticType.Name)
-				if binding, ok := e.interfaceBindings[bindingKey]; ok {
-					concreteType := binding.ConcreteType
-					var fullReceiverName string
-					if binding.IsPointer {
-						fullReceiverName = fmt.Sprintf("*%s.%s", concreteType.PkgPath, concreteType.Name)
-					} else {
-						fullReceiverName = fmt.Sprintf("%s.%s", concreteType.PkgPath, concreteType.Name)
-					}
-
-					// Check for an intrinsic on the concrete type's method.
-					// The key format is "(*pkg.path.Name).MethodName"
-					intrinsicKey := fmt.Sprintf("(%s).%s", fullReceiverName, n.Sel.Name)
-					if intrinsicFn, ok := e.intrinsics.Get(intrinsicKey); ok {
-						boundIntrinsic := func(ctx context.Context, args ...object.Object) object.Object {
-							// The intrinsic expects the receiver as the first argument.
-							// The original object `obj` (the interface variable) is the logical receiver.
-							return intrinsicFn(ctx, append([]object.Object{obj}, args...)...)
-						}
-						return &object.Intrinsic{Fn: boundIntrinsic}
-					}
-
-					// Fallback: find the method on the concrete type.
-					// We need to create a synthetic pointer type if the binding is for a pointer.
-					typeToSearch := concreteType
-					if binding.IsPointer {
-						ptrType := *concreteType // copy
-						ptrType.Name = "*" + concreteType.Name
-						typeToSearch = &ptrType
-					}
-					if method, err := e.accessor.findMethodOnType(ctx, typeToSearch, n.Sel.Name, env, obj, n.X.Pos()); err == nil && method != nil {
-						return method
-					}
-				}
-
-				// Correct approach: Return a callable placeholder.
-				// a. Record the call if the interface is named.
-				if staticType.Name != "" {
-					key := fmt.Sprintf("%s.%s.%s", staticType.PkgPath, staticType.Name, n.Sel.Name)
-					e.logger.DebugContext(ctx, "evalSelectorExpr: recording interface method call", "key", key)
-					receiverObj := e.Eval(ctx, n.X, env, pkg)
-					e.calledInterfaceMethods[key] = append(e.calledInterfaceMethods[key], receiverObj)
-				}
-
-				// b. Find the method definition, checking static, then synthetic, then creating a new one.
-				var methodInfo *scan.MethodInfo
-				ifaceKey := staticType.PkgPath + "." + staticType.Name
-
-				// Check static methods first.
-				if staticType.Interface != nil {
-					allMethods := e.getAllInterfaceMethods(ctx, staticType, make(map[string]struct{}))
-					for _, method := range allMethods {
-						if method.Name == n.Sel.Name {
-							methodInfo = method
-							break
-						}
-					}
-				}
-
-				// If not found, check the synthetic cache.
-				if methodInfo == nil {
-					e.syntheticMethodsMutex.Lock()
-					if methods, ok := e.syntheticMethods[ifaceKey]; ok {
-						methodInfo = methods[n.Sel.Name]
-					}
-					e.syntheticMethodsMutex.Unlock()
-				}
-
-				// If still not found, create a new synthetic method and cache it.
-				if methodInfo == nil {
-					e.logc(ctx, slog.LevelInfo, "undefined method on interface, creating synthetic method", "interface", staticType.Name, "method", n.Sel.Name)
-					methodInfo = &scan.MethodInfo{
-						Name:       n.Sel.Name,
-						Parameters: []*scan.FieldInfo{}, // Parameters are unknown
-						Results:    []*scan.FieldInfo{}, // Results are unknown
-					}
-
-					e.syntheticMethodsMutex.Lock()
-					if _, ok := e.syntheticMethods[ifaceKey]; !ok {
-						e.syntheticMethods[ifaceKey] = make(map[string]*scan.MethodInfo)
-					}
-					e.syntheticMethods[ifaceKey][n.Sel.Name] = methodInfo
-					e.syntheticMethodsMutex.Unlock()
-				}
-
-				// Convert the found/created MethodInfo to a FunctionInfo for the placeholder.
-				methodFuncInfo := &scan.FunctionInfo{
-					Name:       methodInfo.Name,
-					Parameters: methodInfo.Parameters,
-					Results:    methodInfo.Results,
-				}
-
-				// c. Return a callable SymbolicPlaceholder.
-				return &object.SymbolicPlaceholder{
-					Reason:         fmt.Sprintf("interface method %s.%s", staticType.Name, n.Sel.Name),
-					Receiver:       obj, // Pass the variable object itself as the receiver
-					UnderlyingFunc: methodFuncInfo,
-					Package:        pkg,
-				}
-			}
-
-			// NEW: Handle struct field access on variables directly
-			if staticType != nil && staticType.Kind == scan.StructKind {
-				if field, err := e.accessor.findFieldOnType(ctx, staticType, n.Sel.Name); err == nil && field != nil {
-					var fieldValue object.Object
-					if v, isVar := obj.(*object.Variable); isVar {
-						fieldValue = e.evalVariable(ctx, v, pkg)
-					} else {
-						fieldValue = obj // Should be a placeholder or instance
-					}
-					return e.resolver.ResolveSymbolicField(ctx, field, fieldValue)
-				}
-			}
-		}
-	}
-
 	leftObj := e.Eval(ctx, n.X, env, pkg)
 	if isError(leftObj) {
 		return leftObj
 	}
 
-	// Unwrap the result if it's a return value from a previous call in a chain.
+	// Unwrap return values early.
 	if ret, ok := leftObj.(*object.ReturnValue); ok {
 		leftObj = ret.Value
 	}
 
+	// Check for type-narrowed placeholders
+	if placeholder, ok := leftObj.(*object.SymbolicPlaceholder); ok {
+		if placeholder.Original != nil {
+			narrowedFt := placeholder.FieldType()
+			if narrowedFt == nil {
+				return e.evalSelectorExprForObject(ctx, n, leftObj, env, pkg)
+			}
+
+			originalConcreteObj := e.forceEval(ctx, placeholder.Original, pkg)
+			if isError(originalConcreteObj) {
+				return originalConcreteObj
+			}
+
+			var concreteIsPointer bool
+			var concreteTi *scan.TypeInfo
+			if ptr, ok := originalConcreteObj.(*object.Pointer); ok {
+				concreteIsPointer = true
+				if ptr.Value != nil {
+					concreteTi = ptr.Value.TypeInfo()
+				}
+			} else {
+				concreteIsPointer = false
+				concreteTi = originalConcreteObj.TypeInfo()
+			}
+
+			if concreteTi != nil {
+				// Check 1: Package path must match.
+				// Check 2: Pointer-ness must match.
+				// Check 3: Base type name must match.
+				if narrowedFt.FullImportPath == concreteTi.PkgPath && narrowedFt.IsPointer == concreteIsPointer {
+					baseNarrowedName := narrowedFt.TypeName
+					if narrowedFt.IsPointer && narrowedFt.Elem != nil {
+						baseNarrowedName = narrowedFt.Elem.TypeName
+					}
+					if baseNarrowedName == concreteTi.Name {
+						// Compatible. Unwrap and evaluate on the original concrete object.
+						return e.evalSelectorExprForObject(ctx, n, placeholder.Original, env, pkg)
+					}
+				}
+			}
+			// If not compatible, it's an impossible path. Prune it by returning a placeholder.
+			return &object.SymbolicPlaceholder{Reason: "pruned path in type switch/assertion"}
+		}
+	}
+
+	// Fallback to original logic for non-narrowed placeholders or other types.
+	return e.evalSelectorExprForObject(ctx, n, leftObj, env, pkg)
+}
+
+func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.SelectorExpr, left object.Object, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	// We must fully evaluate the left-hand side before trying to select a field or method from it.
-	left := e.forceEval(ctx, leftObj, pkg)
+	left = e.forceEval(ctx, left, pkg)
 	if isError(left) {
 		return left
 	}

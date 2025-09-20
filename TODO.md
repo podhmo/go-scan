@@ -87,7 +87,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
-- [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.
+- [-] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions. (In Progress)
+  - [ ] Added failing tests for both type switch and if-ok assertions.
+  - [ ] Implementation in `symgo/evaluator` is incomplete.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

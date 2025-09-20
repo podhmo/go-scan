@@ -229,15 +229,6 @@ func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pk
 }
 
 func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageInfo, error) {
-	info := &PackageInfo{
-		Path:       pkgDirPath,
-		ImportPath: canonicalImportPath,
-		ModulePath: s.modulePath,
-		ModuleDir:  s.moduleRootDir,
-		Fset:       s.fset,
-		AstFiles:   make(map[string]*ast.File),
-	}
-
 	// Stage 1: Parallel Parsing
 	results := make(chan fileParseResult, len(filePaths))
 	g, ctx := errgroup.WithContext(ctx)
@@ -257,14 +248,11 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if content == nil {
 				content, err = os.ReadFile(fp)
 				if err != nil {
-					// Send error to the channel and exit goroutine
 					results <- fileParseResult{filePath: fp, err: fmt.Errorf("reading file: %w", err)}
 					return nil
 				}
 			}
 
-			// Lock the mutex to ensure that parser.ParseFile, which modifies the shared
-			// token.FileSet, is not called concurrently.
 			s.mu.Lock()
 			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
 			s.mu.Unlock()
@@ -284,72 +272,101 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	}
 	close(results)
 
-	// Stage 2: Collect Results
-	parsedFileResults := make([]fileParseResult, 0, len(filePaths))
+	// Stage 2: Collect Results and Determine Dominant Package
+	var parsedFileResults []fileParseResult
 	for result := range results {
 		if result.err != nil {
 			return nil, fmt.Errorf("failed to parse file %s: %w", result.filePath, result.err)
 		}
 		if result.fileAst.Name == nil {
-			continue // Skip files with no package name
+			continue
 		}
 		parsedFileResults = append(parsedFileResults, result)
 	}
 
-	// Stage 3: Sequential Processing
 	var dominantPackageName string
 	var parsedFiles []*ast.File
 	var filePathsForDominantPkg []string
 
-	// First pass over results to determine dominant package name
-	for _, result := range parsedFileResults {
-		currentPackageName := result.fileAst.Name.Name
-
-		if dominantPackageName == "" {
-			dominantPackageName = currentPackageName
-			parsedFiles = append(parsedFiles, result.fileAst)
-			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
-		} else if currentPackageName != dominantPackageName {
-			baseDominant := strings.TrimSuffix(dominantPackageName, "_test")
-			baseCurrent := strings.TrimSuffix(currentPackageName, "_test")
-
-			if dominantPackageName == "main" && currentPackageName != "main" {
-				// The real package is `currentPackageName`. Discard previous `main` files.
-				dominantPackageName = currentPackageName
-				var newParsedFiles []*ast.File
-				var newFilePaths []string
-				// Note: we don't need to re-filter parsedFiles because they were all `main` anyway.
-				parsedFiles = newParsedFiles
-				filePathsForDominantPkg = newFilePaths
-				parsedFiles = append(parsedFiles, result.fileAst)
-				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
-			} else if dominantPackageName != "main" && currentPackageName == "main" {
-				// The real package is `dominantPackageName`. Ignore the `main` file.
-				continue
-			} else if baseDominant == baseCurrent {
-				// This is `pkg` and `pkg_test`, which is allowed.
-				// If the test package was found first, make the non-test package dominant.
-				if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
-					dominantPackageName = currentPackageName
-				}
-				// Add the file to the list.
-				parsedFiles = append(parsedFiles, result.fileAst)
-				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
-			} else {
-				// Two different non-main packages. This is a real error.
-				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)
-			}
-		} else {
-			// Package names match, just add the file.
-			parsedFiles = append(parsedFiles, result.fileAst)
-			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
+	packageFiles := make(map[string][]fileParseResult)
+	for _, res := range parsedFileResults {
+		if res.fileAst.Name != nil {
+			packageFiles[res.fileAst.Name.Name] = append(packageFiles[res.fileAst.Name.Name], res)
 		}
 	}
 
-	info.Name = dominantPackageName
-	info.Files = filePathsForDominantPkg
+	if len(packageFiles) > 1 {
+		if _, ok := packageFiles["main"]; ok {
+			delete(packageFiles, "main")
+		}
+	}
 
-	// Second pass: Process declarations from the final list of valid ASTs
+	if len(packageFiles) > 1 {
+		var names []string
+		for name := range packageFiles {
+			names = append(names, name)
+		}
+		return nil, fmt.Errorf("mismatched package names: %v in directory %s", names, pkgDirPath)
+	}
+
+	for name, results := range packageFiles {
+		dominantPackageName = name
+		for _, r := range results {
+			parsedFiles = append(parsedFiles, r.fileAst)
+			filePathsForDominantPkg = append(filePathsForDominantPkg, r.filePath)
+		}
+	}
+
+	if dominantPackageName == "" && len(filePaths) > 0 {
+		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
+	}
+
+	// Initialize PackageInfo
+	info := &PackageInfo{
+		Name:       dominantPackageName,
+		Path:       pkgDirPath,
+		ImportPath: canonicalImportPath,
+		ModulePath: s.modulePath,
+		ModuleDir:  s.moduleRootDir,
+		Fset:       s.fset,
+		Files:      filePathsForDominantPkg,
+		AstFiles:   make(map[string]*ast.File, len(filePathsForDominantPkg)),
+	}
+
+	// Pass 1: Collect all top-level type declarations (stubs)
+	for i, fileAst := range parsedFiles {
+		filePath := info.Files[i]
+		info.AstFiles[filePath] = fileAst
+		for _, decl := range fileAst.Decls {
+			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+				for _, spec := range gd.Specs {
+					if ts, ok := spec.(*ast.TypeSpec); ok {
+						typeInfo := &TypeInfo{
+							Name:     ts.Name.Name,
+							PkgPath:  info.ImportPath,
+							FilePath: filePath,
+							Doc:      commentText(ts.Doc),
+							Node:     ts,
+							Inspect:  s.inspect,
+							Logger:   s.logger,
+							Fset:     info.Fset,
+						}
+						if typeInfo.Doc == "" && gd.Doc != nil {
+							typeInfo.Doc = commentText(gd.Doc)
+						}
+						info.Types = append(info.Types, typeInfo)
+					}
+				}
+			}
+		}
+	}
+
+	// Pass 2: Fill in the details for all types, and parse other declarations
+	typeMap := make(map[string]*TypeInfo, len(info.Types))
+	for _, ti := range info.Types {
+		typeMap[ti.Name] = ti
+	}
+
 	isDeclarationsOnly := false
 	for _, pattern := range s.DeclarationsOnlyPackages {
 		if matches(pattern, canonicalImportPath) {
@@ -360,8 +377,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
-
-		// If this package is marked for declarations-only scanning, nil out all function bodies.
+		importLookup := s.BuildImportLookup(fileAst)
 		if isDeclarationsOnly {
 			for _, decl := range fileAst.Decls {
 				if f, ok := decl.(*ast.FuncDecl); ok {
@@ -370,28 +386,61 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			}
 		}
 
-		info.AstFiles[filePath] = fileAst
-		importLookup := s.BuildImportLookup(fileAst)
-
 		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
-				s.parseGenDecl(ctx, d, info, filePath, importLookup)
+				if d.Tok == token.TYPE {
+					for _, spec := range d.Specs {
+						if ts, ok := spec.(*ast.TypeSpec); ok {
+							if typeInfo, exists := typeMap[ts.Name.Name]; exists {
+								s.fillTypeInfoDetails(ctx, typeInfo, ts, info, importLookup)
+							}
+						}
+					}
+				} else {
+					s.parseGenDecl(ctx, d, info, filePath, importLookup)
+				}
 			case *ast.FuncDecl:
 				info.Functions = append(info.Functions, s.parseFuncDecl(ctx, d, filePath, info, importLookup))
 			}
 		}
 	}
 
-	if info.Name == "" && len(filePaths) > 0 {
-		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
-	}
-
-	// Third pass: Evaluate all collected constants
+	// Pass 3: Evaluate all collected constants
 	s.evaluateAllConstants(ctx, info)
-
 	s.resolveEnums(info)
 	return info, nil
+}
+
+func (s *Scanner) fillTypeInfoDetails(ctx context.Context, typeInfo *TypeInfo, ts *ast.TypeSpec, pkgInfo *PackageInfo, importLookup map[string]string) {
+	// Set up the resolution context for this type's children.
+	typeIdentifier := pkgInfo.ImportPath + "." + ts.Name.Name
+	initialPath := []string{typeIdentifier}
+	childCtx := context.WithValue(ctx, ResolutionPathKey, initialPath)
+	if s.logger != nil {
+		childCtx = context.WithValue(childCtx, LoggerKey, s.logger)
+	}
+	childCtx = context.WithValue(childCtx, InspectKey, s.inspect)
+	typeInfo.ResolutionContext = childCtx
+
+	if ts.TypeParams != nil {
+		typeInfo.TypeParams = s.parseTypeParamList(ctx, ts.TypeParams.List, pkgInfo, importLookup)
+	}
+
+	switch t := ts.Type.(type) {
+	case *ast.StructType:
+		typeInfo.Kind = StructKind
+		typeInfo.Struct = s.parseStructType(ctx, t, typeInfo.TypeParams, pkgInfo, importLookup)
+	case *ast.InterfaceType:
+		typeInfo.Kind = InterfaceKind
+		typeInfo.Interface = s.parseInterfaceType(ctx, t, typeInfo.TypeParams, pkgInfo, importLookup)
+	case *ast.FuncType:
+		typeInfo.Kind = FuncKind
+		typeInfo.Func = s.parseFuncType(ctx, t, typeInfo.TypeParams, pkgInfo, importLookup)
+	default:
+		typeInfo.Kind = AliasKind
+		typeInfo.Underlying = s.TypeInfoFromExpr(ctx, ts.Type, typeInfo.TypeParams, pkgInfo, importLookup)
+	}
 }
 
 // resolveEnums performs a linking pass to connect constants with their enum types.

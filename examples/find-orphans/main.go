@@ -646,7 +646,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		if !isAppMode && a.includeTests && isTestFunction(ep.Def) {
 			// Lazily load the type info for *testing.T once.
 			if testingT_FieldType == nil {
-				testingPkg, err := a.s.ScanPackageByImport(ctx, "testing")
+				testingPkg, err := a.s.ScanPackageFromImportPath(ctx, "testing")
 				if err != nil {
 					slog.WarnContext(ctx, "could not scan 'testing' package, cannot create symbolic *testing.T", "error", err)
 				} else {
@@ -835,7 +835,7 @@ func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	if pkg.ImportPath == "C" {
 		return nil, nil
 	}
-	fullPkg, err := a.s.ScanPackageByImport(a.ctx, pkg.ImportPath)
+	fullPkg, err := a.s.ScanPackageFromImportPath(a.ctx, pkg.ImportPath)
 	if err != nil {
 		slog.WarnContext(a.ctx, "could not scan package", "package", pkg.ImportPath, "error", err)
 		return nil, nil // Continue even if a package fails to scan

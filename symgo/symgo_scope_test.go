@@ -46,9 +46,9 @@ func DoSomething() {}
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
 
-	libPkg, err := interp.Scanner().ScanPackageByImport(ctx, "example.com/myapp/lib")
+	libPkg, err := interp.Scanner().ScanPackageFromImportPath(ctx, "example.com/myapp/lib")
 	if err != nil {
-		t.Fatalf("ScanPackageByImport for lib failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath for lib failed: %v", err)
 	}
 
 	doSomethingFunc := findFunc(t, libPkg, "DoSomething")

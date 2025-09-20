@@ -206,7 +206,7 @@ func (r *Runner) resolveTypeFromExpr(e *evaluator.Evaluator, fscope *object.File
 		return nil, fmt.Errorf("package alias %q not found in imports", pkgIdent.Name)
 	}
 
-	pkgInfo, err := e.Scanner().ScanPackageByImport(context.Background(), pkgPath)
+	pkgInfo, err := e.Scanner().ScanPackageFromImportPath(context.Background(), pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not scan package %q: %w", pkgPath, err)
 	}
@@ -238,7 +238,7 @@ func (r *Runner) handleRule(e *evaluator.Evaluator, fscope *object.FileScope, po
 	}
 
 	ctx := context.Background()
-	pkgInfo, err := e.Scanner().ScanPackageByImport(ctx, pkgPath)
+	pkgInfo, err := e.Scanner().ScanPackageFromImportPath(ctx, pkgPath)
 	if err != nil {
 		return e.NewError(pos, "could not scan package %q: %v", pkgPath, err)
 	}

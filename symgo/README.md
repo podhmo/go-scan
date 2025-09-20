@@ -165,7 +165,7 @@ func main() {
 	}
 
 	// 3. Scan the package. This parses the files and populates type information.
-	pkg, err := s.ScanPackageByImport(context.Background(), "myapp")
+	pkg, err := s.ScanPackageFromImportPath(context.Background(), "myapp")
 	if err != nil {
 		panic(err)
 	}

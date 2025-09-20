@@ -164,8 +164,8 @@ func main() {
         log.Fatal(err)
     }
 
-    // ScanPackage would start from "./my-project"
-    pkg, err := s.ScanPackage("./my-project")
+    // ScanPackageFromFilePath would start from "./my-project"
+    pkg, err := s.ScanPackageFromFilePath("./my-project")
     if err != nil {
         log.Fatal(err)
     }

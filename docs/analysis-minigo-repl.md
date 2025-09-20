@@ -127,7 +127,7 @@ In addition to the `EvalString()` method needed for the simple REPL, a rich REPL
 *   **For contextual completion (struct fields, package members)**:
     *   **`minigo.Interpreter` needs a type analysis method**: This is the most complex requirement. For the REPL to suggest struct fields (e.g., after a user types `myVar.`), it must be able to determine the type of `myVar`. This requires a new, advanced method on the interpreter, such as `GetTypeInfoOf(expression string) (*TypeInfo, error)`.
     *   This method would need to parse the partial input string (the expression), evaluate it in a temporary/analytical context to get the resulting `object.Object`, and then inspect that object's type definition to return a list of its members (fields and methods). This is a non-trivial feature that turns the interpreter into a static analysis tool on the fly.
-    *   The `go-scan` changes proposed in Approach 3 (i.e., `ScanPackage`) would also be essential for completing members of imported packages.
+    *   The `go-scan` changes proposed in Approach 3 (i.e., `ScanPackageFromFilePath`) would also be essential for completing members of imported packages.
 
 ## 5. Approach 3: Interpreter-Specific Features
 
@@ -163,7 +163,7 @@ This approach requires the most significant changes to the underlying libraries,
 
 *   **For package symbol listing (`:ls some/pkg`)**:
     *   **`go-scan` needs a way to list all package members**: The current `goscan.Scanner` is designed to find specific symbols on demand (`FindSymbolInPackage`). It does not have a public method to simply scan an entire package and return all of its members.
-    *   A new method on `goscan.Scanner`, such as `ScanPackage(path string) (*goscan.Package, error)`, would be required. This method would proactively parse all files in a package and return a complete `Package` object containing lists of all its `Constants`, `Vars`, `Funcs`, and `Types`. This is a fundamental addition to `go-scan`'s capabilities.
+    *   A new method on `goscan.Scanner`, such as `ScanPackageFromFilePath(path string) (*goscan.Package, error)`, would be required. This method would proactively parse all files in a package and return a complete `Package` object containing lists of all its `Constants`, `Vars`, `Funcs`, and `Types`. This is a fundamental addition to `go-scan`'s capabilities.
 
 ### 5.4. Analysis of Dynamic Imports
 

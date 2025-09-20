@@ -35,7 +35,7 @@ if err != nil {
 }
 
 // This call will succeed because the resolver can find the "fmt" package in GOROOT.
-pkgInfo, err := s.ScanPackageByImport(context.Background(), "fmt")
+pkgInfo, err := s.ScanPackageFromImportPath(context.Background(), "fmt")
 ```
 
 ### Delayed (Lazy) Loading of Imports
@@ -58,7 +58,7 @@ func (v *MyVisitor) Visit(pkg *goscan.PackageImports) ([]string, error) {
     if strings.Contains(pkg.ImportPath, "important") {
         // Now we trigger a full, heavyweight parse for just this one package.
         // The heavyweight scanner is available on the visitor if you pass it in.
-        fullInfo, err := v.scanner.ScanPackageByImport(context.Background(), pkg.ImportPath)
+        fullInfo, err := v.scanner.ScanPackageFromImportPath(context.Background(), pkg.ImportPath)
         // ... do something with fullInfo ...
     }
 
@@ -88,8 +88,8 @@ These methods are optimized for speed and are used to understand the relationshi
 *   Building dependency trees for analysis.
 
 **Methods:**
-*   **`Walker.ScanPackageImports(ctx, importPath)`**: The fundamental lightweight method. It scans a package and returns only its name and a list of imported package paths.
-*   **`Walker.Walk(ctx, rootImportPath, visitor)`**: Performs a dependency graph traversal starting from a root package. It uses `ScanPackageImports` at each step and calls a user-provided `Visitor` to process each discovered package.
+*   **`Walker.ScanPackageFromFilePathImports(ctx, importPath)`**: The fundamental lightweight method. It scans a package and returns only its name and a list of imported package paths.
+*   **`Walker.Walk(ctx, rootImportPath, visitor)`**: Performs a dependency graph traversal starting from a root package. It uses `ScanPackageFromFilePathImports` at each step and calls a user-provided `Visitor` to process each discovered package.
 *   **`Walker.FindImporters(ctx, targetImportPath)`**: Scans the entire module to find all packages that directly import the `targetImportPath`.
 *   **`Walker.FindImportersAggressively(ctx, targetImportPath)`**: A faster version of `FindImporters` that uses `git grep` to quickly identify potential importers before verifying them. Requires `git` to be installed.
 *   **`Walker.BuildReverseDependencyMap(ctx)`**: Scans the entire module once to build a complete map where keys are import paths and values are lists of packages that import them.
@@ -104,10 +104,10 @@ These methods, located directly on the `goscan.Scanner` struct, perform a compre
 *   Interpreters and symbolic execution engines (like `minigo` and `symgo`).
 
 **Methods:**
-*   **`ScanPackageByImport(ctx, importPath)`**: The main workhorse for this group. It takes an import path, uses the locator to find the package's directory, and performs a full parse on its files. Results are cached for efficiency.
+*   **`ScanPackageFromImportPath(ctx, importPath)`**: The main workhorse for this group. It takes an import path, uses the locator to find the package's directory, and performs a full parse on its files. Results are cached for efficiency.
     ```go
     // Get full details for the "net/http" package.
-    pkg, err := scanner.ScanPackageByImport(ctx, "net/http")
+    pkg, err := scanner.ScanPackageFromImportPath(ctx, "net/http")
     if err == nil {
         for _, t := range pkg.Types {
             fmt.Println("Found type:", t.Name)
@@ -115,12 +115,12 @@ These methods, located directly on the `goscan.Scanner` struct, perform a compre
     }
     ```
 *   **`ScanFiles(ctx, filePaths)`**: Performs a full parse on a specific list of files. All files must belong to the same package. This is useful for tools that operate on a subset of files.
-*   **`ScanPackage(ctx, pkgPath)`**: Similar to `ScanPackageByImport`, but takes a file system directory path instead of an import path.
+*   **`ScanPackageFromFilePath(ctx, pkgPath)`**: Similar to `ScanPackageFromImportPath`, but takes a file system directory path instead of an import path.
 *   **`FindSymbolDefinitionLocation(ctx, symbolFullName)`**: Finds the exact file path where a symbol (e.g., `"fmt.Println"`) is defined. This may trigger a full scan of the package if it hasn't been scanned already.
 *   **`ResolveType(ctx, fieldType)`**: A lower-level utility that resolves a `FieldType` into a `TypeInfo`, performing recursive resolution if necessary. This is used after an initial scan to dig deeper into type structures.
 *   **`TypeInfoFromExpr(ctx, ...)`**: A helper to parse an `ast.Expr` into a `FieldType`, useful for dynamic type analysis.
 *   **`ListExportedSymbols(ctx, pkgPath)`**: Scans a package and returns a simple list of its exported symbol names.
-*   **`FindSymbolInPackage(ctx, importPath, symbolName)`**: Scans files in a package one-by-one until a specific symbol is found. This can be more efficient than `ScanPackageByImport` if you only need one symbol from a large package.
+*   **`FindSymbolInPackage(ctx, importPath, symbolName)`**: Scans files in a package one-by-one until a specific symbol is found. This can be more efficient than `ScanPackageFromImportPath` if you only need one symbol from a large package.
 
 ---
 
@@ -134,17 +134,17 @@ This section summarizes which scanner methods are used by the key commands and e
 
 *   **`minigo`**:
     *   **Summary**: A Go interpreter. It is a primary example of a **Group 2 (Heavyweight)** user.
-    *   **Methods Used**: `ScanPackageByImport` is the key method, called by the evaluator whenever it encounters an `import` statement.
+    *   **Methods Used**: `ScanPackageFromImportPath` is the key method, called by the evaluator whenever it encounters an `import` statement.
     *   **Special Requirements**: An interpreter needs more than just type definitions; it needs a *consistent view* of a package. To evaluate a function call (e.g., `sort.Ints`), it must also know about that function's own dependencies (e.g., the `sort` package's import of `slices`). This requires the scanner to provide a `PackageInfo` where the `AstFiles` map is complete, allowing the interpreter to look up the correct import scope for any function it evaluates. This is why it relies on the heavyweight scanning methods.
 
 *   **`symgo`**:
     *   **Summary**: A symbolic execution engine. Like `minigo`, it is a **Group 2 (Heavyweight)** user with similar special requirements.
-    *   **Methods Used**: Interestingly, `symgo` is architected to use the low-level `scanner.Scanner` directly. Its evaluator calls `ScanPackageByImport`, `BuildImportLookup`, and `TypeInfoFromExpr` to get the detailed information it needs. This demonstrates the same *need* for heavyweight analysis to ensure it has a consistent view of each package for resolving transitive dependencies during evaluation.
+    *   **Methods Used**: Interestingly, `symgo` is architected to use the low-level `scanner.Scanner` directly. Its evaluator calls `ScanPackageFromImportPath`, `BuildImportLookup`, and `TypeInfoFromExpr` to get the detailed information it needs. This demonstrates the same *need* for heavyweight analysis to ensure it has a consistent view of each package for resolving transitive dependencies during evaluation.
 
 *   **`examples/convert`**, **`examples/derivingjson`**, **`examples/derivingbind`**, **`examples/deriving-all`**:
     *   **Summary**: These are all code generation tools. They are canonical examples of **Group 2 (Heavyweight)** users.
     *   **Methods Used**: They follow a common pattern:
-        1.  Use `ScanPackageByImport` or `ScanFiles` to get an initial, complete `PackageInfo` of the target package.
+        1.  Use `ScanPackageFromImportPath` or `ScanFiles` to get an initial, complete `PackageInfo` of the target package.
         2.  Iterate through the `Types` and `Fields` of the `PackageInfo`.
         3.  Use `ResolveType` (often by calling `field.Type.Resolve()`) to get full details about field types, especially those from other packages.
-        4.  Call `ScanPackageByImport` recursively if they need to analyze an imported package (e.g., to check if a type implements a certain interface).
+        4.  Call `ScanPackageFromImportPath` recursively if they need to analyze an imported package (e.g., to check if a type implements a certain interface).

@@ -460,7 +460,7 @@ func NewSymbolicInstance(interp *symgo.Interpreter, fqtn string) symgo.Object {
 	pkgPath := fqtn[:lastDot]
 	typeName := fqtn[lastDot+1:]
 
-	pkg, err := interp.Scanner().ScanPackageByImport(context.Background(), pkgPath)
+	pkg, err := interp.Scanner().ScanPackageFromImportPath(context.Background(), pkgPath)
 	if err != nil {
 		return &symgo.Error{Message: fmt.Sprintf("could not load package %s: %v", pkgPath, err)}
 	}

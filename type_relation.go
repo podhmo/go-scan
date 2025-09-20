@@ -189,7 +189,7 @@ func (s *Scanner) findDirectMethodInfoOnType(ctx context.Context, typeInfo *scan
 	if !exists {
 		// If not in cache, use the scanner to get the package info.
 		var err error
-		methodPkg, err = s.ScanPackage(ctx, typeInfo.PkgPath)
+		methodPkg, err = s.ScanPackageFromFilePath(ctx, typeInfo.PkgPath)
 		if err != nil {
 			// Suppress errors that are expected for certain types (e.g., built-ins, unresolved packages).
 			if strings.Contains(err.Error(), "cannot find package") || strings.Contains(err.Error(), "no such file or directory") {

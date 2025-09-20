@@ -46,7 +46,7 @@ const (
 // PackageResolver is an interface that can resolve an import path to a package definition.
 // It is implemented by the top-level typescanner.Scanner to enable lazy, cached lookups.
 type PackageResolver interface {
-	ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error)
+	ScanPackageFromImportPath(ctx context.Context, importPath string) (*PackageInfo, error)
 }
 
 // PackageInfo holds all the extracted information from a single package.
@@ -454,7 +454,7 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 	}
 
 	// --- Resolve the package ---
-	pkgInfo, err := ft.Resolver.ScanPackageByImport(ctx, ft.FullImportPath)
+	pkgInfo, err := ft.Resolver.ScanPackageFromImportPath(ctx, ft.FullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.FullImportPath, ft.TypeName, err)
 	}

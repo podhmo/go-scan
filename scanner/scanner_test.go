@@ -13,12 +13,12 @@ import (
 
 // MockResolver is a mock implementation of PackageResolver for tests.
 type MockResolver struct {
-	ScanPackageByImportFunc func(ctx context.Context, importPath string) (*PackageInfo, error)
+	ScanPackageFromImportPathFunc func(ctx context.Context, importPath string) (*PackageInfo, error)
 }
 
-func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
-	if m.ScanPackageByImportFunc != nil {
-		return m.ScanPackageByImportFunc(ctx, importPath)
+func (m *MockResolver) ScanPackageFromImportPath(ctx context.Context, importPath string) (*PackageInfo, error) {
+	if m.ScanPackageFromImportPathFunc != nil {
+		return m.ScanPackageFromImportPathFunc(ctx, importPath)
 	}
 	return nil, nil // Default mock behavior
 }
@@ -67,7 +67,7 @@ func TestNewScanner(t *testing.T) {
 	})
 }
 
-func TestScanPackageFeatures(t *testing.T) {
+func TestScanPackageFromFilePathFeatures(t *testing.T) {
 	testDir := filepath.Join("..", "testdata", "features")
 	absTestDir, _ := filepath.Abs(testDir)
 	s := newTestScanner(t, "example.com/test/features", absTestDir)
@@ -257,7 +257,7 @@ func TestScanFiles(t *testing.T) {
 func TestFieldType_Resolve(t *testing.T) {
 	// Setup a mock resolver that returns a predefined package info
 	resolver := &MockResolver{
-		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
+		ScanPackageFromImportPathFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if importPath == "example.com/models" {
 				return &PackageInfo{
 					Fset: token.NewFileSet(),
@@ -298,7 +298,7 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 
 	// Second call should use the cache (we can't easily test this, but we can nil out the func)
-	resolver.ScanPackageByImportFunc = nil // To ensure resolver is not called again
+	resolver.ScanPackageFromImportPathFunc = nil // To ensure resolver is not called again
 	def2, err := s.ResolveType(ctx, ft)
 	if err != nil {
 		t.Fatalf("Second ResolveType() call failed: %v", err)
@@ -326,7 +326,7 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	}
 
 	// Set up the mock resolver to return the already scanned package, simulating a cache hit.
-	s.resolver.(*MockResolver).ScanPackageByImportFunc = func(ctx context.Context, importPath string) (*PackageInfo, error) {
+	s.resolver.(*MockResolver).ScanPackageFromImportPathFunc = func(ctx context.Context, importPath string) (*PackageInfo, error) {
 		if importPath == "example.com/test/recursion/direct" {
 			return pkgInfo, nil
 		}
@@ -386,7 +386,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 	// to prevent re-parsing and creating duplicate TypeInfo objects.
 	pkgCache := make(map[string]*PackageInfo)
 	mockResolver := &MockResolver{
-		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
+		ScanPackageFromImportPathFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if pkg, found := pkgCache[importPath]; found {
 				return pkg, nil
 			}
@@ -411,9 +411,9 @@ func TestResolve_MutualRecursion(t *testing.T) {
 
 	// Start by scanning pkg_a
 	ctx := context.Background()
-	pkgAInfo, err := s.ScanPackageByImport(ctx, "example.com/recursion/mutual/pkg_a")
+	pkgAInfo, err := s.ScanPackageFromImportPath(ctx, "example.com/recursion/mutual/pkg_a")
 	if err != nil {
-		t.Fatalf("ScanPackageByImport for pkg_a failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath for pkg_a failed: %v", err)
 	}
 
 	typeA := pkgAInfo.Lookup("A")

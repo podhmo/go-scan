@@ -22,13 +22,13 @@ func TestImplements_New(t *testing.T) {
 	ifacesPath := filepath.Join(s.locator.RootDir(), "ifaces")
 	implsPath := filepath.Join(s.locator.RootDir(), "impls")
 
-	_, err = s.ScanPackage(ctx, ifacesPath)
+	_, err = s.ScanPackageFromFilePath(ctx, ifacesPath)
 	if err != nil {
-		t.Fatalf("ScanPackage(%q) failed: %v", ifacesPath, err)
+		t.Fatalf("ScanPackageFromFilePath(%q) failed: %v", ifacesPath, err)
 	}
-	_, err = s.ScanPackage(ctx, implsPath)
+	_, err = s.ScanPackageFromFilePath(ctx, implsPath)
 	if err != nil {
-		t.Fatalf("ScanPackage(%q) failed: %v", implsPath, err)
+		t.Fatalf("ScanPackageFromFilePath(%q) failed: %v", implsPath, err)
 	}
 
 	// Helper to get a TypeInfo from a fully qualified name

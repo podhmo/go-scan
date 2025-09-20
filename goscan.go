@@ -49,7 +49,7 @@ const (
 // Scanner instances are stateful regarding which files have been visited (parsed).
 type Scanner struct {
 	*Config
-	packageCache          map[string]*Package // Cache for PackageInfo from ScanPackage/ScanPackageByImport, key is import path
+	packageCache          map[string]*Package // Cache for PackageInfo from ScanPackageFromFilePath/ScanPackageFromImportPath, key is import path
 	visitedFiles          map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu                    sync.RWMutex
 	CachePath             string
@@ -162,12 +162,6 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 	return s.scanner.TypeInfoFromExpr(ctx, expr, currentTypeParams, info, importLookup)
 }
 
-// ScannerForSymgo is a temporary helper for tests to access the internal scanner.
-// TODO: Refactor evaluator to use the top-level goscan.Scanner instead.
-func (s *Scanner) ScannerForSymgo() (*scanner.Scanner, error) {
-	return s.scanner, nil
-}
-
 // ModulePath returns the module path from the scanner's locator.
 func (s *Scanner) ModulePath() string {
 	if s.locator == nil {
@@ -240,7 +234,7 @@ func (s *Scanner) Scan(ctx context.Context, patterns ...string) ([]*Package, err
 				}
 
 				if hasGoFiles {
-					pkg, err := s.ScanPackage(ctx, path)
+					pkg, err := s.ScanPackageFromFilePath(ctx, path)
 					if err != nil {
 						// Log error but continue walking
 						slog.WarnContext(ctx, "failed to scan package during wildcard walk", "path", path, "error", err)
@@ -270,7 +264,7 @@ func (s *Scanner) Scan(ctx context.Context, patterns ...string) ([]*Package, err
 
 			var pkg *Package
 			if info.IsDir() {
-				pkg, err = s.ScanPackage(ctx, absPath)
+				pkg, err = s.ScanPackageFromFilePath(ctx, absPath)
 			} else {
 				pkg, err = s.ScanFiles(ctx, []string{absPath})
 			}
@@ -657,8 +651,8 @@ func (s *Scanner) privateScan(ctx context.Context, pkgDirAbs string, importPath 
 	return pkgInfo, nil
 }
 
-// ScanPackage scans a single package at a given directory path.
-func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
+// ScanPackageFromFilePath scans a single package at a given directory path.
+func (s *Scanner) ScanPackageFromFilePath(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
 	var pkgDirAbs string
 	var err error
 	if filepath.IsAbs(pkgPath) {
@@ -929,11 +923,11 @@ func isDir(path string) bool {
 	return info.IsDir()
 }
 
-// ScanPackageByImport scans a single Go package identified by its import path.
-func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+// ScanPackageFromImportPath scans a single Go package identified by its import path.
+func (s *Scanner) ScanPackageFromImportPath(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
 	loc, err := s.locatorForImportPath(importPath)
 	if err != nil {
-		return nil, fmt.Errorf("ScanPackageByImport: %w", err)
+		return nil, fmt.Errorf("ScanPackageFromImportPath: %w", err)
 	}
 	pkgDirAbs, err := loc.FindPackageDir(importPath)
 	if err != nil {
@@ -1057,7 +1051,7 @@ func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
 // ListExportedSymbols scans a package by its import path and returns a list of all
 // its exported top-level symbol names (functions, types, and constants).
 func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]string, error) {
-	pkgInfo, err := s.ScanPackageByImport(ctx, pkgPath)
+	pkgInfo, err := s.ScanPackageFromImportPath(ctx, pkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %s: %w", pkgPath, err)
 	}
@@ -1094,7 +1088,7 @@ func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]st
 //
 // It first checks the persistent symbol cache (if enabled and loaded).
 // If not found in the cache, it triggers a scan of the relevant package
-// (using `ScanPackageByImport`) to populate caches and then re-checks.
+// (using `ScanPackageFromImportPath`) to populate caches and then re-checks.
 // Finally, it inspects the `PackageInfo` obtained from the scan.
 func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullName string) (string, error) {
 	lastDot := strings.LastIndex(symbolFullName, ".")
@@ -1117,7 +1111,7 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 		}
 	}
 	// If symbol not found in cache, try to scan the package.
-	pkgInfo, err := s.ScanPackageByImport(ctx, importPath) // This will parse unvisited files and update caches
+	pkgInfo, err := s.ScanPackageFromImportPath(ctx, importPath) // This will parse unvisited files and update caches
 	if err != nil {
 		return "", fmt.Errorf("scan for package %s (for symbol %s) failed: %w", importPath, symbolName, err)
 	}
@@ -1135,7 +1129,7 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 		}
 	}
 
-	// If still not found via cache, check the pkgInfo returned by the ScanPackageByImport call.
+	// If still not found via cache, check the pkgInfo returned by the ScanPackageFromImportPath call.
 	// This pkgInfo contains symbols from files *parsed in that specific call*.
 	if pkgInfo != nil {
 		targetFilePath := ""

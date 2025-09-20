@@ -164,5 +164,5 @@ func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*scanner.Pa
 
 // resolvePackageWithoutPolicyCheck resolves a package without enforcing the scan policy.
 func (r *Resolver) resolvePackageWithoutPolicyCheck(ctx context.Context, path string) (*scanner.PackageInfo, error) {
-	return r.scanner.ScanPackageByImport(ctx, path)
+	return r.scanner.ScanPackageFromImportPath(ctx, path)
 }

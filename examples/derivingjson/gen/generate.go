@@ -113,7 +113,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 						interfaceDefiningPkgImportPath = field.Type.FullImportPath
 					} else if interfaceDef.FilePath != "" {
 						interfaceDir := filepath.Dir(interfaceDef.FilePath)
-						scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackage(ctx, interfaceDir)
+						scannedPkgForInterfaceFile, errPkgScan := gscn.ScanPackageFromFilePath(ctx, interfaceDir)
 						if errPkgScan == nil && scannedPkgForInterfaceFile != nil && scannedPkgForInterfaceFile.ImportPath != "" {
 							interfaceDefiningPkgImportPath = scannedPkgForInterfaceFile.ImportPath
 						} else {
@@ -139,7 +139,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 
 				searchPkgs := []*scanner.PackageInfo{pkgInfo}
 				if interfaceDefiningPkgImportPath != "" && interfaceDefiningPkgImportPath != pkgInfo.ImportPath {
-					scannedInterfacePkg, errScan := gscn.ScanPackageByImport(ctx, interfaceDefiningPkgImportPath)
+					scannedInterfacePkg, errScan := gscn.ScanPackageFromImportPath(ctx, interfaceDefiningPkgImportPath)
 					if errScan == nil && scannedInterfacePkg != nil {
 						if !isPackageInSlice(searchPkgs, scannedInterfacePkg.ImportPath) {
 							searchPkgs = append(searchPkgs, scannedInterfacePkg)
@@ -190,7 +190,7 @@ func Generate(ctx context.Context, gscn *goscan.Scanner, pkgInfo *scanner.Packag
 					definingPkgPath := pkgInfo.ImportPath
 					if resolvedFieldType.FilePath != "" {
 						dir := filepath.Dir(resolvedFieldType.FilePath)
-						definingActualPkg, errScan := gscn.ScanPackage(ctx, dir)
+						definingActualPkg, errScan := gscn.ScanPackageFromFilePath(ctx, dir)
 						if errScan == nil && definingActualPkg != nil && definingActualPkg.ImportPath != "" {
 							definingPkgPath = definingActualPkg.ImportPath
 						} else if errScan != nil {

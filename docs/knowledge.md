@@ -227,3 +227,46 @@ The final fix involved two key changes:
 2.  **Pragmatic Simplification**: During this fix, the decision was made to treat all Go integer types (signed and unsigned) as a single `minigo` `*object.Integer` (which wraps an `int64`). This was a pragmatic choice to solve the immediate problem and get the `sort` test passing, with the understanding that a more nuanced internal type system is a possible future enhancement but not strictly necessary for the current scope.
 
 This entire process highlights the interconnectedness of the interpreter's components and provides valuable knowledge for future standard library integration efforts. The `sort.Ints` test case served as an excellent catalyst for hardening the type system, FFI bridge, and evaluation strategy.
+
+---
+
+## Scanner Order-Dependency Analysis and Multi-Pass Processing
+
+**Context:**
+
+Three different pull requests (#857, #858, #859) were proposed to fix the scanner's inability to handle order-dependent type definitions within a package. The original scanner used single-pass processing, which failed when type references appeared before their definitions in the scanning order.
+
+**Problem Manifestation:**
+
+The issue manifested as missing generated methods (e.g., `UnmarshalJSON` for the `Event` struct in the `deriving-all` example) when:
+1. A type was referenced before its definition in the file scanning order
+2. Forward references existed between types in different files within the same package  
+3. Interface method resolution required complete type information that wasn't available during initial scanning
+
+**Comparative Analysis:**
+
+A comprehensive analysis compared three approaches:
+
+- **PR #857 (Focused Two-Pass)**: Minimal complexity with targeted type resolution (119/70 line changes)
+- **PR #858 (Comprehensive Two-Pass)**: Complete coverage with extensive refactoring (267/299 line changes)
+- **PR #859 (Three-Pass Staged)**: Balanced approach with clear separation of concerns (70/35 line changes)
+
+**Recommended Solution: Three-Pass Staged Processing (PR #859)**
+
+The analysis recommended PR #859 based on:
+
+1. **Optimal Balance**: Best balance between solving the core problem and maintaining implementation simplicity
+2. **Clear Architecture**: Three distinct passes with well-defined responsibilities:
+   - **Pass 1**: Symbol Discovery (create placeholders for all type declarations)
+   - **Pass 2**: Type Resolution (fill in type details with full symbol context)  
+   - **Pass 3**: Everything Else (process constants, variables, functions)
+3. **Manageable Complexity**: Substantial enough to solve the problem without creating maintenance burden
+4. **Forward Compatibility**: Can be extended in the future for more sophisticated processing
+
+**Key Insight:**
+
+The three-pass approach mirrors how developers conceptually think about type dependencies and provides a solid foundation for reliable type scanning. While it introduces processing overhead, the clear separation makes each pass simpler and potentially faster than complex single-pass logic with backtracking.
+
+**Documentation:**
+
+The complete analysis is documented in `/docs/comparison-order-dependent-scanning.md` with detailed technical comparisons, performance metrics, and correctness analysis.

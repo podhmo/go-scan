@@ -3,10 +3,12 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -75,6 +77,117 @@ func main() {
 		}
 
 		expected := []string{"World"}
+		if diff := cmp.Diff(expected, inspectedValues); diff != "" {
+			return fmt.Errorf("mismatch in inspected values (-want +got):\n%s", diff)
+		}
+
+		return nil
+	}
+
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir))
+	if err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestTypeSwitch_MultipleImplementers(t *testing.T) {
+	const source = `
+package main
+
+// The interface
+type Shaper interface {
+	Shape() string
+}
+
+// First implementer
+type Circle struct{ Radius int }
+func (c Circle) Shape() string { return "circle" }
+func (c Circle) Greet() { inspect("Hello from Circle") }
+
+// Second implementer
+type Square struct{ Side int }
+func (s Square) Shape() string { return "square" }
+func (s Square) Farewell() { inspect("Goodbye from Square") }
+
+
+// Special function to be implemented as an intrinsic
+func inspect(s string) {}
+
+// The function to be symbolically executed
+func process(s Shaper) {
+	switch v := s.(type) {
+	case Circle:
+		v.Greet() // This should be called
+	case Square:
+		v.Farewell() // This should also be called
+	}
+}
+`
+
+	files := map[string]string{
+		"go.mod":  "module example.com/main",
+		"main.go": source,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var inspectedValues []string
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) == 1 {
+				if str, ok := args[0].(*object.String); ok {
+					inspectedValues = append(inspectedValues, str.Value)
+				}
+			}
+			return nil
+		})
+
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, env, mainPkg)
+		}
+
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		processFuncObj, ok := pkgEnv.Get("process")
+		if !ok {
+			return fmt.Errorf("process function not found")
+		}
+		processFunc := processFuncObj.(*object.Function)
+
+		// Find the Shaper interface type from the scanned package
+		var shaperInterfaceType *scanner.TypeInfo
+		for _, typ := range mainPkg.Types {
+			if typ.Name == "Shaper" {
+				shaperInterfaceType = typ
+				break
+			}
+		}
+		if shaperInterfaceType == nil {
+			return fmt.Errorf("could not find Shaper interface type in package")
+		}
+		symbolicArg := &object.SymbolicPlaceholder{
+			Reason: "symbolic argument for process(s Shaper)",
+		}
+		symbolicArg.SetTypeInfo(shaperInterfaceType)
+
+		// Apply the function with the symbolic argument
+		result := eval.Apply(ctx, processFunc, []object.Object{symbolicArg}, mainPkg)
+		if err, ok := result.(*object.Error); ok && err != nil {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+		}
+
+		// Because symgo explores both paths, we expect to see calls from both cases.
+		expected := []string{"Hello from Circle", "Goodbye from Square"}
+		sort.Strings(inspectedValues)
+		sort.Strings(expected)
 		if diff := cmp.Diff(expected, inspectedValues); diff != "" {
 			return fmt.Errorf("mismatch in inspected values (-want +got):\n%s", diff)
 		}

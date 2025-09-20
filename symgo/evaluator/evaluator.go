@@ -2189,14 +2189,29 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 						}
 					}
 
-					val := &object.SymbolicPlaceholder{
-						Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
-						Original:   originalObj, // Keep track of the original object being asserted.
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+					// Check if the original object being switched on is already a concrete instance
+					// of the type in the case clause. If so, use it directly. Otherwise, create a
+					// new symbolic instance for this path.
+					var valueForV object.Object
+					if inst, ok := originalObj.(*object.Instance); ok && inst.TypeInfo() == resolvedType {
+						valueForV = inst
+					} else {
+						var instanceTypeName string
+						if resolvedType != nil {
+							instanceTypeName = fmt.Sprintf("%s.%s", resolvedType.PkgPath, resolvedType.Name)
+						} else {
+							instanceTypeName = fieldType.Name // For built-ins
+						}
+						valueForV = &object.Instance{
+							TypeName:   instanceTypeName,
+							State:      make(map[string]object.Object), // State is symbolic, but the type is concrete.
+							BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+						}
 					}
+
 					v := &object.Variable{
 						Name:        varName,
-						Value:       val,
+						Value:       valueForV,
 						IsEvaluated: true,
 						BaseObject: object.BaseObject{
 							ResolvedTypeInfo:  resolvedType,

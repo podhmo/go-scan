@@ -127,6 +127,96 @@ var x = 10
 	}
 }
 
+func TestEval_LenCapOnFuncArg(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected int64
+	}{
+		{
+			name: "len",
+			source: `
+package main
+func inspect(v int) {}
+func getLen(s []int) int {
+	return len(s)
+}
+func main() {
+	s := make([]int, 3)
+	l := getLen(s)
+	inspect(l)
+}
+`,
+			expected: 3,
+		},
+		{
+			name: "cap",
+			source: `
+package main
+func inspect(v int) {}
+func getCap(s []int) int {
+	return cap(s)
+}
+func main() {
+	s := make([]int, 0, 5)
+	c := getCap(s)
+	inspect(c)
+}
+`,
+			expected: 5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var inspectedValue object.Object
+			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+				mainPkg := pkgs[0]
+				eval := New(s, s.Logger, nil, nil)
+				eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
+					if len(args) > 0 {
+						inspectedValue = args[0]
+					}
+					return nil
+				})
+
+				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+				for _, file := range mainPkg.AstFiles {
+					eval.Eval(ctx, file, env, mainPkg)
+				}
+
+				pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+				if !ok {
+					return fmt.Errorf("package env not found")
+				}
+				mainFuncObj, ok := pkgEnv.Get("main")
+				if !ok {
+					return fmt.Errorf("main function not found")
+				}
+
+				result := eval.Apply(ctx, mainFuncObj, []object.Object{}, mainPkg)
+				if err, ok := result.(*object.Error); ok && err != nil {
+					return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+				}
+
+				if inspectedValue == nil {
+					return fmt.Errorf("inspect was not called")
+				}
+
+				got, ok := inspectedValue.(*object.Integer)
+				if !ok {
+					return fmt.Errorf("expected inspected value to be an Integer, but got %T (%s)", inspectedValue, inspectedValue.Inspect())
+				}
+				if got.Value != tt.expected {
+					return fmt.Errorf("expected inspected value to be %d, but got %d", tt.expected, got.Value)
+				}
+				return nil
+			}
+			runTest(t, tt.source, action)
+		})
+	}
+}
+
 func TestEvalStarExpr_ReturnValueUnwrap(t *testing.T) {
 	source := `
 package main
@@ -543,22 +633,22 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 		{
 			name:     "make",
 			source:   "package main\nfunc main() { make([]int, 0, 8) }",
-			expected: &object.SymbolicPlaceholder{},
+			expected: &object.Slice{Len: 0, Cap: 8},
 		},
 		{
 			name:     "len-string",
 			source:   `package main; func main() { len("four") }`,
-			expected: &object.SymbolicPlaceholder{},
+			expected: &object.Integer{Value: 4},
 		},
 		{
 			name:     "len-slice",
 			source:   `package main; func main() { len([]int{1, 2, 3}) }`,
-			expected: &object.SymbolicPlaceholder{},
+			expected: &object.Integer{Value: 3},
 		},
 		{
 			name:     "cap-slice",
 			source:   `package main; func main() { cap([]int{1, 2, 3}) }`,
-			expected: &object.SymbolicPlaceholder{},
+			expected: &object.Integer{Value: 3},
 		},
 		{
 			name:     "append",
@@ -657,6 +747,25 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 				}
 
 				switch expected := tt.expected.(type) {
+				case *object.Slice:
+					got, ok := evaluated.(*object.Slice)
+					if !ok {
+						t.Fatalf("object is not Slice. got=%T (%+v)", evaluated, evaluated)
+					}
+					if got.Len != expected.Len {
+						t.Errorf("wrong len. want=%d, got=%d", expected.Len, got.Len)
+					}
+					if got.Cap != expected.Cap {
+						t.Errorf("wrong cap. want=%d, got=%d", expected.Cap, got.Cap)
+					}
+				case *object.Integer:
+					got, ok := evaluated.(*object.Integer)
+					if !ok {
+						t.Fatalf("object is not Integer. got=%T (%+v)", evaluated, evaluated)
+					}
+					if got.Value != expected.Value {
+						t.Errorf("wrong value. want=%d, got=%d", expected.Value, got.Value)
+					}
 				case *object.Pointer:
 					ptr, ok := evaluated.(*object.Pointer)
 					if !ok {

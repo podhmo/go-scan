@@ -364,13 +364,47 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 			Package:    pkg,
 		}
 	case *ast.ArrayType:
-		// For expressions like `[]byte("foo")`, the `[]byte` part is an ArrayType.
-		// We don't need to evaluate it to a concrete value, just prevent an "unimplemented" error.
-		return &object.SymbolicPlaceholder{Reason: "array type expression"}
+		if pkg == nil || pkg.Fset == nil {
+			return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for array type")
+		}
+		file := pkg.Fset.File(n.Pos())
+		if file == nil {
+			return e.newError(ctx, n.Pos(), "could not find file for node position")
+		}
+		astFile, ok := pkg.AstFiles[file.Name()]
+		if !ok {
+			return e.newError(ctx, n.Pos(), "could not find ast.File for path: %s", file.Name())
+		}
+		importLookup := e.scanner.BuildImportLookup(astFile)
+
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, n, nil, pkg, importLookup)
+		resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+		placeholder := &object.SymbolicPlaceholder{Reason: "array type expression"}
+		placeholder.SetFieldType(fieldType)
+		placeholder.SetTypeInfo(resolvedType)
+		return placeholder
 	case *ast.MapType:
-		// Similar to ArrayType, when a map type itself is used as an expression (e.g., in a conversion),
-		// we just need to acknowledge it without producing a concrete value.
-		return &object.SymbolicPlaceholder{Reason: "map type expression"}
+		if pkg == nil || pkg.Fset == nil {
+			return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for map type")
+		}
+		file := pkg.Fset.File(n.Pos())
+		if file == nil {
+			return e.newError(ctx, n.Pos(), "could not find file for node position")
+		}
+		astFile, ok := pkg.AstFiles[file.Name()]
+		if !ok {
+			return e.newError(ctx, n.Pos(), "could not find ast.File for path: %s", file.Name())
+		}
+		importLookup := e.scanner.BuildImportLookup(astFile)
+
+		fieldType := e.scanner.TypeInfoFromExpr(ctx, n, nil, pkg, importLookup)
+		resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+		placeholder := &object.SymbolicPlaceholder{Reason: "map type expression"}
+		placeholder.SetFieldType(fieldType)
+		placeholder.SetTypeInfo(resolvedType)
+		return placeholder
 	case *ast.ChanType:
 		if pkg == nil || pkg.Fset == nil {
 			return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for chan type")
@@ -703,11 +737,15 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	}
 
 	if fieldType != nil && fieldType.IsSlice {
+		sliceLen := int64(len(elements))
 		sliceObj := &object.Slice{
 			SliceFieldType: fieldType,
 			Elements:       elements,
+			Len:            sliceLen,
+			Cap:            sliceLen, // For a slice literal, len and cap are the same.
 		}
 		sliceObj.SetFieldType(fieldType)
+		sliceObj.SetTypeInfo(resolvedType)
 		return sliceObj
 	}
 

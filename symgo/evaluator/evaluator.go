@@ -52,6 +52,8 @@ type Evaluator struct {
 	// evaluationInProgress tracks nodes that are currently being evaluated
 	// to detect and prevent infinite recursion.
 	evaluationInProgress map[ast.Node]bool
+	evaluatingMu         sync.Mutex
+	evaluating           map[string]bool
 
 	// calledInterfaceMethods tracks all method calls on interface types.
 	// The key is the fully qualified method name (e.g., "io.Writer.Write"),
@@ -74,7 +76,7 @@ type Evaluator struct {
 
 	// memoization
 	memoize          bool
-	memoizationCache map[*object.Function]object.Object
+	memoizationCache map[token.Pos]object.Object
 }
 
 type callFrame struct {
@@ -109,7 +111,7 @@ func WithMaxSteps(n int) Option {
 func WithMemoization() Option {
 	return func(e *Evaluator) {
 		e.memoize = true
-		e.memoizationCache = make(map[*object.Function]object.Object)
+		e.memoizationCache = make(map[token.Pos]object.Object)
 	}
 }
 
@@ -176,6 +178,8 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		files:                  make([]*FileScope, 0),
 		fileMap:                make(map[string]bool),
 		evaluationInProgress:   make(map[ast.Node]bool),
+		evaluating:             make(map[string]bool),
+		evaluatingMu:           sync.Mutex{},
 		calledInterfaceMethods: make(map[string][]object.Object),
 		seenPackages:           make(map[string]*goscan.Package),
 		UniverseEnv:            universeEnv,
@@ -1009,6 +1013,11 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		return val
 	}
 
+	// If the expression is a function call, it might be wrapped in a ReturnValue.
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
+	}
+
 	// First, unwrap any variable to get to the underlying value.
 	if v, ok := val.(*object.Variable); ok {
 		val = v.Value
@@ -1302,6 +1311,21 @@ func (e *Evaluator) convertGoConstant(ctx context.Context, val constant.Value, p
 }
 
 func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.Package, error) {
+	e.evaluatingMu.Lock()
+	if e.evaluating[path] {
+		e.evaluatingMu.Unlock()
+		e.logc(ctx, slog.LevelError, "recursion detected: already evaluating package", "path", path)
+		return nil, fmt.Errorf("infinite recursion detected in package loading: %s", path)
+	}
+	e.evaluating[path] = true
+	e.evaluatingMu.Unlock()
+
+	defer func() {
+		e.evaluatingMu.Lock()
+		delete(e.evaluating, path)
+		e.evaluatingMu.Unlock()
+	}()
+
 	e.logc(ctx, slog.LevelDebug, "getOrLoadPackage: requesting package", "path", path)
 	if pkg, ok := e.pkgCache[path]; ok {
 		e.logc(ctx, slog.LevelDebug, "getOrLoadPackage: found in cache", "path", path, "scanned", pkg.ScannedInfo != nil)
@@ -2404,7 +2428,7 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 		}
 
 		switch result.(type) {
-		case *object.ReturnValue, *object.Error, *object.Break, *object.Continue:
+		case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue:
 			return result
 		}
 	}
@@ -3233,8 +3257,8 @@ func (v inspectValuer) LogValue() slog.Value {
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
 	if f, ok := fn.(*object.Function); ok {
-		if e.memoize {
-			if cachedResult, found := e.memoizationCache[f]; found {
+		if e.memoize && f.Decl != nil {
+			if cachedResult, found := e.memoizationCache[f.Decl.Pos()]; found {
 				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "function", f.Name)
 				return cachedResult
 			}
@@ -3244,9 +3268,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	result := e.applyFunctionImpl(ctx, fn, args, pkg, callPos)
 
 	if f, ok := fn.(*object.Function); ok {
-		if e.memoize && !isError(result) {
+		if e.memoize && !isError(result) && f.Decl != nil {
 			e.logc(ctx, slog.LevelDebug, "caching result for function", "function", f.Name)
-			e.memoizationCache[f] = result
+			e.memoizationCache[f.Decl.Pos()] = result
 		}
 	}
 
@@ -3424,8 +3448,10 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		}
 
 		evaluated := e.Eval(ctx, fn.Body, extendedEnv, fn.Package)
-		if isError(evaluated) {
-			return evaluated
+		if evaluated != nil {
+			if isError(evaluated) || evaluated.Type() == object.PANIC_OBJ {
+				return evaluated
+			}
 		}
 
 		evaluatedValue := evaluated

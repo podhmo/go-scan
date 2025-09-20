@@ -35,6 +35,54 @@ func TestNewInterpreter(t *testing.T) {
 	})
 }
 
+func TestRecursion_PackageLoading(t *testing.T) {
+	// This test sets up a project with a circular dependency between two packages,
+	// `a` and `b`. Previously, this would cause the symgo engine to hang due to
+	// infinite recursion during package loading. This test ensures that the
+	// recursion guard is working correctly, allowing the analysis to complete
+	// without error.
+	source := map[string]string{
+		"go.mod": `
+module example.com/m
+
+require (
+	example.com/a v0.0.0
+	example.com/b v0.0.0
+)
+
+replace (
+	example.com/a => ./a
+	example.com/b => ./b
+)
+`,
+		"a/a.go": `
+package a
+import "example.com/b"
+func A() {
+	b.B()
+}`,
+		"b/b.go": `
+package b
+import "example.com/a"
+func B() {
+	a.A()
+}`,
+	}
+
+	tc := symgotest.TestCase{
+		Source:     source,
+		EntryPoint: "example.com/m/a.A",
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("symgotest: expected no error, but got: %v", r.Error)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
 func TestInterpreter_Eval_Simple(t *testing.T) {
 	source := `
 package main

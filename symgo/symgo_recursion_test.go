@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/podhmo/go-scan/symgo/object"
 	"github.com/podhmo/go-scan/symgotest"
 )
 
@@ -174,8 +175,12 @@ func main() { _ = V }
 		// The original test was happy with "identifier not found".
 		if r.Error != nil {
 			t.Logf("Interpreter returned an expected error: %v", r.Error)
-			if !strings.Contains(r.Error.Message, "identifier not found: V") {
-				t.Errorf("expected 'identifier not found' error, but got: %v", r.Error)
+			err, ok := r.Error.(*object.Error)
+			if !ok {
+				t.Fatalf("expected error to be of type *object.Error, but got %T", r.Error)
+			}
+			if !strings.Contains(err.Message, "identifier not found: V") {
+				t.Errorf("expected 'identifier not found' error, but got: %v", err)
 			}
 		}
 	})

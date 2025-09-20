@@ -1,4 +1,56 @@
-# `symgo` Robustness Enhancement Report
+# Issue: `find-orphans` Hangs Due to Infinite Recursion in `symgo`
+
+This document outlines an issue where the `find-orphans` tool hangs, the investigation process, and the proposed solution.
+
+## Problem
+
+When running the `find-orphans` end-to-end test via `make -C examples/find-orphans`, the process times out. Verbose logging reveals that the tool enters an infinite loop, generating a massive amount of repetitive log output.
+
+The issue appears to be an infinite recursion bug within the `symgo` symbolic execution engine, specifically in its package loading and dependency resolution logic.
+
+## Reproduction Steps
+
+1.  Navigate to the repository root.
+2.  Run the `find-orphans` test with a timeout. The command will be terminated.
+    ```bash
+    timeout 5s make -C examples/find-orphans
+    ```
+3.  To observe the infinite logging, run the tool with verbose output and redirect to a file. The command will hang until the pipe is closed (e.g., by `head`).
+    ```bash
+    cd examples/find-orphans
+    go run . -v --workspace-root ../.. ./... 2>&1 | head -c 1000000 > find-orphans-verbose-head.log
+    ```
+
+## Log Analysis
+
+The verbose log file (`find-orphans-verbose-head.log`) is filled with a rapidly repeating sequence of debug messages from the `symgo/evaluator`. The key repeating messages are:
+
+- `getOrLoadPackage: requesting package`
+- `ResolvePackage: checking policy`
+- `ScanPackageByImport CACHE HIT`
+- `ensurePackageEnvPopulated: checking package`
+
+This pattern indicates that the evaluator is continuously trying to load and initialize packages it has already processed. The call stack is not correctly tracking which packages are currently under analysis, leading to a recursive reentry. For example, while analyzing package `A` which imports `B`, the evaluator starts analyzing `B`. If `B` (or a dependency of `B`) in turn imports `A`, the evaluator re-enters the analysis for `A` without realizing it's already in progress, leading to an infinite loop.
+
+The issue seems to be triggered by the complex dependency graph of the entire workspace, with `examples/docgen` and `minigo/evaluator` being prominently featured in the logs before the loop becomes uncontrollable.
+
+## Proposed Solution
+
+The root cause is the lack of a mechanism to detect and prevent re-entrant analysis of the same package within a single evaluation stack.
+
+The proposed solution is to introduce a recursion guard in the `symgo` evaluator. This can be implemented by:
+
+1.  Adding a map to the `symgo.Interpreter` or `evaluator.Evaluator` to track the import paths of packages currently being evaluated in the active call stack.
+2.  Before starting the evaluation of a package, the interpreter will check if the package's import path is already in this tracking map.
+3.  If the path is present, it signifies a recursive entry. The interpreter should immediately stop and return a symbolic placeholder or a specific error, rather than re-evaluating the package.
+4.  If the path is not present, it should be added to the map before evaluation begins.
+5.  Crucially, the path must be removed from the map after its evaluation is complete (either successfully or with an error) to allow other, independent analyses to process it. This is typically done using a `defer` statement.
+
+This change will break the infinite loop and allow the `find-orphans` analysis to complete successfully.
+
+---
+
+# Past Issue: `symgo` Robustness Enhancement Report
 
 This document details the analysis and resolution of several robustness issues within the `symgo` symbolic execution engine. These issues were primarily observed when running the `find-orphans` tool on a complex codebase, which exposed edge cases in `symgo`'s handling of unresolved types and symbolic values.
 
@@ -60,3 +112,49 @@ Running `make -C examples/find-orphans` on the codebase revealed several categor
 After implementing these fixes, the `find-orphans` example runs with significantly fewer errors. The evaluator is now much more robust in handling common Go patterns and incomplete type information.
 
 The primary remaining error seen in the logs is `identifier not found: r`, which appears to be related to the complex handling of **method values** (using a method as a value, e.g., `r.handleConvert`, rather than calling it). This is a more subtle issue in the evaluator's environment and scope management and is noted for future investigation.
+
+## 4. `invalid indirect` Error on `*object.ReturnValue`
+
+**Manifestation:**
+
+When running `find-orphans` in library mode (`--mode lib`), the symbolic execution engine logs errors like:
+
+```
+level=ERROR msg="invalid indirect of &instance<...> (type *object.ReturnValue)"
+```
+
+This error occurs in `symgo/evaluator/evaluator.go` within the `evalStarExpr` function, which handles the dereference operator (`*`).
+
+**Analysis:**
+
+The root cause is that the evaluator does not properly unwrap `*object.ReturnValue` objects in all contexts. `*object.ReturnValue` is a wrapper used to propagate return values from function calls up the evaluation stack.
+
+The error occurs when an expression involving a dereference is applied to the result of a function call, for example `*MyFunc()`. The evaluation proceeds as follows:
+1. `MyFunc()` is evaluated, and its result is wrapped in an `*object.ReturnValue`.
+2. The `*` operator is evaluated by `evalStarExpr`.
+3. `evalStarExpr` receives the `*object.ReturnValue` object but fails to "unwrap" it to get the actual value that the function returned.
+4. It then attempts to perform a dereference on the `*object.ReturnValue` wrapper itself, which is not a pointer, leading to the "invalid indirect" error.
+
+This issue is more prevalent in library mode for `find-orphans` because it analyzes many generated functions (like those from the `convert` tool) that may not be perfectly formed or may use patterns that expose this unwrapping weakness.
+
+**Solution:**
+
+The solution is to ensure that `evalStarExpr` correctly unwraps any `*object.ReturnValue` it receives before attempting to process the underlying value. This can be done by adding a check at the beginning of the function:
+
+```go
+func (e *Evaluator) evalStarExpr(...) object.Object {
+    val := e.Eval(ctx, node.X, env, pkg)
+    if isError(val) {
+        return val
+    }
+
+    // ADD THIS FIX: Unwrap the return value if present.
+    if ret, ok := val.(*object.ReturnValue); ok {
+        val = ret.Value
+    }
+
+    // ... rest of the function
+}
+```
+
+This ensures that the rest of the function operates on the actual returned value, not the wrapper, resolving the error.

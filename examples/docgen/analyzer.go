@@ -369,9 +369,14 @@ func (a *Analyzer) analyzeHandlerBody(ctx context.Context, handler *symgo.Functi
 	// Push the current operation onto the stack for the duration of this analysis.
 	a.operationStack = append(a.operationStack, op)
 
-	pkg, err := a.Scanner.ScanPackageByPos(ctx, handler.Decl.Pos())
+	// The handler's package is already available on the symgo.Function object.
+	// We can use ScanPackageByImport, which is more robust and fits the new design.
+	pkg, err := a.Scanner.ScanPackageByImport(ctx, handler.Package.ImportPath)
 	if err != nil {
-		fmt.Printf("warn: failed to get package for handler %q: %v\n", handler.Name.Name, err)
+		a.logger.WarnContext(ctx, "failed to get package for handler",
+			"handler", handler.Name.Name,
+			"package", handler.Package.ImportPath,
+			"error", err)
 		return op // Return original op on error
 	}
 

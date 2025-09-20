@@ -127,6 +127,63 @@ var x = 10
 	}
 }
 
+func TestEvalStarExpr_ReturnValueUnwrap(t *testing.T) {
+	source := `
+package main
+
+func getPtr() *int {
+	i := 10
+	return &i
+}
+
+func main() {
+	x := *getPtr()
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":  "module example.com/me",
+		"main.go": source,
+	})
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		pkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+
+		// Before the fix, this would return an "invalid indirect" error.
+		// After the fix, it should complete successfully.
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+		}
+		if ret, ok := result.(*object.ReturnValue); ok {
+			if err, ok := ret.Value.(*object.Error); ok {
+				return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+			}
+		}
+
+		// Success is not returning an error.
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func runTest(t *testing.T, source string, action scantest.ActionFunc) {
 	t.Helper()
 	dir, cleanup := scantest.WriteFiles(t, map[string]string{
@@ -433,29 +490,44 @@ func TestEvalBuiltinFunctions(t *testing.T) {
 		expected interface{}
 	}{
 		{
-			name:     "panic",
-			input:    `panic("test panic")`,
-			expected: "panic: test panic",
+			name:  "panic-string",
+			input: `panic("test panic")`,
+			expected: &object.PanicError{
+				Value: &object.String{Value: "test panic"},
+			},
+		},
+		{
+			name:     "panic-nil",
+			input:    `panic(nil)`,
+			expected: &object.PanicError{Value: object.NIL},
 		},
 	}
 
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			evaluated := testEval(t, tt.input)
+
 			switch expected := tt.expected.(type) {
 			case int:
 				testIntegerObject(t, evaluated, int64(expected))
-			case string:
-				errObj, ok := evaluated.(*object.Error)
+			case *object.PanicError:
+				panicErr, ok := evaluated.(*object.PanicError)
 				if !ok {
-					t.Errorf("object is not Error. got=%T (%+v)", evaluated, evaluated)
-					return
+					t.Fatalf("object is not PanicError. got=%T (%+v)", evaluated, evaluated)
 				}
-				if errObj.Message != expected {
-					t.Errorf("wrong error message. expected=%q, got=%q",
-						expected, errObj.Message)
+				// Compare the panic error manually to avoid issues with unexported fields in cmp.Diff.
+				if panicErr.Type() != expected.Type() {
+					t.Errorf("wrong type. want=%s, got=%s", expected.Type(), panicErr.Type())
+				}
+				if expected.Value.Type() == object.NIL_OBJ {
+					if panicErr.Value.Type() != object.NIL_OBJ {
+						t.Errorf("expected panic value to be NIL, got %s", panicErr.Value.Type())
+					}
+				} else {
+					if diff := cmp.Diff(expected.Value, panicErr.Value); diff != "" {
+						t.Errorf("panic value mismatch (-want +got):\n%s", diff)
+					}
 				}
 			}
 		})

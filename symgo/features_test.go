@@ -30,7 +30,13 @@ func main() {
 			t.Fatal("expected an error, but got nil")
 		}
 
-		errMsg := r.Error.Error()
+		// We need to type-assert to access the detailed error info
+		err, ok := r.Error.(*object.Error)
+		if !ok {
+			t.Fatalf("expected error to be of type *object.Error, but got %T", r.Error)
+		}
+
+		errMsg := err.Error()
 		expectedPosition := "main.go:4:"
 		expectedMessage := "identifier not found: undefined_variable"
 
@@ -241,7 +247,7 @@ func main() {
 		if r.Error == nil {
 			t.Fatal("expected a panic error, but got nil")
 		}
-		expectedMsg := "panic: test message"
+		expectedMsg := `panic: "test message"`
 		if !strings.Contains(r.Error.Error(), expectedMsg) {
 			t.Errorf("error message mismatch\nwant_substr: %q\ngot:         %q", expectedMsg, r.Error.Error())
 		}

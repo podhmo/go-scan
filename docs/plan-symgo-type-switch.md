@@ -2,7 +2,7 @@
 
 ## 1. Goal
 
-The objective is to enhance the `symgo` symbolic execution engine to correctly trace method calls and field accesses on variables whose types have been narrowed within a control flow structure. This applies to two primary Go idioms:
+The objective is to enhance the `symgo` symbolic execution engine to correctly trace method calls and field accesses on variables whose types have been narrowed within a control flow structure. The key is to resolve members of the **concrete type** (e.g., a specific struct's methods), not just members that might be part of the original interface's method set. This applies to two primary Go idioms:
 
 1.  **Type Switch:** In a `switch v := i.(type)` statement, the variable `v` should be recognized as having the specific type of each `case` block, allowing symbolic execution to trace calls like `v.Method()` or access fields like `v.Field`.
 2.  **`if-ok` Type Assertion:** In an `if v, ok := i.(T); ok` statement, the variable `v` should be recognized as type `T` within the `if` block, enabling the tracing of member access on `v`.
@@ -104,6 +104,11 @@ Modify the `symgo` evaluator to make the tests pass. The likely areas for modifi
 -   **`accessor`**: Ensure `findMethodOnType` and `findFieldOnType` work correctly when given the `TypeInfo` from a symbolic placeholder. This includes handling both value and pointer receiver methods correctly based on how the variable is defined.
 
 The core of the implementation will be ensuring that the `TypeInfo` stored on the symbolic variable is fully utilized during method and field resolution, successfully connecting the type-narrowed variable to its members.
+
+**Handling Scan Policies:**
+The implementation must be robust with respect to `symgo`'s scan policy. The tests should cover the following scenarios:
+1.  **Intra-Policy Assertion:** The type assertion occurs in a package that is within the primary analysis scope, and the target type (`T`) is also defined within that scope. This is the baseline case where full source is available.
+2.  **Extra-Policy Assertion:** The type assertion occurs in a package within the primary analysis scope, but the target type `T` is defined in an external package that is *not* part of the source-scanned policy. `symgo` should still be able to symbolically trace method calls on the narrowed variable, likely by creating a `SymbolicPlaceholder` for the method's result based on a shallow scan of the external type's definition.
 
 ### Step 6: Verify and Finalize
 

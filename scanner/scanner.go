@@ -293,26 +293,42 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		parsedFileResults = append(parsedFileResults, result)
 	}
 
+	// This is the original, correct package filtering logic.
 	var dominantPackageName string
 	var parsedFiles []*ast.File
 	var filePathsForDominantPkg []string
 
 	for _, result := range parsedFileResults {
 		currentPackageName := result.fileAst.Name.Name
+
 		if dominantPackageName == "" {
 			dominantPackageName = currentPackageName
+			parsedFiles = append(parsedFiles, result.fileAst)
+			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		} else if currentPackageName != dominantPackageName {
 			baseDominant := strings.TrimSuffix(dominantPackageName, "_test")
 			baseCurrent := strings.TrimSuffix(currentPackageName, "_test")
-			if !(dominantPackageName == "main" || currentPackageName == "main" || baseDominant == baseCurrent) {
+
+			if dominantPackageName == "main" && currentPackageName != "main" {
+				dominantPackageName = currentPackageName
+				var newParsedFiles []*ast.File
+				var newFilePaths []string
+				parsedFiles = newParsedFiles
+				filePathsForDominantPkg = newFilePaths
+				parsedFiles = append(parsedFiles, result.fileAst)
+				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
+			} else if dominantPackageName != "main" && currentPackageName == "main" {
+				continue
+			} else if baseDominant == baseCurrent {
+				if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
+					dominantPackageName = currentPackageName
+				}
+				parsedFiles = append(parsedFiles, result.fileAst)
+				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
+			} else {
 				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)
 			}
-		}
-	}
-
-	for _, result := range parsedFileResults {
-		currentPackageName := result.fileAst.Name.Name
-		if currentPackageName == dominantPackageName || strings.TrimSuffix(currentPackageName, "_test") == dominantPackageName {
+		} else {
 			parsedFiles = append(parsedFiles, result.fileAst)
 			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		}
@@ -325,12 +341,30 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	}
 
 	// Stage 3: Two-Pass Symbol Resolution
+	isDeclarationsOnly := false
+	for _, pattern := range s.DeclarationsOnlyPackages {
+		if matches(pattern, canonicalImportPath) {
+			isDeclarationsOnly = true
+			break
+		}
+	}
+
 	// Pass 1: Create stubs for all types and functions
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
+		if isDeclarationsOnly {
+			for _, decl := range fileAst.Decls {
+				if f, ok := decl.(*ast.FuncDecl); ok {
+					f.Body = nil
+				}
+			}
+		}
+
 		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
+				// We only handle top-level TYPE declarations here.
+				// Local types inside functions will be picked up by the ast.Inspect call below.
 				if d.Tok == token.TYPE {
 					for _, spec := range d.Specs {
 						if ts, ok := spec.(*ast.TypeSpec); ok {
@@ -340,8 +374,27 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 					}
 				}
 			case *ast.FuncDecl:
+				// Handle the function stub itself
 				stub := s.createFunctionInfoStub(ctx, d, info, filePath)
 				info.Functions = append(info.Functions, stub)
+
+				// Now, inspect the function body for local type declarations
+				if d.Body != nil {
+					ast.Inspect(d.Body, func(n ast.Node) bool {
+						gd, ok := n.(*ast.GenDecl)
+						if !ok || gd.Tok != token.TYPE {
+							return true // Continue searching
+						}
+						// Found a local type declaration.
+						for _, spec := range gd.Specs {
+							if ts, ok := spec.(*ast.TypeSpec); ok {
+								localStub := s.createTypeInfoStub(ctx, ts, info, filePath, gd)
+								info.Types = append(info.Types, localStub)
+							}
+						}
+						return false // Don't inspect inside this type declaration further
+					})
+				}
 			}
 		}
 	}
@@ -362,7 +415,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if d, ok := decl.(*ast.GenDecl); ok {
 				switch d.Tok {
 				case token.CONST:
-					s.collectConstants(d, info, filePath)
+					s.collectConstants(ctx, d, info, filePath, importLookup)
 				case token.VAR:
 					s.collectVariables(ctx, d, info, filePath, importLookup)
 				}
@@ -371,7 +424,16 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	}
 
 	if info.Name == "" && len(filePaths) > 0 {
-		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
+		// Fallback to first file's package name if still undetermined
+		for _, res := range parsedFileResults {
+			if res.fileAst.Name != nil {
+				info.Name = res.fileAst.Name.Name
+				break
+			}
+		}
+		if info.Name == "" {
+			return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
+		}
 	}
 
 	s.evaluateAllConstants(ctx, info)
@@ -382,24 +444,16 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 // resolveEnums performs a linking pass to connect constants with their enum types.
 func (s *Scanner) resolveEnums(pkgInfo *PackageInfo) {
 	for _, c := range pkgInfo.Constants {
-		// A constant must have an explicit type to be considered an enum member.
 		if c.Type == nil || c.Type.TypeName == "" {
 			continue
 		}
-
-		// The constant's type must belong to the package being scanned.
-		// The parser sets FullImportPath for local types, so this check is reliable.
 		if c.Type.FullImportPath != pkgInfo.ImportPath {
 			continue
 		}
-
-		// Find the TypeInfo corresponding to the constant's type name.
 		typeInfo := pkgInfo.Lookup(c.Type.TypeName)
 		if typeInfo == nil {
 			continue
 		}
-
-		// Link the constant to the type.
 		typeInfo.EnumMembers = append(typeInfo.EnumMembers, c)
 		typeInfo.IsEnum = true
 	}
@@ -420,11 +474,10 @@ func (s *Scanner) BuildImportLookup(file *ast.File) map[string]string {
 	return importLookup
 }
 
-// constContext holds the state needed for evaluating constants across a package.
 type constContext struct {
 	pkg        *PackageInfo
-	env        map[string]*ConstantInfo // Maps constant name to its info
-	evaluating map[string]bool          // For cycle detection
+	env        map[string]*ConstantInfo
+	evaluating map[string]bool
 }
 
 func (s *Scanner) createTypeInfoStub(ctx context.Context, ts *ast.TypeSpec, info *PackageInfo, absFilePath string, decl *ast.GenDecl) *TypeInfo {
@@ -448,7 +501,7 @@ func (s *Scanner) createTypeInfoStub(ctx context.Context, ts *ast.TypeSpec, info
 func (s *Scanner) resolveTypeInfoDetails(ctx context.Context, typeInfo *TypeInfo, info *PackageInfo) {
 	ts, ok := typeInfo.Node.(*ast.TypeSpec)
 	if !ok {
-		return // Should not happen
+		return
 	}
 
 	importLookup := s.BuildImportLookup(info.AstFiles[typeInfo.FilePath])
@@ -505,6 +558,7 @@ func (s *Scanner) resolveFunctionInfoDetails(ctx context.Context, funcInfo *Func
 	funcInfo.IsVariadic = parsedFuncInfo.IsVariadic
 	funcInfo.TypeParams = funcOwnTypeParams
 
+
 	if f.Recv != nil && len(f.Recv.List) > 0 {
 		recvField := f.Recv.List[0]
 		var recvName string
@@ -516,12 +570,9 @@ func (s *Scanner) resolveFunctionInfoDetails(ctx context.Context, funcInfo *Func
 		parsedRecvFieldType := s.TypeInfoFromExpr(ctx, recvField.Type, funcOwnTypeParams, pkgInfo, importLookup)
 
 		if parsedRecvFieldType != nil {
-			baseRecvTypeName := parsedRecvFieldType.Name
+			baseRecvTypeName := parsedRecvFieldType.TypeName
 			if parsedRecvFieldType.IsPointer && parsedRecvFieldType.Elem != nil {
 				baseRecvTypeName = parsedRecvFieldType.Elem.Name
-			}
-			if parts := strings.Split(baseRecvTypeName, "."); len(parts) > 1 {
-				baseRecvTypeName = parts[len(parts)-1]
 			}
 
 			if baseType := pkgInfo.Lookup(baseRecvTypeName); baseType != nil {
@@ -542,25 +593,21 @@ func (s *Scanner) resolveFunctionInfoDetails(ctx context.Context, funcInfo *Func
 		funcInfo.Parameters = reparsedFuncSignature.Parameters
 		funcInfo.Results = reparsedFuncSignature.Results
 
-		// Associate method with its receiver type
 		if recvType := pkgInfo.Lookup(parsedRecvFieldType.TypeName); recvType != nil {
 			recvType.Methods = append(recvType.Methods, funcInfo)
 		}
 	}
 }
 
-func (s *Scanner) collectConstants(decl *ast.GenDecl, info *PackageInfo, absFilePath string) {
+func (s *Scanner) collectConstants(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string) {
 	var lastConstType *FieldType
 	var lastConstValues []ast.Expr
 	for iotaVal, spec := range decl.Specs {
 		if vs, ok := spec.(*ast.ValueSpec); ok {
 			var currentSpecType *FieldType
 			if vs.Type != nil {
-				// Type resolution must happen after all type stubs are created.
-				// This is a simplification; assuming types are resolved by the time this is called.
-				// A more robust implementation might need to look up the type from `info`.
-				// For now, this part is tricky in a two-pass system without full context.
-				// We defer full type resolution to later.
+				currentSpecType = s.TypeInfoFromExpr(ctx, vs.Type, nil, info, importLookup)
+				lastConstType = currentSpecType
 			} else {
 				currentSpecType = lastConstType
 			}
@@ -615,7 +662,6 @@ func (s *Scanner) collectVariables(ctx context.Context, decl *ast.GenDecl, info 
 	}
 }
 
-// Pass 2: Evaluate all collected constants.
 func (s *Scanner) evaluateAllConstants(ctx context.Context, info *PackageInfo) {
 	cctx := &constContext{
 		pkg:        info,
@@ -631,8 +677,6 @@ func (s *Scanner) evaluateAllConstants(ctx context.Context, info *PackageInfo) {
 	}
 }
 
-// safeEvalConstExpr wraps evalConstExpr with a recover block to prevent panics
-// from the go/constant package from crashing the scanner.
 func (s *Scanner) safeEvalConstExpr(cctx *constContext, currentConst *ConstantInfo, expr ast.Expr) (val constant.Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -643,23 +687,20 @@ func (s *Scanner) safeEvalConstExpr(cctx *constContext, currentConst *ConstantIn
 	return s.evalConstExpr(cctx, currentConst, expr)
 }
 
-// evaluateConstant is the entry point for evaluating a single constant. It handles caching and cycle detection.
 func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
-	// Pragmatic workaround for architecture-dependent constants in the stdlib.
-	// Based on the user's hint that the target context (minigo) is always 64-bit.
 	if cctx.pkg.ImportPath == "math/bits" && (c.Name == "UintSize" || c.Name == "uintSize") {
 		c.ConstVal = constant.MakeInt64(64)
 		c.Value = "64"
 		return
 	}
 	if cctx.pkg.ImportPath == "strconv" && c.Name == "intSize" {
-		c.ConstVal = constant.MakeInt64(64) // Assume 64-bit for consistency
+		c.ConstVal = constant.MakeInt64(64)
 		c.Value = "64"
 		return
 	}
 
 	if c.ConstVal != nil {
-		return // Already evaluated
+		return
 	}
 	if cctx.evaluating[c.Name] {
 		c.Value = "evaluation_error_cycle"
@@ -678,9 +719,8 @@ func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 
 	val, err := s.safeEvalConstExpr(cctx, c, c.ValExpr)
 	if err != nil {
-		// If evaluation fails, just leave the value as unknown.
 		c.ConstVal = constant.MakeUnknown()
-		c.Value = "" // Leave it empty to signify it's not resolved.
+		c.Value = ""
 		return
 	}
 	c.ConstVal = val
@@ -690,7 +730,6 @@ func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 	}
 }
 
-// evalConstExpr recursively evaluates an AST expression to a constant.Value.
 func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, expr ast.Expr) (constant.Value, error) {
 	switch n := expr.(type) {
 	case *ast.Ident:
@@ -698,13 +737,12 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 			return constant.MakeFromLiteral(fmt.Sprintf("%d", currentConst.IotaValue), token.INT, 0), nil
 		}
 		if c, ok := cctx.env[n.Name]; ok {
-			s.evaluateConstant(cctx, c) // Ensure dependency is evaluated
+			s.evaluateConstant(cctx, c)
 			if c.ConstVal != nil && c.ConstVal.Kind() != constant.Unknown {
 				return c.ConstVal, nil
 			}
 			return nil, fmt.Errorf("dependency %s could not be evaluated", n.Name)
 		}
-		// Handle built-in `true` and `false`
 		if n.Obj != nil && n.Obj.Kind == ast.Con && n.Obj.Data == nil {
 			switch n.Name {
 			case "true":
@@ -742,14 +780,11 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 		}
 		return constant.BinaryOp(x, n.Op, y), nil
 	case *ast.SelectorExpr:
-		// TODO: Handle cross-package constant references.
 		return nil, fmt.Errorf("cross-package constant references not supported")
 	case *ast.CallExpr:
-		// Handle simple type conversions like `uint(0)`.
 		if typeIdent, ok := n.Fun.(*ast.Ident); ok {
 			if len(n.Args) == 1 {
 				if lit, ok := n.Args[0].(*ast.BasicLit); ok && lit.Kind == token.INT {
-					// This is a basic form of type conversion, e.g., uint(0).
 					switch typeIdent.Name {
 					case "uint", "int", "uint64", "int64", "float64", "float32", "string":
 						return constant.MakeFromLiteral(lit.Value, lit.Kind, 0), nil
@@ -757,7 +792,6 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 				}
 			}
 		}
-		// TODO: Handle built-in functions like unsafe.Sizeof.
 		return nil, fmt.Errorf("built-in functions and complex type conversions in const expressions not supported")
 	default:
 		return nil, fmt.Errorf("unsupported const expression type: %T", expr)
@@ -800,7 +834,7 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 			methodName := field.Names[0].Name
 			funcType, ok := field.Type.(*ast.FuncType)
 			if !ok {
-				continue // Should not happen in a valid interface
+				continue
 			}
 			methodInfo := &MethodInfo{Name: methodName}
 			parsedFuncDetails := s.parseFuncType(ctx, funcType, currentTypeParams, info, importLookup)
@@ -881,23 +915,19 @@ func (s *Scanner) parseFieldList(ctx context.Context, fields []*ast.Field, curre
 	return result
 }
 
-// buildKey creates a canonical string key for a type expression to detect recursion.
 func (s *Scanner) buildKey(expr ast.Expr, pkg *PackageInfo, importLookup map[string]string, currentTypeParams []*TypeParamInfo) string {
 	switch n := expr.(type) {
 	case *ast.Ident:
-		// Check if it's a generic type parameter first.
 		for _, p := range currentTypeParams {
 			if p.Name == n.Name {
-				return n.Name // Type parameters are unique by name within their scope.
+				return n.Name
 			}
 		}
-		// Assume it's a type in the current package.
 		if pkg != nil {
 			return pkg.ImportPath + "." + n.Name
 		}
 		return n.Name
 	case *ast.SelectorExpr:
-		// Add a nil check for n.X before proceeding.
 		if n.X == nil {
 			return "." + n.Sel.Name
 		}
@@ -906,13 +936,12 @@ func (s *Scanner) buildKey(expr ast.Expr, pkg *PackageInfo, importLookup map[str
 				return pkgPath + "." + n.Sel.Name
 			}
 		}
-		// Fallback for complex selectors, though less common for types.
 		return s.buildKey(n.X, pkg, importLookup, currentTypeParams) + "." + n.Sel.Name
-	case *ast.IndexExpr: // G[T]
+	case *ast.IndexExpr:
 		base := s.buildKey(n.X, pkg, importLookup, currentTypeParams)
 		arg := s.buildKey(n.Index, pkg, importLookup, currentTypeParams)
 		return fmt.Sprintf("%s[%s]", base, arg)
-	case *ast.IndexListExpr: // G[T, U]
+	case *ast.IndexListExpr:
 		base := s.buildKey(n.X, pkg, importLookup, currentTypeParams)
 		args := make([]string, len(n.Indices))
 		for i, idx := range n.Indices {
@@ -967,12 +996,10 @@ func (s *Scanner) buildKey(expr ast.Expr, pkg *PackageInfo, importLookup map[str
 		}
 		return "struct{" + strings.Join(parts, ";") + "}"
 	default:
-		// Fallback to position for any other unhandled types.
 		return fmt.Sprintf("pos:%d", expr.Pos())
 	}
 }
 
-// TypeInfoFromExpr resolves an AST expression that represents a type into a FieldType.
 func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
 	if expr == nil {
 		return &FieldType{Name: "untyped_nil_expr"}
@@ -981,7 +1008,6 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 		s.logger.DebugContext(ctx, "Enter TypeInfoFromExpr", "pos", s.fset.Position(expr.Pos()))
 	}
 
-	// Get or create the resolution cache from the context.
 	v := ctx.Value(resolutionCacheKey{})
 	var cache map[string]*FieldType
 	if v == nil {
@@ -991,29 +1017,19 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 		cache = v.(map[string]*FieldType)
 	}
 
-	// Generate a canonical key for the expression to robustly detect recursion.
 	key := s.buildKey(expr, info, importLookup, currentTypeParams)
-
-	// Check for recursion.
 	if placeholder, ok := cache[key]; ok {
 		return placeholder
 	}
 
-	// No recursion detected yet. Create a new placeholder for the result and cache it.
 	placeholder := &FieldType{Resolver: s.resolver, CurrentPkg: info}
 	cache[key] = placeholder
 
-	// Resolve the actual type.
 	realType := s.resolveFieldType(ctx, expr, currentTypeParams, info, importLookup)
-
-	// Now that we have the real type, populate the placeholder that we created earlier.
 	*placeholder = *realType
-
-	// Return the original placeholder pointer.
 	return placeholder
 }
 
-// resolveFieldType is the inner logic of TypeInfoFromExpr, without the recursion guard.
 func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
 	ft := &FieldType{Resolver: s.resolver, CurrentPkg: info}
 	switch t := expr.(type) {
@@ -1044,7 +1060,10 @@ func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTy
 				if info != nil {
 					ft.FullImportPath = info.ImportPath
 					ft.TypeName = t.Name
-					ft.Definition = info.Lookup(t.Name)
+					// Eagerly link definition if it's a type from the same package.
+					if typeDef := info.Lookup(t.Name); typeDef != nil {
+						ft.Definition = typeDef
+					}
 				}
 			}
 		}
@@ -1059,8 +1078,8 @@ func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTy
 			TypeName:           elemType.TypeName,
 			PkgName:            elemType.PkgName,
 			TypeArgs:           elemType.TypeArgs,
-			IsResolvedByConfig: elemType.IsResolvedByConfig, // Propagate from element
-			CurrentPkg:         info,                        // Ensure current package context is passed
+			IsResolvedByConfig: elemType.IsResolvedByConfig,
+			CurrentPkg:         info,
 		}
 	case *ast.SelectorExpr:
 		pkgIdent, ok := t.X.(*ast.Ident)
@@ -1070,21 +1089,18 @@ func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTy
 		pkgImportPath, _ := importLookup[pkgIdent.Name]
 		qualifiedName := fmt.Sprintf("%s.%s", pkgImportPath, t.Sel.Name)
 
-		// Check for external type overrides first.
 		if overrideInfo, ok := s.ExternalTypeOverrides[qualifiedName]; ok {
-			// If an override is found, create a FieldType from the synthetic TypeInfo.
 			return &FieldType{
 				Name:               overrideInfo.Name,
 				PkgName:            overrideInfo.PkgPath,
 				FullImportPath:     overrideInfo.PkgPath,
 				TypeName:           overrideInfo.Name,
 				IsResolvedByConfig: true,
-				Definition:         overrideInfo, // Link to the synthetic definition
+				Definition:         overrideInfo,
 				Resolver:           s.resolver,
 			}
 		}
 
-		// If no override, proceed with normal parsing.
 		ft.PkgName = pkgIdent.Name
 		ft.TypeName = t.Sel.Name
 		ft.FullImportPath = pkgImportPath
@@ -1153,7 +1169,6 @@ func commentText(cg *ast.CommentGroup) string {
 	return strings.TrimSpace(cg.Text())
 }
 
-// matches checks if a given path matches a pattern.
 func matches(pattern, path string) bool {
 	if strings.HasSuffix(pattern, "/...") {
 		base := strings.TrimSuffix(pattern, "/...")

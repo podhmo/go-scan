@@ -114,6 +114,7 @@ type TypeInfo struct {
 	Func       *FunctionInfo    `json:"func,omitempty"` // For type alias to func type
 	Interface  *InterfaceInfo   `json:"interface,omitempty"`
 	Underlying *FieldType       `json:"underlying,omitempty"` // For alias types
+	Methods    []*FunctionInfo  `json:"-"`                    // Methods associated with this type
 
 	// --- Fields for Enum-like patterns ---
 	IsEnum      bool            `json:"isEnum,omitempty"`      // True if this type is identified as an enum
@@ -126,7 +127,6 @@ type TypeInfo struct {
 	ResolutionContext context.Context `json:"-"`                    // Context for resolving nested types
 	Unresolved        bool            `json:"unresolved,omitempty"` // True if the type is from a package that was not scanned.
 	CurrentPkg        *PackageInfo    `json:"-"`                    // Back-reference to the containing package
-	Methods           []*FunctionInfo `json:"-"`                    // Methods associated with this type (if it's a struct/named type)
 }
 
 // NewUnresolvedTypeInfo creates a new TypeInfo placeholder for a type that is
@@ -528,6 +528,7 @@ type FunctionInfo struct {
 	Results    []*FieldInfo     `json:"results,omitempty"`
 	IsVariadic bool             `json:"isVariadic,omitempty"`
 	AstDecl    *ast.FuncDecl    `json:"-"` // Avoid cyclic JSON.
+	LocalTypes []*TypeInfo      `json:"-"` // For types defined within a function body.
 }
 
 // SetResolver is a test helper to overwrite the internal resolver.

@@ -493,19 +493,22 @@ func MyFunction(v any) {
 		if !ok {
 			return fmt.Errorf("object 'result' is not a variable, but %T", v)
 		}
-		placeholder, ok := v.Value.(*object.SymbolicPlaceholder)
+		instance, ok := v.Value.(*object.Instance)
 		if !ok {
-			return fmt.Errorf("expected value of 'result' to be a SymbolicPlaceholder, got %T (%s)", v.Value, v.Value.Inspect())
+			return fmt.Errorf("expected value of 'result' to be an *object.Instance, got %T (%s)", v.Value, v.Value.Inspect())
 		}
 
+		// The new behavior is more precise: it creates an instance of the specific type from the case.
+		// The TypeInfo on that instance will be unresolved because it's from an out-of-policy package.
+		// The Kind will be UnknownKind because the actual definition was not scanned.
 		wantUnresolvedType := &scanner.TypeInfo{
 			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
-			Kind:       scanner.InterfaceKind, // Kind is inferred from the type switch.
+			Kind:       scanner.UnknownKind,
 		}
-		if diff := cmp.Diff(wantUnresolvedType, placeholder.TypeInfo()); diff != "" {
-			t.Errorf("result placeholder TypeInfo mismatch (-want +got):\n%s", diff)
+		if diff := cmp.Diff(wantUnresolvedType, instance.TypeInfo()); diff != "" {
+			t.Errorf("result instance TypeInfo mismatch (-want +got):\n%s", diff)
 		}
 
 		return nil
@@ -598,7 +601,7 @@ func MyFunction(v any) {
 			PkgPath:    "example.com/me/foreign/lib",
 			Name:       "ForeignType",
 			Unresolved: true,
-			Kind:       scanner.InterfaceKind, // Kind is inferred from the type assertion.
+			Kind:       scanner.UnknownKind, // The kind is unknown because the package is not scanned.
 		}
 		if diff := cmp.Diff(wantUnresolvedType, placeholder.TypeInfo()); diff != "" {
 			t.Errorf("result placeholder TypeInfo mismatch (-want +got):\n%s", diff)

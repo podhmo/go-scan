@@ -136,6 +136,21 @@ func (r *Resolver) ResolveCompositeLit(ctx context.Context, fieldType *scanner.F
 	return instance
 }
 
+// ResolveSymbolicField creates a symbolic placeholder for a field access on a symbolic value.
+func (r *Resolver) ResolveSymbolicField(ctx context.Context, field *scanner.FieldInfo, receiver object.Object) object.Object {
+	fieldTypeInfo := r.ResolveType(ctx, field.Type)
+	var reason string
+	if v, ok := receiver.(*object.Variable); ok {
+		reason = "field access " + v.Name + "." + field.Name
+	} else {
+		reason = "field access on symbolic value " + receiver.Inspect() + "." + field.Name
+	}
+	return &object.SymbolicPlaceholder{
+		BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
+		Reason:     reason,
+	}
+}
+
 // ResolvePackage is a helper to get package info while respecting the scan policy.
 func (r *Resolver) ResolvePackage(ctx context.Context, path string) (*scanner.PackageInfo, error) {
 	r.logger.DebugContext(ctx, "ResolvePackage: checking policy", "path", path)

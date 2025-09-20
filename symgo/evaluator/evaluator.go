@@ -731,27 +731,11 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	// The failing test expects the underlying type name, not the alias name.
 	instance := &object.Instance{
 		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
-		State:    make(map[string]object.Object),
 		BaseObject: object.BaseObject{
 			ResolvedTypeInfo: resolvedType,
 		},
 	}
 	instance.SetFieldType(fieldType)
-
-	// Populate the instance's state from the literal's key-value elements.
-	for _, elt := range node.Elts {
-		if kv, ok := elt.(*ast.KeyValueExpr); ok {
-			if key, ok := kv.Key.(*ast.Ident); ok {
-				// Evaluate the value expression to trace calls and get the object.
-				value := e.Eval(ctx, kv.Value, env, pkg)
-				if !isError(value) {
-					// Store the evaluated object in the state map.
-					instance.State[key.Name] = value
-				}
-			}
-		}
-	}
-
 	return instance
 }
 
@@ -1512,7 +1496,7 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 		// This must be done *before* the unresolved check, as an unresolved type can still have field info.
 		if typeInfo.Struct != nil {
 			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
-				return e.resolveSymbolicField(ctx, field, val)
+				return e.resolver.ResolveSymbolicField(ctx, field, val)
 			}
 		}
 
@@ -1547,37 +1531,6 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 	}
 }
 
-// resolveSymbolicField creates a symbolic placeholder for a field access on a symbolic value.
-// It first checks if the receiver is a concrete instance with state, and if so, returns the value from the state.
-func (e *Evaluator) resolveSymbolicField(ctx context.Context, field *scan.FieldInfo, receiver object.Object) object.Object {
-	// Check for concrete instance state first.
-	var instance *object.Instance
-	if ptr, ok := receiver.(*object.Pointer); ok {
-		instance, _ = ptr.Value.(*object.Instance)
-	} else {
-		instance, _ = receiver.(*object.Instance)
-	}
-
-	if instance != nil && instance.State != nil {
-		if val, ok := instance.State[field.Name]; ok {
-			return val // Return the concrete value from the instance's state.
-		}
-	}
-
-	// Fallback to creating a symbolic placeholder.
-	fieldTypeInfo := e.resolver.ResolveType(ctx, field.Type)
-	var reason string
-	if v, ok := receiver.(*object.Variable); ok {
-		reason = "field access " + v.Name + "." + field.Name
-	} else {
-		reason = "field access on symbolic value " + receiver.Inspect() + "." + field.Name
-	}
-	return &object.SymbolicPlaceholder{
-		BaseObject: object.BaseObject{ResolvedTypeInfo: fieldTypeInfo, ResolvedFieldType: field.Type},
-		Reason:     reason,
-	}
-}
-
 func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	leftObj := e.Eval(ctx, n.X, env, pkg)
 	if isError(leftObj) {
@@ -1594,7 +1547,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if placeholder.Original != nil {
 			narrowedFt := placeholder.FieldType()
 			if narrowedFt == nil {
-				// Not enough info to check compatibility, proceed with the placeholder itself.
 				return e.evalSelectorExprForObject(ctx, n, leftObj, env, pkg)
 			}
 
@@ -1616,23 +1568,21 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			if concreteTi != nil {
-				// Compatibility Check:
-				// 1. Package path must match.
-				// 2. Pointer-ness must match.
-				// 3. Base type name must match.
+				// Check 1: Package path must match.
+				// Check 2: Pointer-ness must match.
+				// Check 3: Base type name must match.
 				if narrowedFt.FullImportPath == concreteTi.PkgPath && narrowedFt.IsPointer == concreteIsPointer {
 					baseNarrowedName := narrowedFt.TypeName
 					if narrowedFt.IsPointer && narrowedFt.Elem != nil {
 						baseNarrowedName = narrowedFt.Elem.TypeName
 					}
 					if baseNarrowedName == concreteTi.Name {
-						// Compatible! Unwrap and evaluate the selector on the original concrete object.
-						// This is the key change that makes the feature work.
+						// Compatible. Unwrap and evaluate on the original concrete object.
 						return e.evalSelectorExprForObject(ctx, n, placeholder.Original, env, pkg)
 					}
 				}
 			}
-			// If not compatible, it's an impossible symbolic path. Prune it by returning a placeholder.
+			// If not compatible, it's an impossible path. Prune it by returning a placeholder.
 			return &object.SymbolicPlaceholder{Reason: "pruned path in type switch/assertion"}
 		}
 	}
@@ -1829,7 +1779,7 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 			// If not a method, check if it's a field on the struct (including embedded).
 			if typeInfo.Struct != nil {
 				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-					return e.resolveSymbolicField(ctx, field, val)
+					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
 			}
 		}
@@ -1848,7 +1798,7 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 				// If not a method, check for a field on the underlying struct.
 				if typeInfo.Struct != nil {
 					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-						return e.resolveSymbolicField(ctx, field, instance)
+						return e.resolver.ResolveSymbolicField(ctx, field, instance)
 					}
 				}
 			}
@@ -2094,7 +2044,6 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 					val := &object.SymbolicPlaceholder{
 						Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
-						Original:   originalObj, // IMPORTANT: Link back to the original object.
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 					v := &object.Variable{
@@ -2427,10 +2376,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			}
 
 			// Evaluate the source expression to trace calls
-			originalObj := e.Eval(ctx, typeAssert.X, env, pkg)
-			if isError(originalObj) {
-				return originalObj
-			}
+			e.Eval(ctx, typeAssert.X, env, pkg)
 
 			// Resolve the asserted type (T).
 			if pkg == nil || pkg.Fset == nil {
@@ -2462,7 +2408,6 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// Create placeholders for the two return values.
 			valuePlaceholder := &object.SymbolicPlaceholder{
 				Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
-				Original:   originalObj, // IMPORTANT: Link back to the original object.
 				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 			}
 

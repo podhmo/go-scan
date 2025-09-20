@@ -84,15 +84,12 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
-### `goscan` Scanner Refactoring for Robustness ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
-- [ ] **Phase 1: Implement Prerequisite Fixes**
-  - [ ] Implement `main` package name normalization in `scanner.Scanner` to prevent symbol collisions in `symgo`.
-- [ ] **Phase 2: Unify Scanner Methods and Verify**
-  - [ ] Make `ScanPackage` workspace-aware by finding the correct locator for a given file path.
-  - [ ] Refactor `ScanPackage` to be a robust wrapper around `ScanPackageByImport`.
-  - [ ] Remove `ScanPackageByPos` and refactor its usage.
-  - [ ] Update all relevant docstrings.
-  - [ ] Run the full test suite to ensure `cross_main_package_test.go` passes and no regressions have been introduced.
+### Unify `goscan.Scanner` Pathing Logic ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
+- [ ] Create a new private `scan` method with unified and robust path resolution logic.
+- [ ] Refactor `ScanPackage` and `ScanPackageByImport` to use the new private `scan` method.
+- [ ] Remove the deprecated `ScanPackageByPos` method and refactor its usage.
+- [ ] Update docstrings for the scanner methods.
+- [ ] Run the full test suite to ensure all tests, including `cross_main_package_test.go`, continue to pass.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

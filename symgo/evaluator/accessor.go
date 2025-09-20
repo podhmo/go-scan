@@ -202,7 +202,32 @@ func (a *accessor) findMethodInfoRecursive(ctx context.Context, typeInfo *scanne
 }
 
 func (a *accessor) findDirectMethodInfoOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) (*scanner.FunctionInfo, error) {
-	if typeInfo == nil || typeInfo.PkgPath == "" {
+	if typeInfo == nil {
+		return nil, nil
+	}
+
+	// **FIX**: Handle interface types. This was missing.
+	if typeInfo.Interface != nil {
+		// getAllInterfaceMethods handles embedded interfaces correctly.
+		allMethods := a.eval.getAllInterfaceMethods(ctx, typeInfo, make(map[string]struct{}))
+		for _, method := range allMethods {
+			if method.Name == methodName {
+				// We found the method in the interface definition.
+				// We need to return a FunctionInfo that `applyFunction` can use
+				// to create a symbolic result.
+				return &scanner.FunctionInfo{
+					Name:       method.Name,
+					Parameters: method.Parameters,
+					Results:    method.Results,
+					// The other fields like AstDecl, Pkg, etc., are not needed here
+					// because this is for a symbolic call, not a real execution.
+				}, nil
+			}
+		}
+		return nil, nil // Method not found in interface definition.
+	}
+
+	if typeInfo.PkgPath == "" {
 		return nil, nil
 	}
 

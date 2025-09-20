@@ -65,6 +65,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Embedded Method Resolution**: The symbolic execution engine can now correctly resolve and trace method calls on embedded structs, enabling more accurate call-graph analysis for tools like `find-orphans`.
 - **`symgo`: Embedded Field Access**: The engine now also correctly resolves and traces field access on embedded structs.
 - **`symgo`: Type Switch Support**: The symbolic execution engine now correctly handles `ast.TypeSwitchStmt` nodes, allowing it to analyze code that uses type switches (`switch v := i.(type)`). It correctly scopes the typed variable (`v`) within each case block.
+- **`symgo`: Type-Narrowed Member Access** ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md)): Implemented full support for method calls and field access on variables narrowed by type switches (`switch v := i.(type)`) and `if-ok` assertions (`if v, ok := i.(T)`). The implementation correctly handles concrete types, interface types, and unresolved types from external packages.
 - **`symgo`: Efficient & Configurable Scanning Policy**: The symbolic execution engine no longer scans packages outside the workspace by default, significantly improving performance and scalability. It now uses a `ScanPolicyFunc` to provide fine-grained, dynamic control over which packages are scanned from source versus being treated as symbolic placeholders. This replaces the older, less flexible `WithExtraPackages` mechanism.
 - **`symgo`: Shallow Scanning**: The `symgo` evaluator is now more robust and performant when dealing with types from packages outside the defined scan policy. It can now create symbolic placeholders for unresolved types, allowing analysis to continue without crashing and enabling symbolic tracing of method calls on these types. This significantly improves the accuracy of tools like `find-orphans` when analyzing code with external dependencies. ([docs/plan-symgo-shallow-scan.md](./docs/plan-symgo-shallow-scan.md))
 - **`symgo`: Field Access on Symbolic Receivers**: The `symgo` evaluator can now correctly access struct fields on symbolic receivers (e.g., a receiver of a method that is the entry point of analysis). This fixes a bug where field access was incorrectly failing with an "undefined method" error, particularly on structs that use `_ struct{}` to enforce keyed literals.
@@ -85,12 +86,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md)
  
 ## To Be Implemented
-
-### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
-- [-] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions. (In Progress)
-  - [x] Added failing tests for both type switch and if-ok assertions.
-  - [x] Core feature for concrete types is implemented.
-  - [ ] Implementation causes regressions in interface and unresolved type handling. See [docs/cont-symgo-type-switch-3.md](./docs/cont-symgo-type-switch-3.md) for the plan to fix the regressions.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

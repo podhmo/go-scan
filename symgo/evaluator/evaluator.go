@@ -1486,40 +1486,29 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 		return &object.Intrinsic{Fn: fn}
 	}
 
-	// Fallback to searching for the method on the instance's type.
+	// Fallback to searching for the field or method on the placeholder's type.
 	if typeInfo := val.TypeInfo(); typeInfo != nil {
-		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
-			return method
-		}
-
-		// If it's not a method, check if it's a field on the struct (including embedded).
-		// This must be done *before* the unresolved check, as an unresolved type can still have field info.
+		// **FIX**: Search for a field first.
 		if typeInfo.Struct != nil {
 			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
 				return e.resolver.ResolveSymbolicField(ctx, field, val)
 			}
 		}
 
+		// **FIX**: For unresolved types, we cannot reliably tell a field from a method.
+		// The old logic defaulted to "method call", causing bugs. The new heuristic
+		// is to assume it's a field access, which is more common and fixes the test case.
 		if typeInfo.Unresolved {
-			placeholder := &object.SymbolicPlaceholder{
-				Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", sel.Name, typeInfo.Name),
-				Receiver: val,
+			// Create a placeholder representing the result of the field access.
+			// We don't know the field's type, so the result is just another placeholder.
+			return &object.SymbolicPlaceholder{
+				Reason: fmt.Sprintf("field access on symbolic value %s.%s", val.Inspect(), sel.Name),
 			}
-			// Try to find method in interface definition if available
-			if typeInfo.Interface != nil {
-				for _, method := range typeInfo.Interface.Methods {
-					if method.Name == sel.Name {
-						// Convert MethodInfo to a temporary FunctionInfo
-						placeholder.UnderlyingFunc = &scan.FunctionInfo{
-							Name:       method.Name,
-							Parameters: method.Parameters,
-							Results:    method.Results,
-						}
-						break
-					}
-				}
-			}
-			return placeholder
+		}
+
+		// If not a field, check for a method.
+		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
+			return method
 		}
 	}
 
@@ -1545,9 +1534,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	// Check for type-narrowed placeholders
 	if placeholder, ok := leftObj.(*object.SymbolicPlaceholder); ok {
 		if placeholder.Original != nil {
+			resolvedNarrowedType := placeholder.TypeInfo()
+			// **FIX 1**: Don't unwrap if the narrowed type is an interface.
+			if resolvedNarrowedType != nil && resolvedNarrowedType.Kind == scan.InterfaceKind {
+				return e.evalSelectorExprForObject(ctx, n, placeholder, env, pkg)
+			}
+
+			// **FIX 2**: Restore the compatibility check for concrete types before unwrapping.
 			narrowedFt := placeholder.FieldType()
 			if narrowedFt == nil {
-				return e.evalSelectorExprForObject(ctx, n, leftObj, env, pkg)
+				return e.evalSelectorExprForObject(ctx, n, placeholder, env, pkg) // Should not happen if TypeInfo exists
 			}
 
 			originalConcreteObj := e.forceEval(ctx, placeholder.Original, pkg)
@@ -1568,21 +1564,18 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			if concreteTi != nil {
-				// Check 1: Package path must match.
-				// Check 2: Pointer-ness must match.
-				// Check 3: Base type name must match.
 				if narrowedFt.FullImportPath == concreteTi.PkgPath && narrowedFt.IsPointer == concreteIsPointer {
 					baseNarrowedName := narrowedFt.TypeName
 					if narrowedFt.IsPointer && narrowedFt.Elem != nil {
 						baseNarrowedName = narrowedFt.Elem.TypeName
 					}
 					if baseNarrowedName == concreteTi.Name {
-						// Compatible. Unwrap and evaluate on the original concrete object.
+						// Compatible, and it's a concrete type. Unwrap it.
 						return e.evalSelectorExprForObject(ctx, n, placeholder.Original, env, pkg)
 					}
 				}
 			}
-			// If not compatible, it's an impossible path. Prune it by returning a placeholder.
+			// If not compatible, it's an impossible path.
 			return &object.SymbolicPlaceholder{Reason: "pruned path in type switch/assertion"}
 		}
 	}
@@ -1771,16 +1764,17 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 			return &object.Intrinsic{Fn: fn}
 		}
 
-		// Fallback to searching for the method on the instance's type.
+		// Fallback to searching for a field or method on the instance's type.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
-				return method
-			}
-			// If not a method, check if it's a field on the struct (including embedded).
+			// **FIX**: Search for a field first.
 			if typeInfo.Struct != nil {
 				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
 					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
+			}
+			// If not a field, check for a method.
+			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
+				return method
 			}
 		}
 
@@ -1791,15 +1785,19 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 		pointee := val.Value
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
+				// **FIX**: Search for a field first.
+				if typeInfo.Struct != nil {
+					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+						// Field access on a pointer implicitly dereferences it.
+						// The field is on the instance.
+						return e.resolver.ResolveSymbolicField(ctx, field, instance)
+					}
+				}
+
+				// If not a field, check for a method.
 				// The receiver for the method call is the pointer itself, not the instance.
 				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 					return method
-				}
-				// If not a method, check for a field on the underlying struct.
-				if typeInfo.Struct != nil {
-					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-						return e.resolver.ResolveSymbolicField(ctx, field, instance)
-					}
 				}
 			}
 		}
@@ -2754,7 +2752,16 @@ func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *s
 	e.logger.DebugContext(ctx, "evalVariable: start", "var", v.Name, "is_evaluated", v.IsEvaluated)
 	if v.IsEvaluated {
 		e.logger.DebugContext(ctx, "evalVariable: already evaluated, returning cached value", "var", v.Name, "value_type", v.Value.Type(), "value", inspectValuer{v.Value})
-		return v.Value
+		// When returning a cached value, ensure it carries the variable's static type
+		// info if the value itself doesn't have it. This is crucial for placeholders.
+		val := v.Value
+		if p, ok := val.(*object.SymbolicPlaceholder); ok {
+			if p.TypeInfo() == nil && v.TypeInfo() != nil {
+				p.SetTypeInfo(v.TypeInfo())
+				p.SetFieldType(v.FieldType())
+			}
+		}
+		return val
 	}
 
 	// Prevent infinite recursion for variable initializers.

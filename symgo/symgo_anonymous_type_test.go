@@ -38,10 +38,18 @@ func TestAnonymousTypes_Interface(t *testing.T) {
 
 	defaultIntrinsic := func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		fn := args[0] // The function object itself
-		if p, ok := fn.(*symgo.SymbolicPlaceholder); ok {
-			if p.UnderlyingFunc != nil {
-				inspectedMethod = p.UnderlyingFunc
+		var foundFunc *scanner.FunctionInfo
+		switch f := fn.(type) {
+		case *symgo.Function:
+			foundFunc = f.Def
+		case *symgo.SymbolicPlaceholder:
+			if f.UnderlyingFunc != nil {
+				foundFunc = f.UnderlyingFunc
 			}
+		}
+
+		if foundFunc != nil {
+			inspectedMethod = foundFunc
 		}
 		return &symgo.SymbolicPlaceholder{Reason: "default intrinsic result"}
 	}

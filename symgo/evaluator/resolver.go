@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/ast"
 	"log/slog"
 
 	goscan "github.com/podhmo/go-scan"
@@ -79,6 +80,21 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 // ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
 func (r *Resolver) ResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
 	if r.ScanPolicy(pkg.Path) {
+		// **FIX**: Handle symbolic/interface methods that don't have an AST declaration.
+		if funcInfo.AstDecl == nil {
+			// This is a symbolic function, like a method from an interface definition.
+			// Create a function object without a body. `applyFunction` will handle this
+			// by returning a symbolic result based on the signature.
+			return &object.Function{
+				Name: &ast.Ident{Name: funcInfo.Name},
+				// We don't have Parameters or Body as AST nodes, but `applyFunction`
+				// can use the info on `funcInfo.Parameters` and `funcInfo.Results`.
+				Env:     pkg.Env,
+				Package: pkg.ScannedInfo,
+				Def:     funcInfo,
+			}
+		}
+
 		fn := &object.Function{
 			Name:       funcInfo.AstDecl.Name,
 			Parameters: funcInfo.AstDecl.Type.Params,

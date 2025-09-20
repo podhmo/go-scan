@@ -87,7 +87,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### Unify Scanner Logic and Add Package ID ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
 - [ ] Add the new `ID` field to the `scanner.PackageInfo` struct.
 - [ ] Create a new unified private `scan` method in `goscan.Scanner` that correctly handles all path types and uses existing locator functions.
-- [ ] Implement the `ID` generation logic (`<path>` or `<path>.main`) within the new `scan` method.
+- [ ] Implement the `ID` generation logic (`<key>` or `<key>.main`) within the new `scan` method.
 - [ ] Refactor `ScanPackage` and `ScanPackageByImport` to be thin wrappers around the new `scan` method.
 - [ ] Remove the `ScanPackageByPos` method and update its call site.
 - [ ] Update documentation and adapt tests (`cross_main_package_test.go`) to use the new `ID` field for lookups.

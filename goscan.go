@@ -659,9 +659,16 @@ func (s *Scanner) privateScan(ctx context.Context, pkgDirAbs string, importPath 
 
 // ScanPackage scans a single package at a given directory path.
 func (s *Scanner) ScanPackage(ctx context.Context, pkgPath string) (*scanner.PackageInfo, error) {
-	pkgDirAbs, err := filepath.Abs(pkgPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not get absolute path for %s: %w", pkgPath, err)
+	var pkgDirAbs string
+	var err error
+	if filepath.IsAbs(pkgPath) {
+		pkgDirAbs = pkgPath
+	} else {
+		// Let's assume pkgPath is relative to the CWD, not s.workDir
+		pkgDirAbs, err = filepath.Abs(pkgPath)
+		if err != nil {
+			return nil, fmt.Errorf("could not get absolute path for %s: %w", pkgPath, err)
+		}
 	}
 
 	// Since we have the directory, we need to find the corresponding import path.

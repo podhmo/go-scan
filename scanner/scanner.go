@@ -240,7 +240,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 
 	// Stage 1: Parallel Parsing
 	results := make(chan fileParseResult, len(filePaths))
-	g, ctx := errgroup.WithContext(ctx)
+	g, gCtx := errgroup.WithContext(ctx)
 
 	for _, filePath := range filePaths {
 		fp := filePath // create a new variable for the closure
@@ -257,14 +257,11 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if content == nil {
 				content, err = os.ReadFile(fp)
 				if err != nil {
-					// Send error to the channel and exit goroutine
 					results <- fileParseResult{filePath: fp, err: fmt.Errorf("reading file: %w", err)}
 					return nil
 				}
 			}
 
-			// Lock the mutex to ensure that parser.ParseFile, which modifies the shared
-			// token.FileSet, is not called concurrently.
 			s.mu.Lock()
 			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
 			s.mu.Unlock()
@@ -272,8 +269,8 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			select {
 			case results <- fileParseResult{filePath: fp, fileAst: fileAst, err: err}:
 				return nil
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-gCtx.Done():
+				return gCtx.Err()
 			}
 		})
 	}
@@ -296,12 +293,11 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		parsedFileResults = append(parsedFileResults, result)
 	}
 
-	// Stage 3: Sequential Processing
+	// Stage 3: Filter files by dominant package name
 	var dominantPackageName string
 	var parsedFiles []*ast.File
 	var filePathsForDominantPkg []string
 
-	// First pass over results to determine dominant package name
 	for _, result := range parsedFileResults {
 		currentPackageName := result.fileAst.Name.Name
 
@@ -314,33 +310,31 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			baseCurrent := strings.TrimSuffix(currentPackageName, "_test")
 
 			if dominantPackageName == "main" && currentPackageName != "main" {
-				// The real package is `currentPackageName`. Discard previous `main` files.
 				dominantPackageName = currentPackageName
 				var newParsedFiles []*ast.File
 				var newFilePaths []string
-				// Note: we don't need to re-filter parsedFiles because they were all `main` anyway.
+				for i, p := range parsedFiles {
+					if strings.TrimSuffix(p.Name.Name, "_test") != baseDominant {
+						newParsedFiles = append(newParsedFiles, p)
+						newFilePaths = append(newFilePaths, filePathsForDominantPkg[i])
+					}
+				}
 				parsedFiles = newParsedFiles
 				filePathsForDominantPkg = newFilePaths
 				parsedFiles = append(parsedFiles, result.fileAst)
 				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 			} else if dominantPackageName != "main" && currentPackageName == "main" {
-				// The real package is `dominantPackageName`. Ignore the `main` file.
 				continue
 			} else if baseDominant == baseCurrent {
-				// This is `pkg` and `pkg_test`, which is allowed.
-				// If the test package was found first, make the non-test package dominant.
 				if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
 					dominantPackageName = currentPackageName
 				}
-				// Add the file to the list.
 				parsedFiles = append(parsedFiles, result.fileAst)
 				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 			} else {
-				// Two different non-main packages. This is a real error.
 				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)
 			}
 		} else {
-			// Package names match, just add the file.
 			parsedFiles = append(parsedFiles, result.fileAst)
 			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		}
@@ -349,7 +343,43 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	info.Name = dominantPackageName
 	info.Files = filePathsForDominantPkg
 
-	// Second pass: Process declarations from the final list of valid ASTs
+	// Pass 1: Create placeholders for all type declarations from the filtered files.
+	for i, fileAst := range parsedFiles {
+		filePath := info.Files[i]
+		info.AstFiles[filePath] = fileAst
+		for _, decl := range fileAst.Decls {
+			if d, ok := decl.(*ast.GenDecl); ok && d.Tok == token.TYPE {
+				for _, spec := range d.Specs {
+					if ts, ok := spec.(*ast.TypeSpec); ok {
+						typeInfo := &TypeInfo{
+							Name:     ts.Name.Name,
+							PkgPath:  info.ImportPath,
+							FilePath: filePath,
+							Doc:      commentText(ts.Doc),
+							Node:     ts,
+							Inspect:  s.inspect,
+							Logger:   s.logger,
+							Fset:     info.Fset,
+						}
+						if typeInfo.Doc == "" && d.Doc != nil {
+							typeInfo.Doc = commentText(d.Doc)
+						}
+						info.Types = append(info.Types, typeInfo)
+					}
+				}
+			}
+		}
+	}
+
+	// Pass 2: Fill in the details for all collected types.
+	for _, typeInfo := range info.Types {
+		if ts, ok := typeInfo.Node.(*ast.TypeSpec); ok {
+			importLookup := s.BuildImportLookup(info.AstFiles[typeInfo.FilePath])
+			s.fillTypeInfoFromSpec(ctx, typeInfo, ts, info, importLookup)
+		}
+	}
+
+	// Pass 3: Process all other declarations (consts, vars, funcs).
 	isDeclarationsOnly := false
 	for _, pattern := range s.DeclarationsOnlyPackages {
 		if matches(pattern, canonicalImportPath) {
@@ -360,8 +390,6 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
-
-		// If this package is marked for declarations-only scanning, nil out all function bodies.
 		if isDeclarationsOnly {
 			for _, decl := range fileAst.Decls {
 				if f, ok := decl.(*ast.FuncDecl); ok {
@@ -369,14 +397,13 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 				}
 			}
 		}
-
-		info.AstFiles[filePath] = fileAst
 		importLookup := s.BuildImportLookup(fileAst)
-
 		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
-				s.parseGenDecl(ctx, d, info, filePath, importLookup)
+				if d.Tok != token.TYPE { // Types are already detailed, just do const/var
+					s.parseGenDecl(ctx, d, info, filePath, importLookup)
+				}
 			case *ast.FuncDecl:
 				info.Functions = append(info.Functions, s.parseFuncDecl(ctx, d, filePath, info, importLookup))
 			}
@@ -387,9 +414,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
 	}
 
-	// Third pass: Evaluate all collected constants
 	s.evaluateAllConstants(ctx, info)
-
 	s.resolveEnums(info)
 	return info, nil
 }
@@ -679,7 +704,11 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 		Logger:   s.logger,
 		Fset:     info.Fset,
 	}
+	s.fillTypeInfoFromSpec(ctx, typeInfo, sp, info, importLookup)
+	return typeInfo
+}
 
+func (s *Scanner) fillTypeInfoFromSpec(ctx context.Context, typeInfo *TypeInfo, sp *ast.TypeSpec, info *PackageInfo, importLookup map[string]string) {
 	// Set up the initial resolution context for this type.
 	// Any types resolved from this type's fields will have this type's identifier in their path.
 	typeIdentifier := info.ImportPath + "." + sp.Name.Name
@@ -692,24 +721,23 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 	typeInfo.ResolutionContext = childCtx
 
 	if sp.TypeParams != nil {
-		typeInfo.TypeParams = s.parseTypeParamList(ctx, sp.TypeParams.List, info, importLookup)
+		typeInfo.TypeParams = s.parseTypeParamList(childCtx, sp.TypeParams.List, info, importLookup)
 	}
 
 	switch t := sp.Type.(type) {
 	case *ast.StructType:
 		typeInfo.Kind = StructKind
-		typeInfo.Struct = s.parseStructType(ctx, t, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Struct = s.parseStructType(childCtx, t, typeInfo.TypeParams, info, importLookup)
 	case *ast.InterfaceType:
 		typeInfo.Kind = InterfaceKind
-		typeInfo.Interface = s.parseInterfaceType(ctx, t, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Interface = s.parseInterfaceType(childCtx, t, typeInfo.TypeParams, info, importLookup)
 	case *ast.FuncType:
 		typeInfo.Kind = FuncKind
-		typeInfo.Func = s.parseFuncType(ctx, t, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Func = s.parseFuncType(childCtx, t, typeInfo.TypeParams, info, importLookup)
 	default:
 		typeInfo.Kind = AliasKind
-		typeInfo.Underlying = s.TypeInfoFromExpr(ctx, sp.Type, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Underlying = s.TypeInfoFromExpr(childCtx, sp.Type, typeInfo.TypeParams, info, importLookup)
 	}
-	return typeInfo
 }
 
 func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast.Field, info *PackageInfo, importLookup map[string]string) []*TypeParamInfo {

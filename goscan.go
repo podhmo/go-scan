@@ -162,12 +162,6 @@ func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTy
 	return s.scanner.TypeInfoFromExpr(ctx, expr, currentTypeParams, info, importLookup)
 }
 
-// ScannerForSymgo is a temporary helper for tests to access the internal scanner.
-// TODO: Refactor evaluator to use the top-level goscan.Scanner instead.
-func (s *Scanner) ScannerForSymgo() (*scanner.Scanner, error) {
-	return s.scanner, nil
-}
-
 // ModulePath returns the module path from the scanner's locator.
 func (s *Scanner) ModulePath() string {
 	if s.locator == nil {

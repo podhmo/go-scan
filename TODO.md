@@ -84,6 +84,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
+### Unify Scanner Logic and Add Package ID ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
+- [ ] Add the new `ID` field to the `scanner.PackageInfo` struct.
+- [ ] Create a new unified private `scan` method in `goscan.Scanner` that correctly handles all path types and uses existing locator functions.
+- [ ] Implement the `ID` generation logic (`<key>` or `<key>.main`) within the new `scan` method.
+- [ ] Refactor `ScanPackage` and `ScanPackageByImport` to be thin wrappers around the new `scan` method.
+- [ ] Remove the `ScanPackageByPos` method and update its call site.
+- [ ] Update documentation and adapt tests (`cross_main_package_test.go`) to use the new `ID` field for lookups.
+
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.

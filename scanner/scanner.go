@@ -811,6 +811,44 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 	funcInfo.AstDecl = f
 	funcInfo.TypeParams = funcOwnTypeParams
 
+	// After parsing the function signature, walk its body to find and resolve local type declarations.
+	if f.Body != nil {
+		ast.Inspect(f.Body, func(n ast.Node) bool {
+			gd, ok := n.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				return true // Continue traversal for non-type declarations.
+			}
+
+			// We found a local type declaration block (e.g., `type (...)`).
+			// Process it now and perform the special local-alias resolution.
+			for _, spec := range gd.Specs {
+				if ts, ok := spec.(*ast.TypeSpec); ok {
+					typeInfo := s.parseTypeSpec(ctx, ts, pkgInfo, absFilePath, importLookup)
+					if typeInfo.Doc == "" && gd.Doc != nil {
+						typeInfo.Doc = commentText(gd.Doc)
+					}
+
+					// This is the special logic that only runs for local types.
+					// Try to link the underlying type's definition immediately.
+					if typeInfo.Kind == AliasKind && typeInfo.Underlying != nil && typeInfo.Underlying.PkgName == "" {
+						underlyingName := typeInfo.Underlying.TypeName
+						if def := pkgInfo.Lookup(underlyingName); def != nil {
+							typeInfo.Underlying.Definition = def
+							// Also link the element's definition for pointers
+							if typeInfo.Underlying.IsPointer && typeInfo.Underlying.Elem != nil {
+								if elemDef := pkgInfo.Lookup(typeInfo.Underlying.Elem.TypeName); elemDef != nil {
+									typeInfo.Underlying.Elem.Definition = elemDef
+								}
+							}
+						}
+					}
+					pkgInfo.Types = append(pkgInfo.Types, typeInfo)
+				}
+			}
+			return false // Stop traversal within this GenDecl, as we've processed it.
+		})
+	}
+
 	if f.Recv != nil && len(f.Recv.List) > 0 {
 		recvField := f.Recv.List[0]
 		var recvName string

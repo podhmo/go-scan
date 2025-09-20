@@ -585,66 +585,124 @@ func (e *Evaluator) evalSliceExpr(ctx context.Context, node *ast.SliceExpr, env 
 
 func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	if e.evaluationInProgress[node] {
-		// Return a placeholder instead of an error to allow analysis to continue
-		// on other branches. The presence of a cyclic dependency is noted.
 		e.logc(ctx, slog.LevelWarn, "cyclic dependency detected in composite literal", "pos", node.Pos())
 		return &object.SymbolicPlaceholder{Reason: "cyclic reference in composite literal"}
 	}
 	e.evaluationInProgress[node] = true
 	defer delete(e.evaluationInProgress, node)
 
-	if pkg == nil || pkg.Fset == nil {
-		return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types for composite literal")
+	var fieldType *scan.FieldType
+	var resolvedType *scan.TypeInfo
+
+	// First, try to resolve the type from the local environment. This handles locally defined type aliases.
+	if node.Type != nil {
+		typeObj := e.Eval(ctx, node.Type, env, pkg)
+
+		if t, ok := typeObj.(*object.Type); ok && t.ResolvedType != nil {
+			aliasTypeInfo := t.ResolvedType
+			if aliasTypeInfo.Kind == scan.AliasKind && aliasTypeInfo.Underlying != nil {
+				// It's an alias. fieldType represents the alias itself.
+				fieldType = &scan.FieldType{
+					Name:           aliasTypeInfo.Name,
+					FullImportPath: aliasTypeInfo.PkgPath,
+					Definition:     aliasTypeInfo,
+				}
+				// Copy structural info from underlying type to the alias's FieldType
+				underlying := aliasTypeInfo.Underlying
+				fieldType.IsSlice = underlying.IsSlice
+				fieldType.IsMap = underlying.IsMap
+				fieldType.IsPointer = underlying.IsPointer
+				fieldType.Elem = underlying.Elem
+				fieldType.MapKey = underlying.MapKey
+				// For further processing, resolvedType must be the underlying type.
+				resolvedType = e.resolver.ResolveType(ctx, underlying)
+			} else {
+				// It's a regular type resolved from env.
+				resolvedType = aliasTypeInfo
+			}
+		}
 	}
 
-	file := pkg.Fset.File(node.Pos())
-	if file == nil {
-		return e.newError(ctx, node.Pos(), "could not find file for node position")
-	}
-	astFile, ok := pkg.AstFiles[file.Name()]
-	if !ok {
-		return e.newError(ctx, node.Pos(), "could not find ast.File for path: %s", file.Name())
-	}
-	importLookup := e.scanner.BuildImportLookup(astFile)
+	// If type information is still missing (e.g., for implicit types in slice literals
+	// or if resolution from env failed), fall back to the scanner.
+	if resolvedType == nil {
+		if pkg == nil || pkg.Fset == nil {
+			// Cannot proceed without package info, might be an implicit type we can't infer.
+			return &object.SymbolicPlaceholder{Reason: "unresolved composite literal with no type"}
+		}
+		file := pkg.Fset.File(node.Pos())
+		if file == nil {
+			return e.newError(ctx, node.Pos(), "could not find file for node position")
+		}
+		astFile, ok := pkg.AstFiles[file.Name()]
+		if !ok {
+			return e.newError(ctx, node.Pos(), "could not find ast.File for path: %s", file.Name())
+		}
+		importLookup := e.scanner.BuildImportLookup(astFile)
 
-	fieldType := e.scanner.TypeInfoFromExpr(ctx, node.Type, nil, pkg, importLookup)
-	if fieldType == nil {
-		var typeNameBuf bytes.Buffer
-		printer.Fprint(&typeNameBuf, pkg.Fset, node.Type)
-		return e.newError(ctx, node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
+		// This handles cases where node.Type is specified but wasn't in the env.
+		if node.Type != nil {
+			fieldType = e.scanner.TypeInfoFromExpr(ctx, node.Type, nil, pkg, importLookup)
+			if fieldType == nil {
+				var typeNameBuf bytes.Buffer
+				printer.Fprint(&typeNameBuf, pkg.Fset, node.Type)
+				return e.newError(ctx, node.Pos(), "could not resolve type for composite literal: %s", typeNameBuf.String())
+			}
+			resolvedType = e.resolver.ResolveType(ctx, fieldType)
+		}
+		// Note: We don't handle implicit types (where node.Type is nil) here yet.
+		// That would require type inference from the context (e.g., assignment statement).
 	}
 
+	// If fieldType wasn't set for an alias, create it now from the resolvedType.
+	if fieldType == nil && resolvedType != nil {
+		isSlice := false
+		isMap := false
+		var elem, mapKey *scan.FieldType
+
+		if resolvedType.Kind == scan.AliasKind && resolvedType.Underlying != nil {
+			isSlice = resolvedType.Underlying.IsSlice
+			isMap = resolvedType.Underlying.IsMap
+			elem = resolvedType.Underlying.Elem
+			mapKey = resolvedType.Underlying.MapKey
+		}
+
+		fieldType = &scan.FieldType{
+			Name:           resolvedType.Name,
+			FullImportPath: resolvedType.PkgPath,
+			Definition:     resolvedType,
+			IsSlice:        isSlice,
+			IsMap:          isMap,
+			Elem:           elem,
+			MapKey:         mapKey,
+			IsPointer:      strings.HasPrefix(resolvedType.Name, "*"),
+		}
+	}
+
+	// Now that we have the type, evaluate the elements of the literal.
 	elements := make([]object.Object, 0, len(node.Elts))
-	// IMPORTANT: Evaluate all field/element values within the literal.
-	// This is crucial for detecting function calls inside initializers.
 	for _, elt := range node.Elts {
 		switch v := elt.(type) {
 		case *ast.KeyValueExpr:
-			// This handles struct literals: { Key: Value }
-			// and map literals: { Key: Value }
-			// We always need to evaluate the value part to trace calls.
 			value := e.Eval(ctx, v.Value, env, pkg)
-			elements = append(elements, value) // For now, just track values for structs too.
-			// For maps, keys can also be expressions with function calls.
-			// For structs, keys are just identifiers, so evaluating them is harmless
-			// if we check the type first.
-			if fieldType.IsMap {
+			elements = append(elements, value)
+			if fieldType != nil && fieldType.IsMap {
 				e.Eval(ctx, v.Key, env, pkg)
 			}
 		default:
-			// This handles slice/array literals: { Value1, Value2 }
 			element := e.Eval(ctx, v, env, pkg)
 			elements = append(elements, element)
 		}
 	}
 
-	if fieldType.IsMap {
+	// Finally, construct the appropriate object based on the type.
+	if fieldType != nil && fieldType.IsMap {
 		mapObj := &object.Map{MapFieldType: fieldType}
 		mapObj.SetFieldType(fieldType)
 		return mapObj
 	}
 
-	if fieldType.IsSlice {
+	if fieldType != nil && fieldType.IsSlice {
 		sliceObj := &object.Slice{
 			SliceFieldType: fieldType,
 			Elements:       elements,
@@ -653,25 +711,24 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return sliceObj
 	}
 
-	// If the type was unresolved, we can now infer its kind.
-	resolvedType := e.resolver.ResolveType(ctx, fieldType)
 	if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
 		resolvedType.Kind = scan.StructKind
 	}
 
-	// Delegate policy check and object creation to the resolver.
-	// We pass the resolved type to avoid re-resolving.
-	// Note: This part might need adjustment if ResolveCompositeLit is to be simplified.
-	// For now, let's stick to the plan of inferring here.
 	if resolvedType == nil || resolvedType.Unresolved {
+		reason := "unresolved composite literal type"
+		if fieldType != nil {
+			reason = "unresolved composite literal of type " + fieldType.String()
+		}
 		placeholder := &object.SymbolicPlaceholder{
-			Reason: "unresolved composite literal of type " + fieldType.String(),
+			Reason: reason,
 		}
 		placeholder.SetFieldType(fieldType)
-		placeholder.SetTypeInfo(resolvedType) // Pass the potentially updated type info
+		placeholder.SetTypeInfo(resolvedType)
 		return placeholder
 	}
 
+	// The failing test expects the underlying type name, not the alias name.
 	instance := &object.Instance{
 		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
 		BaseObject: object.BaseObject{
@@ -1039,89 +1096,78 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 }
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scan.PackageInfo) object.Object {
-	if node.Tok != token.VAR {
-		return nil
-	}
-
-	if pkg == nil || pkg.Fset == nil {
-		return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types")
-	}
-	file := pkg.Fset.File(node.Pos())
-	if file == nil {
-		return e.newError(ctx, node.Pos(), "could not find file for node position")
-	}
-	astFile, ok := pkg.AstFiles[file.Name()]
-	if !ok {
-		return e.newError(ctx, node.Pos(), "could not find ast.File for path: %s", file.Name())
-	}
-	importLookup := e.scanner.BuildImportLookup(astFile)
-
-	for _, spec := range node.Specs {
-		valSpec, ok := spec.(*ast.ValueSpec)
+	switch node.Tok {
+	case token.VAR:
+		if pkg == nil || pkg.Fset == nil {
+			return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types")
+		}
+		file := pkg.Fset.File(node.Pos())
+		if file == nil {
+			return e.newError(ctx, node.Pos(), "could not find file for node position")
+		}
+		astFile, ok := pkg.AstFiles[file.Name()]
 		if !ok {
-			continue
+			return e.newError(ctx, node.Pos(), "could not find ast.File for path: %s", file.Name())
 		}
+		importLookup := e.scanner.BuildImportLookup(astFile)
 
-		var staticFieldType *scan.FieldType
-		if valSpec.Type != nil {
-			staticFieldType = e.scanner.TypeInfoFromExpr(ctx, valSpec.Type, nil, pkg, importLookup)
-		}
-
-		for i, name := range valSpec.Names {
-			var val object.Object
-			var resolvedTypeInfo *scan.TypeInfo
-			if staticFieldType != nil {
-				resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+		for _, spec := range node.Specs {
+			valSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
 			}
 
-			if i < len(valSpec.Values) {
-				val = e.Eval(ctx, valSpec.Values[i], env, pkg)
-				if isError(val) {
-					return val
-				}
-				// The result of an expression (like a function call) might be wrapped in a ReturnValue.
-				// We must unwrap it to get the actual value before creating the variable.
-				if ret, ok := val.(*object.ReturnValue); ok {
-					val = ret.Value
-				}
-			} else {
-				// Create a placeholder with type information for uninitialized variables
-				placeholder := &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
+			var staticFieldType *scan.FieldType
+			if valSpec.Type != nil {
+				staticFieldType = e.scanner.TypeInfoFromExpr(ctx, valSpec.Type, nil, pkg, importLookup)
+			}
+
+			for i, name := range valSpec.Names {
+				var val object.Object
+				var resolvedTypeInfo *scan.TypeInfo
 				if staticFieldType != nil {
-					placeholder.SetFieldType(staticFieldType)
-					placeholder.SetTypeInfo(resolvedTypeInfo)
+					resolvedTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
 				}
-				val = placeholder
-			}
 
-			v := &object.Variable{
-				Name:        name.Name,
-				Value:       val,
-				IsEvaluated: true, // Local variables are always evaluated eagerly.
-				DeclPkg:     pkg,  // Set the declaration package context
-			}
-			// The dynamic type from the RHS value is often more precise than the
-			// static type from the declaration, especially regarding pointers.
-			// We prioritize the dynamic type's FieldType.
-			v.SetFieldType(val.FieldType())
-			v.SetTypeInfo(val.TypeInfo())
+				if i < len(valSpec.Values) {
+					val = e.Eval(ctx, valSpec.Values[i], env, pkg)
+					if isError(val) {
+						return val
+					}
+					if ret, ok := val.(*object.ReturnValue); ok {
+						val = ret.Value
+					}
+				} else {
+					placeholder := &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
+					if staticFieldType != nil {
+						placeholder.SetFieldType(staticFieldType)
+						placeholder.SetTypeInfo(resolvedTypeInfo)
+					}
+					val = placeholder
+				}
 
-			// If a static type was declared, we can use it to enrich the info,
-			// but we should be careful not to overwrite the more precise FieldType
-			// we just set. For example, in `var r io.Reader = new(bytes.Buffer)`,
-			// the static type is an interface, but the dynamic type `*bytes.Buffer`
-			// is what we need for method resolution.
-			if staticFieldType != nil {
-				// If the dynamic type had no info, use the static type.
-				if v.FieldType() == nil {
-					v.SetFieldType(staticFieldType)
+				v := &object.Variable{
+					Name:        name.Name,
+					Value:       val,
+					IsEvaluated: true,
+					DeclPkg:     pkg,
 				}
-				if v.TypeInfo() == nil {
-					v.SetTypeInfo(resolvedTypeInfo)
+				v.SetFieldType(val.FieldType())
+				v.SetTypeInfo(val.TypeInfo())
+
+				if staticFieldType != nil {
+					if v.FieldType() == nil {
+						v.SetFieldType(staticFieldType)
+					}
+					if v.TypeInfo() == nil {
+						v.SetTypeInfo(resolvedTypeInfo)
+					}
 				}
+				env.Set(name.Name, v)
 			}
-			env.Set(name.Name, v)
 		}
+	case token.TYPE:
+		e.evalTypeDecl(ctx, node, env, pkg)
 	}
 	return nil
 }
@@ -1135,16 +1181,48 @@ func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *objec
 
 		// Find the TypeInfo that the scanner created for this TypeSpec.
 		var typeInfo *scan.TypeInfo
-		for _, ti := range pkg.Types {
-			if ti.Node == ts {
-				typeInfo = ti
-				break
+		if pkg != nil { // pkg can be nil in some tests
+			for _, ti := range pkg.Types {
+				if ti.Node == ts {
+					typeInfo = ti
+					break
+				}
 			}
 		}
 
 		if typeInfo == nil {
-			// This shouldn't happen if the scanner ran correctly.
-			continue
+			// This could be a local type definition inside a function.
+			// The scanner does not create TypeInfo for these, so we create one on the fly.
+			if pkg == nil || pkg.Fset == nil {
+				e.logc(ctx, slog.LevelWarn, "cannot create local type info without package context", "type", ts.Name.Name)
+				continue
+			}
+			file := pkg.Fset.File(ts.Pos())
+			if file == nil {
+				e.logc(ctx, slog.LevelWarn, "could not find file for local type node position", "type", ts.Name.Name)
+				continue
+			}
+			astFile, fileOK := pkg.AstFiles[file.Name()]
+			if !fileOK {
+				e.logc(ctx, slog.LevelWarn, "could not find ast.File for local type", "type", ts.Name.Name, "path", file.Name())
+				continue
+			}
+			importLookup := e.scanner.BuildImportLookup(astFile)
+
+			// Determine the underlying type information.
+			underlyingFieldType := e.scanner.TypeInfoFromExpr(ctx, ts.Type, nil, pkg, importLookup)
+			// Note: We don't resolve the underlying type here. The important part is to
+			// capture the AST (`ts`) and the textual representation of the underlying type (`underlyingFieldType`).
+			// The resolution will happen later when this type is actually used.
+
+			// Create a new TypeInfo for the local alias.
+			typeInfo = &scan.TypeInfo{
+				Name:       ts.Name.Name,
+				PkgPath:    pkg.ImportPath, // Local types belong to the current package.
+				Node:       ts,             // IMPORTANT: Store the AST node.
+				Underlying: underlyingFieldType,
+				Kind:       scan.AliasKind, // Mark it as an alias.
+			}
 		}
 
 		typeObj := &object.Type{

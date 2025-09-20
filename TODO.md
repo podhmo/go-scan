@@ -81,16 +81,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))**
 - **`symgo` Evaluator Enhancements**:
     - **`panic(nil)` Handling**: Fixed a critical bug where the symbolic evaluator would crash when analyzing code containing a `panic(nil)` call. The evaluator now correctly handles this as a symbolic `PanicError` object, preventing the crash and allowing analysis to continue. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
+- **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
  
 ## To Be Implemented
-
-### Unify Scanner Logic and Add Package ID ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md))
-- [ ] Add the new `ID` field to the `scanner.PackageInfo` struct.
-- [ ] Create a new unified private `scan` method in `goscan.Scanner` that correctly handles all path types and uses existing locator functions.
-- [ ] Implement the `ID` generation logic (`<key>` or `<key>.main`) within the new `scan` method.
-- [ ] Refactor `ScanPackage` and `ScanPackageByImport` to be thin wrappers around the new `scan` method.
-- [ ] Remove the `ScanPackageByPos` method and update its call site.
-- [ ] Update documentation and adapt tests (`cross_main_package_test.go`) to use the new `ID` field for lookups.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

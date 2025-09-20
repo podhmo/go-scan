@@ -51,6 +51,11 @@ type PackageResolver interface {
 
 // PackageInfo holds all the extracted information from a single package.
 type PackageInfo struct {
+	// ID is the unique identifier for the package. For most packages, it's the
+	// same as the canonical ImportPath. For `main` packages, it includes a
+	// ".main" suffix (e.g., "example.com/myapp/cmd/server.main") to
+	// disambiguate between multiple main packages in a workspace.
+	ID         string
 	Name       string
 	Path       string
 	ImportPath string // Added: Canonical import path of the package

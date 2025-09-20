@@ -83,13 +83,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Evaluator Enhancements**:
     - **`panic(nil)` Handling**: Fixed a critical bug where the symbolic evaluator would crash when analyzing code containing a `panic(nil)` call. The evaluator now correctly handles this as a symbolic `PanicError` object, preventing the crash and allowing analysis to continue. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
 - **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md)
+- **`symgo`: Type-Narrowed Member Access**: The symbolic execution engine now correctly traces method calls and field accesses on variables whose types have been narrowed within a `switch v := i.(type)` statement or an `if v, ok := i.(T); ok` type assertion. This was achieved by tracking the original concrete object through the type assertion and modifying the selector logic to prioritize resolving members on the concrete object over the original interface type. ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md), [docs/cont-symgo-type-switch.md](./docs/cont-symgo-type-switch.md))
  
 ## To Be Implemented
-
-### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
-- [-] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions. (In Progress)
-  - [x] Added failing tests for both type switch and if-ok assertions.
-  - [ ] Implementation in `symgo/evaluator` is incomplete. See [docs/cont-symgo-type-switch.md](./docs/cont-symgo-type-switch.md).
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

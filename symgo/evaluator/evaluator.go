@@ -681,17 +681,38 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 
 	// Now that we have the type, evaluate the elements of the literal.
 	elements := make([]object.Object, 0, len(node.Elts))
-	for _, elt := range node.Elts {
-		switch v := elt.(type) {
+	state := make(map[string]object.Object) // for struct literals
+
+	for i, elt := range node.Elts {
+		switch kv := elt.(type) {
 		case *ast.KeyValueExpr:
-			value := e.Eval(ctx, v.Value, env, pkg)
+			// It's a key-value pair, like `Name: "World"`
+			value := e.Eval(ctx, kv.Value, env, pkg)
+			if isError(value) {
+				return value
+			}
 			elements = append(elements, value)
-			if fieldType != nil && fieldType.IsMap {
-				e.Eval(ctx, v.Key, env, pkg)
+			if keyIdent, ok := kv.Key.(*ast.Ident); ok {
+				state[keyIdent.Name] = value
+			} else {
+				// if key is not an identifier, we can't store it in the state map by name.
+				// just evaluate for side effects
+				if keyEval := e.Eval(ctx, kv.Key, env, pkg); isError(keyEval) {
+					return keyEval
+				}
 			}
 		default:
-			element := e.Eval(ctx, v, env, pkg)
+			// It's a positional element
+			element := e.Eval(ctx, elt, env, pkg)
+			if isError(element) {
+				return element
+			}
 			elements = append(elements, element)
+			// For positional elements, we need to know the struct field name.
+			if resolvedType != nil && resolvedType.Struct != nil && i < len(resolvedType.Struct.Fields) {
+				fieldName := resolvedType.Struct.Fields[i].Name
+				state[fieldName] = element
+			}
 		}
 	}
 
@@ -731,6 +752,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	// The failing test expects the underlying type name, not the alias name.
 	instance := &object.Instance{
 		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
+		State:    state, // Pass the populated state map
 		BaseObject: object.BaseObject{
 			ResolvedTypeInfo: resolvedType,
 		},
@@ -1539,6 +1561,24 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	// the variable in our own environment and check the static type info we have stored on it.
 	if ident, ok := n.X.(*ast.Ident); ok {
 		if obj, found := env.Get(ident.Name); found {
+			// NEW: Handle type-narrowed variables from type switches/assertions.
+			if v, isVar := obj.(*object.Variable); isVar {
+				if sp, isSym := v.Value.(*object.SymbolicPlaceholder); isSym && sp.Original != nil {
+					// The variable `v` was created by a type assertion.
+					// Instead of processing `v` (which is just a placeholder),
+					// we "unwrap" it and process the original, concrete object.
+					// We need to re-evaluate the selector expression, but this time with
+					// the original object as the receiver. To do this, we create a temporary
+					// environment where the identifier points directly to the original object.
+					tempEnv := object.NewEnclosedEnvironment(env)
+					tempEnv.SetLocal(ident.Name, sp.Original)
+					e.logger.DebugContext(ctx, "evalSelectorExpr: unwrapping type-narrowed variable", "var", ident.Name, "original_type", sp.Original.Type())
+					// Recurse with the temporary environment. This will cause the logic below
+					// to operate on the concrete type (e.g., *object.Instance) instead of the placeholder.
+					return e.evalSelectorExpr(ctx, n, tempEnv, pkg)
+				}
+			}
+
 			var staticType *scan.TypeInfo
 			if v, isVar := obj.(*object.Variable); isVar {
 				if ft := v.FieldType(); ft != nil {
@@ -1855,6 +1895,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return unresolvedFn
 
 	case *object.Instance:
+		// NEW: Check the instance's concrete state first for field access.
+		if fieldValue, ok := val.State[n.Sel.Name]; ok {
+			e.logger.DebugContext(ctx, "evalSelectorExpr: found field in instance state", "instance", val.TypeName, "field", n.Sel.Name)
+			return fieldValue
+		}
+
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
@@ -2145,6 +2191,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 					val := &object.SymbolicPlaceholder{
 						Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
+						Original:   originalObj, // Keep track of the original object being asserted.
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 					v := &object.Variable{
@@ -2477,7 +2524,10 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			}
 
 			// Evaluate the source expression to trace calls
-			e.Eval(ctx, typeAssert.X, env, pkg)
+			originalObj := e.Eval(ctx, typeAssert.X, env, pkg)
+			if isError(originalObj) {
+				return originalObj
+			}
 
 			// Resolve the asserted type (T).
 			if pkg == nil || pkg.Fset == nil {
@@ -2509,6 +2559,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// Create placeholders for the two return values.
 			valuePlaceholder := &object.SymbolicPlaceholder{
 				Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
+				Original:   originalObj, // Keep track of the original object being asserted.
 				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 			}
 

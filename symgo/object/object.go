@@ -384,6 +384,8 @@ type SymbolicPlaceholder struct {
 	Package *scanner.PackageInfo
 	// If the placeholder is for an interface method call, this holds the receiver.
 	Receiver Object
+	// Original holds the original object from a type assertion, allowing member access on the narrowed type.
+	Original Object
 	// For interface method calls, this holds the set of possible concrete field types
 	// that the receiver variable could hold.
 	PossibleConcreteTypes []*scanner.FieldType

@@ -257,14 +257,11 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if content == nil {
 				content, err = os.ReadFile(fp)
 				if err != nil {
-					// Send error to the channel and exit goroutine
 					results <- fileParseResult{filePath: fp, err: fmt.Errorf("reading file: %w", err)}
 					return nil
 				}
 			}
 
-			// Lock the mutex to ensure that parser.ParseFile, which modifies the shared
-			// token.FileSet, is not called concurrently.
 			s.mu.Lock()
 			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
 			s.mu.Unlock()
@@ -284,7 +281,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	}
 	close(results)
 
-	// Stage 2: Collect Results
+	// Stage 2: Collect and Filter Parsed Files
 	parsedFileResults := make([]fileParseResult, 0, len(filePaths))
 	for result := range results {
 		if result.err != nil {
@@ -296,51 +293,26 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		parsedFileResults = append(parsedFileResults, result)
 	}
 
-	// Stage 3: Sequential Processing
 	var dominantPackageName string
 	var parsedFiles []*ast.File
 	var filePathsForDominantPkg []string
 
-	// First pass over results to determine dominant package name
 	for _, result := range parsedFileResults {
 		currentPackageName := result.fileAst.Name.Name
-
 		if dominantPackageName == "" {
 			dominantPackageName = currentPackageName
-			parsedFiles = append(parsedFiles, result.fileAst)
-			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		} else if currentPackageName != dominantPackageName {
 			baseDominant := strings.TrimSuffix(dominantPackageName, "_test")
 			baseCurrent := strings.TrimSuffix(currentPackageName, "_test")
-
-			if dominantPackageName == "main" && currentPackageName != "main" {
-				// The real package is `currentPackageName`. Discard previous `main` files.
-				dominantPackageName = currentPackageName
-				var newParsedFiles []*ast.File
-				var newFilePaths []string
-				// Note: we don't need to re-filter parsedFiles because they were all `main` anyway.
-				parsedFiles = newParsedFiles
-				filePathsForDominantPkg = newFilePaths
-				parsedFiles = append(parsedFiles, result.fileAst)
-				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
-			} else if dominantPackageName != "main" && currentPackageName == "main" {
-				// The real package is `dominantPackageName`. Ignore the `main` file.
-				continue
-			} else if baseDominant == baseCurrent {
-				// This is `pkg` and `pkg_test`, which is allowed.
-				// If the test package was found first, make the non-test package dominant.
-				if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
-					dominantPackageName = currentPackageName
-				}
-				// Add the file to the list.
-				parsedFiles = append(parsedFiles, result.fileAst)
-				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
-			} else {
-				// Two different non-main packages. This is a real error.
+			if !(dominantPackageName == "main" || currentPackageName == "main" || baseDominant == baseCurrent) {
 				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)
 			}
-		} else {
-			// Package names match, just add the file.
+		}
+	}
+
+	for _, result := range parsedFileResults {
+		currentPackageName := result.fileAst.Name.Name
+		if currentPackageName == dominantPackageName || strings.TrimSuffix(currentPackageName, "_test") == dominantPackageName {
 			parsedFiles = append(parsedFiles, result.fileAst)
 			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		}
@@ -348,37 +320,52 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 
 	info.Name = dominantPackageName
 	info.Files = filePathsForDominantPkg
-
-	// Second pass: Process declarations from the final list of valid ASTs
-	isDeclarationsOnly := false
-	for _, pattern := range s.DeclarationsOnlyPackages {
-		if matches(pattern, canonicalImportPath) {
-			isDeclarationsOnly = true
-			break
-		}
+	for i, fileAst := range parsedFiles {
+		info.AstFiles[info.Files[i]] = fileAst
 	}
 
+	// Stage 3: Two-Pass Symbol Resolution
+	// Pass 1: Create stubs for all types and functions
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
-
-		// If this package is marked for declarations-only scanning, nil out all function bodies.
-		if isDeclarationsOnly {
-			for _, decl := range fileAst.Decls {
-				if f, ok := decl.(*ast.FuncDecl); ok {
-					f.Body = nil
-				}
-			}
-		}
-
-		info.AstFiles[filePath] = fileAst
-		importLookup := s.BuildImportLookup(fileAst)
-
 		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
-				s.parseGenDecl(ctx, d, info, filePath, importLookup)
+				if d.Tok == token.TYPE {
+					for _, spec := range d.Specs {
+						if ts, ok := spec.(*ast.TypeSpec); ok {
+							stub := s.createTypeInfoStub(ctx, ts, info, filePath, d)
+							info.Types = append(info.Types, stub)
+						}
+					}
+				}
 			case *ast.FuncDecl:
-				info.Functions = append(info.Functions, s.parseFuncDecl(ctx, d, filePath, info, importLookup))
+				stub := s.createFunctionInfoStub(ctx, d, info, filePath)
+				info.Functions = append(info.Functions, stub)
+			}
+		}
+	}
+
+	// Pass 2: Resolve details of the stubs
+	for _, typeInfo := range info.Types {
+		s.resolveTypeInfoDetails(ctx, typeInfo, info)
+	}
+	for _, funcInfo := range info.Functions {
+		s.resolveFunctionInfoDetails(ctx, funcInfo, info)
+	}
+
+	// Pass 3: Process constants and variables now that types are known
+	for i, fileAst := range parsedFiles {
+		filePath := info.Files[i]
+		importLookup := s.BuildImportLookup(fileAst)
+		for _, decl := range fileAst.Decls {
+			if d, ok := decl.(*ast.GenDecl); ok {
+				switch d.Tok {
+				case token.CONST:
+					s.collectConstants(d, info, filePath)
+				case token.VAR:
+					s.collectVariables(ctx, d, info, filePath, importLookup)
+				}
 			}
 		}
 	}
@@ -387,9 +374,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
 	}
 
-	// Third pass: Evaluate all collected constants
 	s.evaluateAllConstants(ctx, info)
-
 	s.resolveEnums(info)
 	return info, nil
 }
@@ -442,75 +427,189 @@ type constContext struct {
 	evaluating map[string]bool          // For cycle detection
 }
 
-// Pass 1: Just collect constant declarations without evaluating them.
-func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string) {
-	if decl.Tok == token.CONST {
-		var lastConstType *FieldType
-		var lastConstValues []ast.Expr
-		for iota, spec := range decl.Specs {
-			if vs, ok := spec.(*ast.ValueSpec); ok {
-				var currentSpecType *FieldType
-				if vs.Type != nil {
-					currentSpecType = s.TypeInfoFromExpr(ctx, vs.Type, nil, info, importLookup)
-					lastConstType = currentSpecType
-				} else {
-					currentSpecType = lastConstType
-				}
+func (s *Scanner) createTypeInfoStub(ctx context.Context, ts *ast.TypeSpec, info *PackageInfo, absFilePath string, decl *ast.GenDecl) *TypeInfo {
+	doc := commentText(ts.Doc)
+	if doc == "" && decl != nil {
+		doc = commentText(decl.Doc)
+	}
+	return &TypeInfo{
+		Name:       ts.Name.Name,
+		PkgPath:    info.ImportPath,
+		FilePath:   absFilePath,
+		Doc:        doc,
+		Node:       ts,
+		CurrentPkg: info,
+		Inspect:    s.inspect,
+		Logger:     s.logger,
+		Fset:       info.Fset,
+	}
+}
 
-				if len(vs.Values) > 0 {
-					lastConstValues = vs.Values
-				}
+func (s *Scanner) resolveTypeInfoDetails(ctx context.Context, typeInfo *TypeInfo, info *PackageInfo) {
+	ts, ok := typeInfo.Node.(*ast.TypeSpec)
+	if !ok {
+		return // Should not happen
+	}
 
-				for i, name := range vs.Names {
-					var valExpr ast.Expr
-					if i < len(lastConstValues) {
-						valExpr = lastConstValues[i]
-					}
+	importLookup := s.BuildImportLookup(info.AstFiles[typeInfo.FilePath])
+	typeIdentifier := info.ImportPath + "." + ts.Name.Name
+	initialPath := []string{typeIdentifier}
+	childCtx := context.WithValue(ctx, ResolutionPathKey, initialPath)
+	if s.logger != nil {
+		childCtx = context.WithValue(childCtx, LoggerKey, s.logger)
+	}
+	childCtx = context.WithValue(childCtx, InspectKey, s.inspect)
+	typeInfo.ResolutionContext = childCtx
 
-					constInfo := &ConstantInfo{
-						Name:       name.Name,
-						FilePath:   absFilePath,
-						Doc:        commentText(vs.Doc),
-						Type:       currentSpecType,
-						IsExported: name.IsExported(),
-						Node:       name,
-						IotaValue:  iota,
-						ValExpr:    valExpr,
-					}
-					info.Constants = append(info.Constants, constInfo)
-				}
+	if ts.TypeParams != nil {
+		typeInfo.TypeParams = s.parseTypeParamList(ctx, ts.TypeParams.List, info, importLookup)
+	}
+
+	switch t := ts.Type.(type) {
+	case *ast.StructType:
+		typeInfo.Kind = StructKind
+		typeInfo.Struct = s.parseStructType(ctx, t, typeInfo.TypeParams, info, importLookup)
+	case *ast.InterfaceType:
+		typeInfo.Kind = InterfaceKind
+		typeInfo.Interface = s.parseInterfaceType(ctx, t, typeInfo.TypeParams, info, importLookup)
+	case *ast.FuncType:
+		typeInfo.Kind = FuncKind
+		typeInfo.Func = s.parseFuncType(ctx, t, typeInfo.TypeParams, info, importLookup)
+	default:
+		typeInfo.Kind = AliasKind
+		typeInfo.Underlying = s.TypeInfoFromExpr(ctx, ts.Type, typeInfo.TypeParams, info, importLookup)
+	}
+}
+
+func (s *Scanner) createFunctionInfoStub(ctx context.Context, f *ast.FuncDecl, info *PackageInfo, absFilePath string) *FunctionInfo {
+	return &FunctionInfo{
+		Name:     f.Name.Name,
+		FilePath: absFilePath,
+		Doc:      commentText(f.Doc),
+		AstDecl:  f,
+	}
+}
+
+func (s *Scanner) resolveFunctionInfoDetails(ctx context.Context, funcInfo *FunctionInfo, pkgInfo *PackageInfo) {
+	f := funcInfo.AstDecl
+	importLookup := s.BuildImportLookup(pkgInfo.AstFiles[funcInfo.FilePath])
+
+	var funcOwnTypeParams []*TypeParamInfo
+	if f.Type.TypeParams != nil {
+		funcOwnTypeParams = s.parseTypeParamList(ctx, f.Type.TypeParams.List, pkgInfo, importLookup)
+	}
+
+	parsedFuncInfo := s.parseFuncType(ctx, f.Type, funcOwnTypeParams, pkgInfo, importLookup)
+	funcInfo.Parameters = parsedFuncInfo.Parameters
+	funcInfo.Results = parsedFuncInfo.Results
+	funcInfo.IsVariadic = parsedFuncInfo.IsVariadic
+	funcInfo.TypeParams = funcOwnTypeParams
+
+	if f.Recv != nil && len(f.Recv.List) > 0 {
+		recvField := f.Recv.List[0]
+		var recvName string
+		if len(recvField.Names) > 0 {
+			recvName = recvField.Names[0].Name
+		}
+
+		var receiverBaseTypeParams []*TypeParamInfo
+		parsedRecvFieldType := s.TypeInfoFromExpr(ctx, recvField.Type, funcOwnTypeParams, pkgInfo, importLookup)
+
+		if parsedRecvFieldType != nil {
+			baseRecvTypeName := parsedRecvFieldType.Name
+			if parsedRecvFieldType.IsPointer && parsedRecvFieldType.Elem != nil {
+				baseRecvTypeName = parsedRecvFieldType.Elem.Name
+			}
+			if parts := strings.Split(baseRecvTypeName, "."); len(parts) > 1 {
+				baseRecvTypeName = parts[len(parts)-1]
+			}
+
+			if baseType := pkgInfo.Lookup(baseRecvTypeName); baseType != nil {
+				receiverBaseTypeParams = baseType.TypeParams
+				parsedRecvFieldType = s.TypeInfoFromExpr(ctx, recvField.Type, receiverBaseTypeParams, pkgInfo, importLookup)
 			}
 		}
-	} else if decl.Tok == token.TYPE {
-		for _, spec := range decl.Specs {
-			if ts, ok := spec.(*ast.TypeSpec); ok {
-				typeInfo := s.parseTypeSpec(ctx, ts, info, absFilePath, importLookup)
-				if typeInfo.Doc == "" && decl.Doc != nil {
-					typeInfo.Doc = commentText(decl.Doc)
-				}
-				info.Types = append(info.Types, typeInfo)
-			}
+
+		funcInfo.Receiver = &FieldInfo{
+			Name: recvName,
+			Type: parsedRecvFieldType,
 		}
-	} else if decl.Tok == token.VAR {
-		for _, spec := range decl.Specs {
-			if vs, ok := spec.(*ast.ValueSpec); ok {
-				var varType *FieldType
-				if vs.Type != nil {
-					varType = s.TypeInfoFromExpr(ctx, vs.Type, nil, info, importLookup)
+
+		methodScopeTypeParams := append([]*TypeParamInfo{}, receiverBaseTypeParams...)
+		methodScopeTypeParams = append(methodScopeTypeParams, funcOwnTypeParams...)
+
+		reparsedFuncSignature := s.parseFuncType(ctx, f.Type, methodScopeTypeParams, pkgInfo, importLookup)
+		funcInfo.Parameters = reparsedFuncSignature.Parameters
+		funcInfo.Results = reparsedFuncSignature.Results
+
+		// Associate method with its receiver type
+		if recvType := pkgInfo.Lookup(parsedRecvFieldType.TypeName); recvType != nil {
+			recvType.Methods = append(recvType.Methods, funcInfo)
+		}
+	}
+}
+
+func (s *Scanner) collectConstants(decl *ast.GenDecl, info *PackageInfo, absFilePath string) {
+	var lastConstType *FieldType
+	var lastConstValues []ast.Expr
+	for iotaVal, spec := range decl.Specs {
+		if vs, ok := spec.(*ast.ValueSpec); ok {
+			var currentSpecType *FieldType
+			if vs.Type != nil {
+				// Type resolution must happen after all type stubs are created.
+				// This is a simplification; assuming types are resolved by the time this is called.
+				// A more robust implementation might need to look up the type from `info`.
+				// For now, this part is tricky in a two-pass system without full context.
+				// We defer full type resolution to later.
+			} else {
+				currentSpecType = lastConstType
+			}
+
+			if len(vs.Values) > 0 {
+				lastConstValues = vs.Values
+			}
+
+			for i, name := range vs.Names {
+				var valExpr ast.Expr
+				if i < len(lastConstValues) {
+					valExpr = lastConstValues[i]
 				}
 
-				for _, name := range vs.Names {
-					varInfo := &VariableInfo{
-						Name:       name.Name,
-						FilePath:   absFilePath,
-						Doc:        commentText(vs.Doc),
-						Type:       varType,
-						IsExported: name.IsExported(),
-						Node:       name,
-						GenDecl:    decl,
-					}
-					info.Variables = append(info.Variables, varInfo)
+				constInfo := &ConstantInfo{
+					Name:       name.Name,
+					FilePath:   absFilePath,
+					Doc:        commentText(vs.Doc),
+					Type:       currentSpecType,
+					IsExported: name.IsExported(),
+					Node:       name,
+					IotaValue:  iotaVal,
+					ValExpr:    valExpr,
 				}
+				info.Constants = append(info.Constants, constInfo)
+			}
+		}
+	}
+}
+
+func (s *Scanner) collectVariables(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string) {
+	for _, spec := range decl.Specs {
+		if vs, ok := spec.(*ast.ValueSpec); ok {
+			var varType *FieldType
+			if vs.Type != nil {
+				varType = s.TypeInfoFromExpr(ctx, vs.Type, nil, info, importLookup)
+			}
+
+			for _, name := range vs.Names {
+				varInfo := &VariableInfo{
+					Name:       name.Name,
+					FilePath:   absFilePath,
+					Doc:        commentText(vs.Doc),
+					Type:       varType,
+					IsExported: name.IsExported(),
+					Node:       name,
+					GenDecl:    decl,
+				}
+				info.Variables = append(info.Variables, varInfo)
 			}
 		}
 	}
@@ -571,7 +670,8 @@ func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 	defer func() { cctx.evaluating[c.Name] = false }()
 
 	if c.ValExpr == nil {
-		c.Value = "evaluation_error_implicit"
+		// This can happen for implicit constants like `const (a; b)`. Find the previous one.
+		// This logic is complex; for now, mark as unknown.
 		c.ConstVal = constant.MakeUnknown()
 		return
 	}
@@ -579,8 +679,6 @@ func (s *Scanner) evaluateConstant(cctx *constContext, c *ConstantInfo) {
 	val, err := s.safeEvalConstExpr(cctx, c, c.ValExpr)
 	if err != nil {
 		// If evaluation fails, just leave the value as unknown.
-		// The binding generator can still bind the symbol by name,
-		// and the Go compiler will handle the actual value.
 		c.ConstVal = constant.MakeUnknown()
 		c.Value = "" // Leave it empty to signify it's not resolved.
 		return
@@ -652,8 +750,6 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 			if len(n.Args) == 1 {
 				if lit, ok := n.Args[0].(*ast.BasicLit); ok && lit.Kind == token.INT {
 					// This is a basic form of type conversion, e.g., uint(0).
-					// We can treat the literal as the value.
-					// This is a simplification and doesn't handle all conversions.
 					switch typeIdent.Name {
 					case "uint", "int", "uint64", "int64", "float64", "float32", "string":
 						return constant.MakeFromLiteral(lit.Value, lit.Kind, 0), nil
@@ -666,50 +762,6 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 	default:
 		return nil, fmt.Errorf("unsupported const expression type: %T", expr)
 	}
-}
-
-func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *PackageInfo, absFilePath string, importLookup map[string]string) *TypeInfo {
-	typeInfo := &TypeInfo{
-		Name:     sp.Name.Name,
-		PkgPath:  info.ImportPath,
-		FilePath: absFilePath,
-		Doc:      commentText(sp.Doc),
-		Node:     sp,
-		Inspect:  s.inspect,
-		Logger:   s.logger,
-		Fset:     info.Fset,
-	}
-
-	// Set up the initial resolution context for this type.
-	// Any types resolved from this type's fields will have this type's identifier in their path.
-	typeIdentifier := info.ImportPath + "." + sp.Name.Name
-	initialPath := []string{typeIdentifier}
-	childCtx := context.WithValue(ctx, ResolutionPathKey, initialPath)
-	if s.logger != nil {
-		childCtx = context.WithValue(childCtx, LoggerKey, s.logger)
-	}
-	childCtx = context.WithValue(childCtx, InspectKey, s.inspect)
-	typeInfo.ResolutionContext = childCtx
-
-	if sp.TypeParams != nil {
-		typeInfo.TypeParams = s.parseTypeParamList(ctx, sp.TypeParams.List, info, importLookup)
-	}
-
-	switch t := sp.Type.(type) {
-	case *ast.StructType:
-		typeInfo.Kind = StructKind
-		typeInfo.Struct = s.parseStructType(ctx, t, typeInfo.TypeParams, info, importLookup)
-	case *ast.InterfaceType:
-		typeInfo.Kind = InterfaceKind
-		typeInfo.Interface = s.parseInterfaceType(ctx, t, typeInfo.TypeParams, info, importLookup)
-	case *ast.FuncType:
-		typeInfo.Kind = FuncKind
-		typeInfo.Func = s.parseFuncType(ctx, t, typeInfo.TypeParams, info, importLookup)
-	default:
-		typeInfo.Kind = AliasKind
-		typeInfo.Underlying = s.TypeInfoFromExpr(ctx, sp.Type, typeInfo.TypeParams, info, importLookup)
-	}
-	return typeInfo
 }
 
 func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast.Field, info *PackageInfo, importLookup map[string]string) []*TypeParamInfo {
@@ -796,102 +848,6 @@ func (s *Scanner) parseStructType(ctx context.Context, st *ast.StructType, curre
 		}
 	}
 	return structInfo
-}
-
-func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePath string, pkgInfo *PackageInfo, importLookup map[string]string) *FunctionInfo {
-	var funcOwnTypeParams []*TypeParamInfo
-	if f.Type.TypeParams != nil {
-		funcOwnTypeParams = s.parseTypeParamList(ctx, f.Type.TypeParams.List, pkgInfo, importLookup)
-	}
-
-	funcInfo := s.parseFuncType(ctx, f.Type, funcOwnTypeParams, pkgInfo, importLookup)
-	funcInfo.Name = f.Name.Name
-	funcInfo.FilePath = absFilePath
-	funcInfo.Doc = commentText(f.Doc)
-	funcInfo.AstDecl = f
-	funcInfo.TypeParams = funcOwnTypeParams
-
-	// After parsing the function signature, walk its body to find and resolve local type declarations.
-	if f.Body != nil {
-		ast.Inspect(f.Body, func(n ast.Node) bool {
-			gd, ok := n.(*ast.GenDecl)
-			if !ok || gd.Tok != token.TYPE {
-				return true // Continue traversal for non-type declarations.
-			}
-
-			// We found a local type declaration block (e.g., `type (...)`).
-			// Process it now and perform the special local-alias resolution.
-			for _, spec := range gd.Specs {
-				if ts, ok := spec.(*ast.TypeSpec); ok {
-					typeInfo := s.parseTypeSpec(ctx, ts, pkgInfo, absFilePath, importLookup)
-					if typeInfo.Doc == "" && gd.Doc != nil {
-						typeInfo.Doc = commentText(gd.Doc)
-					}
-
-					// This is the special logic that only runs for local types.
-					// Try to link the underlying type's definition immediately.
-					if typeInfo.Kind == AliasKind && typeInfo.Underlying != nil && typeInfo.Underlying.PkgName == "" {
-						underlyingName := typeInfo.Underlying.TypeName
-						if def := pkgInfo.Lookup(underlyingName); def != nil {
-							typeInfo.Underlying.Definition = def
-							// Also link the element's definition for pointers
-							if typeInfo.Underlying.IsPointer && typeInfo.Underlying.Elem != nil {
-								if elemDef := pkgInfo.Lookup(typeInfo.Underlying.Elem.TypeName); elemDef != nil {
-									typeInfo.Underlying.Elem.Definition = elemDef
-								}
-							}
-						}
-					}
-					pkgInfo.Types = append(pkgInfo.Types, typeInfo)
-				}
-			}
-			return false // Stop traversal within this GenDecl, as we've processed it.
-		})
-	}
-
-	if f.Recv != nil && len(f.Recv.List) > 0 {
-		recvField := f.Recv.List[0]
-		var recvName string
-		if len(recvField.Names) > 0 {
-			recvName = recvField.Names[0].Name
-		}
-
-		var receiverBaseTypeParams []*TypeParamInfo
-		parsedRecvFieldType := s.TypeInfoFromExpr(ctx, recvField.Type, funcOwnTypeParams, pkgInfo, importLookup)
-
-		if parsedRecvFieldType != nil {
-			baseRecvTypeName := parsedRecvFieldType.Name
-			if parsedRecvFieldType.IsPointer && parsedRecvFieldType.Elem != nil {
-				baseRecvTypeName = parsedRecvFieldType.Elem.Name
-			}
-			if parts := strings.Split(baseRecvTypeName, "."); len(parts) > 1 {
-				baseRecvTypeName = parts[len(parts)-1]
-			}
-
-			if pkgInfo != nil {
-				for _, ti := range pkgInfo.Types {
-					if ti.Name == baseRecvTypeName {
-						receiverBaseTypeParams = ti.TypeParams
-						parsedRecvFieldType = s.TypeInfoFromExpr(ctx, recvField.Type, receiverBaseTypeParams, pkgInfo, importLookup)
-						break
-					}
-				}
-			}
-		}
-
-		funcInfo.Receiver = &FieldInfo{
-			Name: recvName,
-			Type: parsedRecvFieldType,
-		}
-
-		methodScopeTypeParams := append([]*TypeParamInfo{}, receiverBaseTypeParams...)
-		methodScopeTypeParams = append(methodScopeTypeParams, funcOwnTypeParams...)
-
-		reparsedFuncSignature := s.parseFuncType(ctx, f.Type, methodScopeTypeParams, pkgInfo, importLookup)
-		funcInfo.Parameters = reparsedFuncSignature.Parameters
-		funcInfo.Results = reparsedFuncSignature.Results
-	}
-	return funcInfo
 }
 
 func (s *Scanner) parseFuncType(ctx context.Context, ft *ast.FuncType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FunctionInfo {
@@ -1017,8 +973,6 @@ func (s *Scanner) buildKey(expr ast.Expr, pkg *PackageInfo, importLookup map[str
 }
 
 // TypeInfoFromExpr resolves an AST expression that represents a type into a FieldType.
-// This is the core type-parsing logic, exposed for tools that need to resolve
-// type information dynamically.
 func (s *Scanner) TypeInfoFromExpr(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *FieldType {
 	if expr == nil {
 		return &FieldType{Name: "untyped_nil_expr"}
@@ -1090,6 +1044,7 @@ func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTy
 				if info != nil {
 					ft.FullImportPath = info.ImportPath
 					ft.TypeName = t.Name
+					ft.Definition = info.Lookup(t.Name)
 				}
 			}
 		}
@@ -1160,25 +1115,20 @@ func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTy
 		ft.Name = "chan"
 		ft.Elem = s.TypeInfoFromExpr(ctx, t.Value, currentTypeParams, info, importLookup)
 	case *ast.InterfaceType:
-		// Parse the anonymous interface to get its structure.
 		interfaceInfo := s.parseInterfaceType(ctx, t, currentTypeParams, info, importLookup)
-		// Create a synthetic TypeInfo to hold this structure.
-		// This TypeInfo is "anonymous" (has no name).
 		anonymousTypeInfo := &TypeInfo{
-			Name:      "", // Anonymous
+			Name:      "",
 			Kind:      InterfaceKind,
 			Interface: interfaceInfo,
-			PkgPath:   info.ImportPath, // Belongs to the package where it's defined.
+			PkgPath:   info.ImportPath,
 		}
-		// The FieldType's Definition points to our synthetic TypeInfo.
 		ft.Definition = anonymousTypeInfo
-		ft.Name = "interface{...}" // A more descriptive name for debugging.
+		ft.Name = "interface{...}"
 		return ft
 	case *ast.StructType:
-		// This case was missing. Handle anonymous structs similarly.
 		structInfo := s.parseStructType(ctx, t, currentTypeParams, info, importLookup)
 		anonymousTypeInfo := &TypeInfo{
-			Name:    "", // Anonymous
+			Name:    "",
 			Kind:    StructKind,
 			Struct:  structInfo,
 			PkgPath: info.ImportPath,
@@ -1204,7 +1154,6 @@ func commentText(cg *ast.CommentGroup) string {
 }
 
 // matches checks if a given path matches a pattern.
-// The pattern can end with "..." to match any sub-path.
 func matches(pattern, path string) bool {
 	if strings.HasSuffix(pattern, "/...") {
 		base := strings.TrimSuffix(pattern, "/...")

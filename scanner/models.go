@@ -125,6 +125,8 @@ type TypeInfo struct {
 	Fset              *token.FileSet  `json:"-"`                    // Fileset for position information
 	ResolutionContext context.Context `json:"-"`                    // Context for resolving nested types
 	Unresolved        bool            `json:"unresolved,omitempty"` // True if the type is from a package that was not scanned.
+	CurrentPkg        *PackageInfo    `json:"-"`                    // Back-reference to the containing package
+	Methods           []*FunctionInfo `json:"-"`                    // Methods associated with this type (if it's a struct/named type)
 }
 
 // NewUnresolvedTypeInfo creates a new TypeInfo placeholder for a type that is

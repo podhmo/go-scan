@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Event) UnmarshalJSON(data []byte) error {
-	// Define an alias type to prevent infinite recursion with UnmarshalJSON
+	// Define an alias type to prevent infinite recursion with UnmarshalJSON.
 	type Alias Event
 	aux := &struct {
 		Data json.RawMessage `json:"data"`

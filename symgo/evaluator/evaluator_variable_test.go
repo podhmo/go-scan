@@ -3,7 +3,6 @@ package evaluator
 import (
 	"context"
 	"fmt"
-	"go/token"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -48,16 +47,11 @@ func main() {
 			return fmt.Errorf("main is not a function, got %T", mainFuncObj)
 		}
 
-		// The variables are defined inside the function, so we need to evaluate the function
-		// to populate its environment.
-		// The result of applyFunction is a new environment.
-		fnEnv, err := eval.extendFunctionEnv(ctx, mainFunc, []object.Object{}, nil)
-		if err != nil {
-			return err
-		}
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, fnEnv, token.NoPos)
+		// Evaluate the function body in a new enclosed environment to capture its local variables.
+		funcBodyEnv := object.NewEnclosedEnvironment(mainFunc.Env)
+		eval.Eval(ctx, mainFunc.Body, funcBodyEnv, pkg)
 
-		x, ok := fnEnv.Get("x")
+		x, ok := funcBodyEnv.Get("x")
 		if !ok {
 			return fmt.Errorf("variable 'x' not found")
 		}
@@ -65,7 +59,7 @@ func main() {
 			return fmt.Errorf("variable 'x' mismatch (-want +got):\n%s", diff)
 		}
 
-		y, ok := fnEnv.Get("y")
+		y, ok := funcBodyEnv.Get("y")
 		if !ok {
 			return fmt.Errorf("variable 'y' not found")
 		}

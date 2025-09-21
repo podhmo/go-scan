@@ -1,160 +1,155 @@
-# Issue: `find-orphans` Hangs Due to Infinite Recursion in `symgo`
+# Troubleshooting Report: `symgo` Type Switch and Assertion Implementation
 
-This document outlines an issue where the `find-orphans` tool hangs, the investigation process, and the proposed solution.
-
-## Problem
-
-When running the `find-orphans` end-to-end test via `make -C examples/find-orphans`, the process times out. Verbose logging reveals that the tool enters an infinite loop, generating a massive amount of repetitive log output.
-
-The issue appears to be an infinite recursion bug within the `symgo` symbolic execution engine, specifically in its package loading and dependency resolution logic.
-
-## Reproduction Steps
-
-1.  Navigate to the repository root.
-2.  Run the `find-orphans` test with a timeout. The command will be terminated.
-    ```bash
-    timeout 5s make -C examples/find-orphans
-    ```
-3.  To observe the infinite logging, run the tool with verbose output and redirect to a file. The command will hang until the pipe is closed (e.g., by `head`).
-    ```bash
-    cd examples/find-orphans
-    go run . -v --workspace-root ../.. ./... 2>&1 | head -c 1000000 > find-orphans-verbose-head.log
-    ```
-
-## Log Analysis
-
-The verbose log file (`find-orphans-verbose-head.log`) is filled with a rapidly repeating sequence of debug messages from the `symgo/evaluator`. The key repeating messages are:
-
-- `getOrLoadPackage: requesting package`
-- `ResolvePackage: checking policy`
-- `ScanPackageFromImportPath CACHE HIT`
-- `ensurePackageEnvPopulated: checking package`
-
-This pattern indicates that the evaluator is continuously trying to load and initialize packages it has already processed. The call stack is not correctly tracking which packages are currently under analysis, leading to a recursive reentry. For example, while analyzing package `A` which imports `B`, the evaluator starts analyzing `B`. If `B` (or a dependency of `B`) in turn imports `A`, the evaluator re-enters the analysis for `A` without realizing it's already in progress, leading to an infinite loop.
-
-The issue seems to be triggered by the complex dependency graph of the entire workspace, with `examples/docgen` and `minigo/evaluator` being prominently featured in the logs before the loop becomes uncontrollable.
-
-## Proposed Solution
-
-The root cause is the lack of a mechanism to detect and prevent re-entrant analysis of the same package within a single evaluation stack.
-
-The proposed solution is to introduce a recursion guard in the `symgo` evaluator. This can be implemented by:
-
-1.  Adding a map to the `symgo.Interpreter` or `evaluator.Evaluator` to track the import paths of packages currently being evaluated in the active call stack.
-2.  Before starting the evaluation of a package, the interpreter will check if the package's import path is already in this tracking map.
-3.  If the path is present, it signifies a recursive entry. The interpreter should immediately stop and return a symbolic placeholder or a specific error, rather than re-evaluating the package.
-4.  If the path is not present, it should be added to the map before evaluation begins.
-5.  Crucially, the path must be removed from the map after its evaluation is complete (either successfully or with an error) to allow other, independent analyses to process it. This is typically done using a `defer` statement.
-
-This change will break the infinite loop and allow the `find-orphans` analysis to complete successfully.
+This document consolidates the planning, implementation, and troubleshooting history for the `symgo` type-narrowing feature.
 
 ---
+## Part 1: Initial Plan (`docs/plan-symgo-type-switch.md`)
 
-# Past Issue: `symgo` Robustness Enhancement Report
+# Plan: Enhance `symgo` for Type-Narrowed Member Access
 
-This document details the analysis and resolution of several robustness issues within the `symgo` symbolic execution engine. These issues were primarily observed when running the `find-orphans` tool on a complex codebase, which exposed edge cases in `symgo`'s handling of unresolved types and symbolic values.
+### 1. Goal
 
-## 1. The Goal: A More Resilient `symgo`
+The objective is to enhance the `symgo` symbolic execution engine to correctly trace method calls and field accesses on variables whose types have been narrowed within a control flow structure. This applies to two primary Go idioms:
 
-The `find-orphans` tool is a key application of the `symgo` engine. Initial testing revealed that its effectiveness was hampered by `symgo`'s strictness. When the engine encountered code it could not fully analyze (e.g., types or functions from unscanned packages), it would frequently halt with an error.
+1.  **Type Switch:** In a `switch v := i.(type)` statement, the variable `v` should be recognized as having the specific type of each `case` block.
+2.  **`if-ok` Type Assertion:** In an `if v, ok := i.(T); ok` statement, the variable `v` should be recognized as type `T` within the `if` block.
 
-The goal of this effort was to make `symgo` more resilient, allowing it to "gracefully fail" when encountering unknown entities. Instead of erroring, the engine should treat these unknowns as symbolic placeholders and continue the analysis. This removes the need for users to provide complex, tool-specific configurations (like intrinsics or exhaustive dependency lists) just to make the analysis complete.
+### 2. Investigation and Current State Analysis
 
-## 2. Problems Found and Solutions Implemented
+A review of the `symgo` evaluator reveals that while the basic structures for handling these statements exist (creating scoped environments and `SymbolicPlaceholder` objects), the existing test suite does not contain any tests that perform a method call or field access on the narrowed variable. This indicates the functionality is unverified and likely incomplete.
 
-Running `make -C examples/find-orphans` on the codebase revealed several categories of errors. The following sections describe each problem and the fix that was implemented in `symgo/evaluator/evaluator.go`.
+### 3. Proposed Implementation Plan (TDD Approach)
 
-### Problem 1: `invalid indirect` on Unresolved Types
+1.  **Create New Test File:** `symgo/evaluator/evaluator_if_typeswitch_test.go`.
+2.  **Add Failing Tests:** Add tests for method calls in type switches and field access in `if-ok` assertions.
+3.  **Add Edge Case Tests:** Cover pointer receivers, embedded structs, and multiple `case` blocks.
+4.  **Enhance the Evaluator:** Modify `evalSelectorExpr`, `evalSymbolicSelection`, and the `accessor` to correctly use the `TypeInfo` attached to symbolic placeholders to resolve members.
+5.  **Handle Scan Policies:** Ensure the implementation is robust for both in-policy and out-of-policy type assertions.
+6.  **Verify and Finalize:** Ensure all new and existing tests pass.
 
--   **Symptom:** The `find-orphans` run produced numerous errors like:
-    `level=ERROR msg="invalid indirect of <Unresolved Type: strings.Builder> (type *object.UnresolvedType)"`
--   **Analysis:** This error occurred when `symgo` attempted to evaluate a dereference expression (`*T`) where `T` was a type from an unscanned package. The evaluator correctly identified `T` as an `*object.UnresolvedType`, but the `evalStarExpr` function had no logic to handle this specific object type and fell through to a final error case.
--   **Solution:** A new case was added to `evalStarExpr` to specifically check for `*object.UnresolvedType`. When found, the function now returns a `*object.SymbolicPlaceholder`, representing an instance of that unresolved type, allowing analysis to continue without error.
+---
+## Part 2: Continuation 1 (`docs/cont-symgo-type-switch.md`)
 
-### Problem 2: `undefined method or field` on Pointers to Symbolic Values
+# Continuation: Enhancing `symgo` for Type-Narrowed Member Access
 
--   **Symptom:** Tests failed with the error:
-    `undefined method or field: N for pointer type SYMBOLIC_PLACEHOLDER`
--   **Analysis:** This occurred when accessing a field on a pointer where the pointee was a symbolic placeholder (e.g., `p.N` where `p` is `*SymbolicPlaceholder`). The logic for selector expressions on `*object.Pointer` in `evalSelectorExpr` only handled cases where the pointee was a concrete `*object.Instance`, not a symbolic value.
--   **Solution:** The `case *object.Pointer` block in `evalSelectorExpr` was enhanced. It now detects when the pointee is a `*object.SymbolicPlaceholder` and re-uses the existing logic for handling selections on symbolic values, correctly resolving the field or method. This involved refactoring the symbolic selection logic into a new `evalSymbolicSelection` helper function for clarity and reuse.
+### The Plan
 
-### Problem 3: Incorrect Handling of Operations on Symbolic Values
+The fix involves a new, more precise strategy:
 
--   **Symptom:** While not always fatal, various operators behaved incorrectly when applied to symbolic placeholders.
-    -   `v.N++`: Treated the symbolic `v.N` as `0` and converted it to a concrete integer `1`.
-    -   `!b`: Treated the symbolic boolean `b` as "truthy" and returned a concrete `false`.
--   **Analysis:** The `evalIncDecStmt` and `evalBangOperatorExpression` functions did not account for symbolic operands. They would default to concrete behavior instead of preserving the symbolic nature of the value.
--   **Solution:** Both functions were modified to check if their operand is a `*object.SymbolicPlaceholder`. If so, they now return a new `*object.SymbolicPlaceholder`, ensuring that the "unknown" state of the value is correctly propagated through the analysis.
+1.  **Fix `evalCompositeLit`**: Ensure that when evaluating a struct literal, the field values are stored in the resulting `*object.Instance`.
+2.  **Move and Fix `resolveSymbolicField`**: Move this method from the resolver to the evaluator to break a dependency and implement it to check the instance's state map before creating a new placeholder.
+3.  **Refactor `evalSelectorExpr`**: Refactor into a wrapper and a core function. The wrapper will check if a placeholder resulted from a type assertion. If so, it will perform a type compatibility check between the placeholder's narrowed type and the concrete type of the original object. If compatible, it unwraps the placeholder; otherwise, it prunes the path.
+4.  **Add `Original` field**: Add an `Original object.Object` field to `object.SymbolicPlaceholder`.
+5.  **Populate `Original` field**: Modify `evalTypeSwitchStmt` and `evalAssignStmt` to populate this `Original` field.
 
-### Problem 4: `identifier not found` for Named Return Values
+---
+## Part 3: Continuation 2 (`docs/cont-symgo-type-switch-2.md`)
 
--   **Symptom:** The `find-orphans` log produced errors like:
-    `level=ERROR msg="identifier not found: varDecls"`
--   **Analysis:** This error occurred when `symgo` analyzed a Go function that used named return values. Go automatically declares these named returns as variables within the function's scope. The `symgo` evaluator was not mimicking this behavior. When a named return variable was used as a value (e.g., passed to a function like `append`) before its first explicit assignment, the evaluator could not find it in the environment.
--   **Solution:** The `extendFunctionEnv` function was modified. It now inspects the function's AST (`*ast.FuncDecl`) for named return parameters. If any are found, it pre-declares them as symbolic variables in the function's environment *before* evaluating the body, correctly mirroring Go's scoping rules.
+# Continuation 2: Enhancing `symgo` for Type-Narrowed Member Access
 
-### Problem 5: `expected a package, instance, or pointer...` on Unresolved Type
+### Work Done
 
--   **Symptom:** The `find-orphans` log showed errors like:
-    `level=ERROR msg="expected a package, instance, or pointer on the left side of selector, but got UNRESOLVED_TYPE"`
--   **Analysis:** This happened when `symgo` encountered a selector expression (`foo.Bar`) where `foo` resolved to a raw `*object.UnresolvedType` object. This typically occurs when accessing a symbol from a package that is not scanned (e.g., due to the scan policy). The `evalSelectorExpr` function was missing a case to handle this specific type, causing it to fall through to a generic error.
--   **Solution:** A new case for `*object.UnresolvedType` was added to the `switch` statement in `evalSelectorExpr`. This case now gracefully handles the situation by returning a `*object.SymbolicPlaceholder`, representing the unknown result of the selection, which allows analysis to continue.
+1.  **Added `Original` field to `SymbolicPlaceholder`**: The struct was modified as planned.
+2.  **Populated the `Original` field**: `evalTypeSwitchStmt` and `evalAssignStmt` were updated.
+3.  **Implemented stateful struct literals**: `evalCompositeLit` was enhanced to store field values in the created instance.
 
-### Problem 6: `undefined method` on Field Access
+### Failures and Challenges
 
--   **Symptom:** The `find-orphans` log showed errors like:
-    `undefined method: Value on github.com/podhmo/go-scan/minigo.Result`
--   **Analysis:** When evaluating a selector `foo.Bar`, if `foo` was a symbolic instance (`*object.Instance`), the evaluator would only check for a method named `Bar`. It never checked if `Bar` was a field of the struct.
--   **Solution:** The `case *object.Instance` block in `evalSelectorExpr` was updated. After failing to find a method, it now proceeds to check for a field with the given name using the existing `accessor.findFieldOnType` helper. This allows correct resolution of both method calls and field access on symbolic struct instances.
+The primary blocker was the persistent failure of the `replace_with_git_merge_diff` tool when attempting to refactor `evalSelectorExpr`, preventing the implementation of the core logic.
 
-## 3. Validation and Remaining Issues
+---
+## Part 4: Continuation 3 (`docs/cont-symgo-type-switch-3.md`)
 
-After implementing these fixes, the `find-orphans` example runs with significantly fewer errors. The evaluator is now much more robust in handling common Go patterns and incomplete type information.
+# Continuation 3: Fixing Regressions in Type-Narrowed Member Access
 
-The primary remaining error seen in the logs is `identifier not found: r`, which appears to be related to the complex handling of **method values** (using a method as a value, e.g., `r.handleConvert`, rather than calling it). This is a more subtle issue in the evaluator's environment and scope management and is noted for future investigation.
+### Previous State
 
-## 4. `invalid indirect` Error on `*object.ReturnValue`
+The core feature was implemented, and tests for concrete types were passing. However, this introduced regressions in tests related to interface methods and unresolved types.
 
-**Manifestation:**
+### Analysis and Hypothesis
 
-When running `find-orphans` in library mode (`--mode lib`), the symbolic execution engine logs errors like:
+1.  **Problem 1: Premature Unwrapping of Interfaces.** The logic in `evalSelectorExpr` unwraps placeholders too aggressively, breaking assertions that narrow to an interface type.
+2.  **Problem 2: Incorrect Member Lookup Order.** The logic checks for methods before fields, causing issues with unresolved types where field access is misinterpreted as a method call.
 
-```
-level=ERROR msg="invalid indirect of &instance<...> (type *object.ReturnValue)"
-```
+### Next Steps
 
-This error occurs in `symgo/evaluator/evaluator.go` within the `evalStarExpr` function, which handles the dereference operator (`*`).
+1.  **Implement Conditional Unwrapping in `evalSelectorExpr`**: The unwrapping of a `SymbolicPlaceholder` should only occur if the narrowed type is **not** an interface.
+2.  **Implement Field-First Lookup**: In `evalSelectorExprForObject` and `evalSymbolicSelection`, modify the logic to search for a struct field **before** searching for a method.
 
-**Analysis:**
+---
+## Part 5: Continuation 4 (`docs/cont-symgo-type-switch-4.md`)
 
-The root cause is that the evaluator does not properly unwrap `*object.ReturnValue` objects in all contexts. `*object.ReturnValue` is a wrapper used to propagate return values from function calls up the evaluation stack.
+# Continuation 4: Fixing `TestInterfaceBinding`
 
-The error occurs when an expression involving a dereference is applied to the result of a function call, for example `*MyFunc()`. The evaluation proceeds as follows:
-1. `MyFunc()` is evaluated, and its result is wrapped in an `*object.ReturnValue`.
-2. The `*` operator is evaluated by `evalStarExpr`.
-3. `evalStarExpr` receives the `*object.ReturnValue` object but fails to "unwrap" it to get the actual value that the function returned.
-4. It then attempts to perform a dereference on the `*object.ReturnValue` wrapper itself, which is not a pointer, leading to the "invalid indirect" error.
+### Goal
 
-This issue is more prevalent in library mode for `find-orphans` because it analyzes many generated functions (like those from the `convert` tool) that may not be perfectly formed or may use patterns that expose this unwrapping weakness.
+The immediate goal was to fix `TestInterfaceBinding` by correctly implementing `interp.BindInterface` logic.
 
-**Solution:**
+### Key Discovery & Roadblock
 
-The solution is to ensure that `evalStarExpr` correctly unwraps any `*object.ReturnValue` it receives before attempting to process the underlying value. This can be done by adding a check at the beginning of the function:
+-   **Discovery**: The correct way to dispatch from an interface method to a concrete one is to re-call the top-level `applyFunction` with the concrete method object. This ensures the full pipeline, including intrinsic checks, is executed.
+-   **Roadblock**: This change required passing an `*object.Environment` through the `applyFunction` call stack, which caused a massive cascade of build failures across the test suite. I got stuck in a debugging loop trying to fix all of them at once with large, multi-file patches that kept failing.
 
-```go
-func (e *Evaluator) evalStarExpr(...) object.Object {
-    val := e.Eval(ctx, node.X, env, pkg)
-    if isError(val) {
-        return val
-    }
+### Current Status & Next Steps
 
-    // ADD THIS FIX: Unwrap the return value if present.
-    if ret, ok := val.(*object.ReturnValue); ok {
-        val = ret.Value
-    }
+The codebase was left in a **non-building state**. The immediate priority for the next agent is to methodically fix the build errors one file at a time.
 
-    // ... rest of the function
-}
-```
+---
+## Part 6: Continuation 5 (`docs/cont-symgo-type-switch-5.md`)
 
-This ensures that the rest of the function operates on the actual returned value, not the wrapper, resolving the error.
+# Continuation 5: Stabilizing the Build and Re-evaluating
+
+### Work Summary
+
+1.  **Build & Test Suite Stabilization**: All build errors from the previous refactoring were fixed methodically. Several panics related to incorrect test assumptions about environment caching were also diagnosed and fixed.
+2.  **Root Cause Analysis**: With a stable suite, the root cause of the type-narrowing failures was confirmed: the `SymbolicPlaceholder` created for the narrowed variable was losing the connection to the original concrete object.
+
+### The Confirmed Plan
+
+The plan from Continuation 2 was re-affirmed and refined:
+1.  **Set the `Original` field** in `evalTypeSwitchStmt` and `evalAssignStmt`.
+2.  **Use the `Original` field** in `evalSelectorExpr` by creating a wrapper that checks for a placeholder and its `Original` field, then unwraps it to perform the selection on the concrete object.
+3.  **Rename `evalSelectorExpr`** to `evalSelectorExprForObject` as part of this refactoring.
+
+---
+## Part 7: Continuation 6 (`docs/cont-symgo-type-switch-6.md`)
+
+# Continuation 6: Core Feature Implementation
+
+### Current Status
+
+1.  **Environment Population Fix**: Resolved "identifier not found" errors for type names.
+2.  **Struct Literal Evaluation Fix**: `evalCompositeLit` now correctly populates fields of struct instances.
+3.  **Core Type-Narrowing Verified**: The combination of fixes has unblocked the type-narrowing logic. The primary tests for concrete types (`TestTypeSwitch_MethodCall`, `TestIfOk_FieldAccess`, `TestTypeSwitch_Complex`) are now passing.
+
+### Remaining Tasks
+
+1.  **Fix Failures in Interface-Related Tests**: Several tests related to interface method calls are still failing (`TestEval_ExternalInterfaceMethodCall`, `TestInterfaceBinding`, etc.).
+2.  **Add Tests for Scan Policy Behavior**: Add tests for in-policy vs. out-of-policy type assertions.
+
+---
+## Part 8: Final Troubleshooting (`docs/cont-symgo-type-switch-7.md`)
+
+# Troubleshooting the Final Interface Failures
+
+### 1. Panic Investigation
+
+The effort began with fixing a new series of cascading panics:
+- **Panic 1 (`TestEval_FieldAccessOnSymbolicPlaceholder`):** Fixed by adding a `nil` check in `applyFunction` for functions with no `*ast.Ident` name.
+- **Panic 2 (`TestEvaluator_IfStmt_ResultIsNil`):** Fixed by a series of changes to `applyFunction` and `evalIfStmt` to correctly handle the implicit return value of functions ending in a statement block.
+
+### 2. Fixing Concrete Type-Narrowing
+
+With a stable test environment, the focus shifted to the feature's core logic.
+- **`TestTypeSwitch_MethodCall`:** Fixed by refactoring `extendFunctionEnv` to correctly bind the receiver object in method calls.
+- **`TestIfOk_FieldAccess`:** Fixed by improving `evalSymbolicSelection` to correctly unwrap `*object.Variable` placeholders to find the underlying concrete instance.
+- **`TestTypeSwitch_Complex`:** Fixed by simplifying `*object.Variable` creation in `evalTypeSwitchStmt` to prevent state pollution between `case` blocks.
+
+### 3. Current Impasse: Interface Method Calls
+
+After fixing all issues related to concrete types, the remaining failures are all related to method calls on interface types.
+
+- **Failing Tests:** `TestEval_InterfaceMethodCall_OnConcreteType`, `TestEval_InterfaceMethodCall_AcrossControlFlow`, `TestDefaultIntrinsic_InterfaceMethodCall`.
+- **Core Symptom:** When a method is called on a variable whose static type is an interface (e.g., `var s Speaker; s.Speak()`), the evaluator resolves the call to the concrete method on the variable's underlying value (e.g., `Dog.Speak`) instead of treating it as a symbolic call on the `Speaker` interface. The desired behavior is to produce a `*object.SymbolicPlaceholder` for the interface call.
+- **Root Cause Analysis:** The logic in `evalSelectorExpr` is intended to catch this case and return a placeholder. However, extensive debugging and diagnostic tests revealed that this logic block is never being entered. The reason is that at the time `evalSelectorExpr` is called for `s.Speak()`, the `FieldType` of the variable `s` is `nil`.
+- **Conclusion:** The static type information of the interface variable, which is correctly set during its declaration, is being lost or overwritten somewhere before the method call is evaluated. The exact location of this state loss has not been identified, and multiple attempts to fix it by changing the assignment logic in `assignIdentifier` have failed. This represents the current blocker.

@@ -154,6 +154,15 @@ func (r *Resolver) ResolveCompositeLit(ctx context.Context, fieldType *scanner.F
 
 // ResolveSymbolicField creates a symbolic placeholder for a field access on a symbolic value.
 func (r *Resolver) ResolveSymbolicField(ctx context.Context, field *scanner.FieldInfo, receiver object.Object) object.Object {
+	// If the receiver is an instance with concrete fields, try to get the value.
+	if inst, ok := receiver.(*object.Instance); ok {
+		if inst.Fields != nil {
+			if val, ok := inst.Fields[field.Name]; ok {
+				return val // Return the concrete value from the literal.
+			}
+		}
+	}
+
 	fieldTypeInfo := r.ResolveType(ctx, field.Type)
 	var reason string
 	if v, ok := receiver.(*object.Variable); ok {

@@ -3,7 +3,6 @@ package evaluator
 import (
 	"context"
 	"fmt"
-	"go/ast"
 	"go/token"
 	"testing"
 
@@ -31,45 +30,25 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, pkgEnv, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 
 		// The variables are defined inside the function, so we need to evaluate the function
 		// to populate its environment.
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		// The result of applyFunction is a new environment.
+		fnEnv, err := eval.extendFunctionEnv(ctx, mainFunc, []object.Object{}, nil)
+		if err != nil {
+			return err
+		}
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, fnEnv)
 
-		// The function's environment is where the variables are stored.
-		fnEnv := mainFunc.Env
 		x, ok := fnEnv.Get("x")
-		if !ok {
-			// It might be in the block scope's environment, let's check there.
-			// This is a simplification; a real interpreter would have a more complex env chain.
-			if body, ok := mainFunc.Body.List[0].(*ast.DeclStmt); ok {
-				if valSpec, ok := body.Decl.(*ast.GenDecl).Specs[0].(*ast.ValueSpec); ok {
-					if valSpec.Names[0].Name == "x" {
-						// This is getting complicated, let's just check the function's direct env.
-					}
-				}
-			}
-		}
-
-		// Let's re-evaluate the block to get the final env state
-		blockEnv := object.NewEnclosedEnvironment(env)
-		for _, stmt := range mainFunc.Body.List {
-			eval.Eval(ctx, stmt, blockEnv, pkg)
-		}
-
-		x, ok = blockEnv.Get("x")
 		if !ok {
 			return fmt.Errorf("variable 'x' not found")
 		}
@@ -77,7 +56,7 @@ func main() {
 			return fmt.Errorf("variable 'x' mismatch (-want +got):\n%s", diff)
 		}
 
-		y, ok := blockEnv.Get("y")
+		y, ok := fnEnv.Get("y")
 		if !ok {
 			return fmt.Errorf("variable 'y' not found")
 		}
@@ -111,16 +90,12 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, pkgEnv, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, _ := pkgEnv.Get("main")
 
 		blockEnv := object.NewEnclosedEnvironment(pkgEnv)

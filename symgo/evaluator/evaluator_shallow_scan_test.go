@@ -45,17 +45,13 @@ var sentinel int
 			return fmt.Errorf("no ast files found in package")
 		}
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range pkg.AstFiles {
-			if result := evaluator.Eval(ctx, file, nil, pkg); result != nil {
+			if result := evaluator.Eval(ctx, file, pkgEnv, pkg); result != nil {
 				if _, ok := result.(*object.Error); ok {
 					return fmt.Errorf("Eval() returned an error: %v", result.Inspect())
 				}
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		// Check the unresolved variable
@@ -136,16 +132,12 @@ func (f ForeignType) DoSomething() {}
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, nil, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		// Now, call the function that performs the calls.
@@ -155,7 +147,7 @@ func (f ForeignType) DoSomething() {}
 		}
 		fn := fnObj.(*object.Function)
 
-		result := evaluator.Apply(ctx, fn, nil, mainPkg)
+		result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv)
 		if result != nil && result.Type() == object.ERROR_OBJ {
 			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
 		}
@@ -217,16 +209,12 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, nil, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		// Now, call the function that performs the calls.
@@ -236,7 +224,7 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 		}
 		fn := fnObj.(*object.Function)
 
-		if result := evaluator.Apply(ctx, fn, nil, mainPkg); result != nil && result.Type() == object.ERROR_OBJ {
+		if result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv); result != nil && result.Type() == object.ERROR_OBJ {
 			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
 		}
 
@@ -324,16 +312,12 @@ func (c ConcreteType2) Do() {}
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, nil, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		// Verify the initial state of the interface variable 'i'
@@ -356,7 +340,7 @@ func (c ConcreteType2) Do() {}
 		}
 		fn := fnObj.(*object.Function)
 
-		if result := evaluator.Apply(ctx, fn, nil, mainPkg); result != nil && result.Type() == object.ERROR_OBJ {
+		if result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv); result != nil && result.Type() == object.ERROR_OBJ {
 			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
 		}
 
@@ -449,16 +433,12 @@ func MyFunction(v any) {
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate the package to populate top-level decls.
 		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, nil, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		fnObj, ok := pkgEnv.Get("MyFunction")
@@ -475,7 +455,7 @@ func MyFunction(v any) {
 		}
 		arg.SetFieldType(argFieldType)
 
-		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg)
+		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
 		}
@@ -554,15 +534,11 @@ func MyFunction(v any) {
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, nil, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 		fnObj, ok := pkgEnv.Get("MyFunction")
 		if !ok {
@@ -571,7 +547,7 @@ func MyFunction(v any) {
 		fn := fnObj.(*object.Function)
 
 		arg := &object.SymbolicPlaceholder{Reason: "test argument"}
-		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg)
+		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
 		}
@@ -639,13 +615,9 @@ var sentinel int
 
 		evaluator := New(s, nil, nil, policy)
 		pkg := findPackage(t, pkgs, "example.com/me")
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range pkg.AstFiles {
-			evaluator.Eval(ctx, file, nil, pkg)
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+			evaluator.Eval(ctx, file, pkgEnv, pkg)
 		}
 
 		// Check the unresolved variable
@@ -760,16 +732,12 @@ func (f ForeignType) ForeignMethod() {}
 
 		mainPkg := findPackage(t, pkgs, "example.com/me")
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, nil, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		// Now, call the function that performs the calls.
@@ -779,7 +747,7 @@ func (f ForeignType) ForeignMethod() {}
 		}
 		fn := fnObj.(*object.Function)
 
-		result := evaluator.Apply(ctx, fn, nil, mainPkg)
+		result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv)
 		if result != nil && result.Type() == object.ERROR_OBJ {
 			t.Fatalf("Apply() returned an error, but it should have succeeded symbolically: %s", result.Inspect())
 		}
@@ -837,15 +805,11 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 
 		// First, evaluate the whole package to populate top-level declarations.
 		mainPkg := findPackage(t, pkgs, "example.com/me/mypkg")
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range mainPkg.AstFiles {
-			if res := evaluator.Eval(ctx, file, nil, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
+			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
 			}
-		}
-
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me/mypkg")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me/mypkg'")
 		}
 
 		// Now, find the function and call it.
@@ -874,7 +838,7 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 		arg2 := &object.SymbolicPlaceholder{Reason: "s"}
 		arg2.SetFieldType(sliceOfExtType)
 
-		result := evaluator.Apply(ctx, fn, []object.Object{arg1, arg2}, mainPkg)
+		result := evaluator.Apply(ctx, fn, []object.Object{arg1, arg2}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
 		}

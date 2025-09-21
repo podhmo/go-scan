@@ -206,21 +206,29 @@ func (a *accessor) findDirectMethodInfoOnType(ctx context.Context, typeInfo *sca
 		return nil, nil
 	}
 
-	// **FIX**: Handle interface types. This was missing.
+	// Handle interface types.
 	if typeInfo.Interface != nil {
 		// getAllInterfaceMethods handles embedded interfaces correctly.
 		allMethods := a.eval.getAllInterfaceMethods(ctx, typeInfo, make(map[string]struct{}))
 		for _, method := range allMethods {
 			if method.Name == methodName {
 				// We found the method in the interface definition.
-				// We need to return a FunctionInfo that `applyFunction` can use
-				// to create a symbolic result.
+				// We need to convert the MethodInfo to a FunctionInfo.
+				// Interface methods don't have a body, so AstDecl will be nil.
 				return &scanner.FunctionInfo{
 					Name:       method.Name,
 					Parameters: method.Parameters,
 					Results:    method.Results,
-					// The other fields like AstDecl, Pkg, etc., are not needed here
-					// because this is for a symbolic call, not a real execution.
+					Receiver: &scanner.FieldInfo{ // The receiver is the interface itself.
+						Type: &scanner.FieldType{
+							Name:           typeInfo.Name,
+							PkgName:        typeInfo.PkgPath,
+							FullImportPath: typeInfo.PkgPath,
+							TypeName:       typeInfo.Name,
+							Definition:     typeInfo,
+						},
+					},
+					AstDecl: nil, // No AST declaration for interface methods.
 				}, nil
 			}
 		}

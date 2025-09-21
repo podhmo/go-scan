@@ -64,15 +64,11 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(e.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(e.UniverseEnv)
 		for _, astFile := range pkg.AstFiles {
-			e.Eval(ctx, astFile, env, pkg)
+			e.Eval(ctx, astFile, pkgEnv, pkg)
 		}
 
-		pkgEnv, ok := e.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
@@ -82,7 +78,7 @@ func main() {
 			return fmt.Errorf("main is not a function object")
 		}
 
-		result := e.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := e.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("eval failed: %s", err.Inspect())
 		}

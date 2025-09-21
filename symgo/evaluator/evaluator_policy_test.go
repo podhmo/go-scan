@@ -52,11 +52,11 @@ func DoSomething() string {
 			t.Fatal("main package not found")
 		}
 
+		pkgEnv := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			evaluator.Eval(ctx, file, evaluator.UniverseEnv, mainPkg)
+			evaluator.Eval(ctx, file, pkgEnv, mainPkg)
 		}
 
-		pkgEnv, _ := evaluator.PackageEnvForTest("example.com/me")
 		mainFunc, _ := pkgEnv.Get("main")
 
 		var capturedFunc object.Object
@@ -67,7 +67,7 @@ func DoSomething() string {
 			return nil
 		})
 
-		result := evaluator.Apply(ctx, mainFunc, nil, mainPkg)
+		result := evaluator.Apply(ctx, mainFunc, nil, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			t.Fatalf("Apply() failed: %s", err.Inspect())
 		}

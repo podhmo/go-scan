@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -29,23 +30,19 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Evaluate the file to populate functions etc.
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
 		// Get the main function from the package environment
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found in package %s", pkg.ImportPath)
 		}
 
 		// Execute main. We expect this to run without "not implemented" errors.
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %v", err)
 		}

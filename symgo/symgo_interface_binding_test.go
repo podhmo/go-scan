@@ -19,7 +19,7 @@ import "io"
 
 // TargetFunc is the function we will analyze.
 func TargetFunc(writer io.Writer) {
-	writer.WriteString("hello")
+	writer.Write([]byte("hello"))
 }`,
 	}
 
@@ -31,7 +31,7 @@ func TargetFunc(writer io.Writer) {
 		}
 
 		// Action: Register an intrinsic for the method on the concrete type.
-		interp.RegisterIntrinsic("(*bytes.Buffer).WriteString", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("(*bytes.Buffer).Write", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			intrinsicCalled = true
 			return nil
 		})
@@ -51,7 +51,7 @@ func TargetFunc(writer io.Writer) {
 		}
 
 		if !intrinsicCalled {
-			t.Errorf("expected intrinsic for (*bytes.Buffer).WriteString to be called, but it was not")
+			t.Errorf("expected intrinsic for (*bytes.Buffer).Write to be called, but it was not")
 		}
 	})
 }

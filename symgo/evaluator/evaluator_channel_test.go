@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -64,7 +65,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		expected := []string{"getChan", "getValue"}
 		if diff := cmp.Diff(expected, calledFunctions); diff != "" {
@@ -111,7 +112,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 		if isError(result) {
 			return fmt.Errorf("evaluation failed: %v", result.Inspect())
 		}

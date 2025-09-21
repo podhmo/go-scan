@@ -42,7 +42,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 		if isError(result) {
 			return fmt.Errorf("evaluation failed: %v", result.Inspect())
 		}
@@ -111,7 +111,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 		if isError(result) {
 			return fmt.Errorf("evaluation failed: %v", result.Inspect())
 		}

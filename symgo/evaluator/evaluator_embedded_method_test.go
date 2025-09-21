@@ -107,7 +107,7 @@ func main() {
 			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
 		}
 
-		eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		return nil
 	}
 

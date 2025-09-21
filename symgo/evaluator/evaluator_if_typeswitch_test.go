@@ -69,7 +69,7 @@ func main() {
 		}
 		mainFunc := mainFuncObj.(*object.Function)
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
 		}
@@ -151,7 +151,7 @@ func main() {
 		}
 		mainFunc := mainFuncObj.(*object.Function)
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
 		}
@@ -253,7 +253,7 @@ func main() {
 		}
 		mainFunc := mainFuncObj.(*object.Function)
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
 		}

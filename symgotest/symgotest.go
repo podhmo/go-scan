@@ -170,7 +170,7 @@ func runLogic(t *testing.T, tc TestCase) *Result {
 		return res
 	}
 
-	rawResult := interpreter.EvaluatorForTest().Apply(ctx, fnObj, tc.Args, entryPointPkg)
+	rawResult := interpreter.EvaluatorForTest().Apply(ctx, fnObj, tc.Args, entryPointPkg, interpreter.GlobalEnvForTest())
 
 	if err, ok := rawResult.(*object.Error); ok {
 		res.Error = err

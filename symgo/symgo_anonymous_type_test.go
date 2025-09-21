@@ -38,18 +38,18 @@ func TestAnonymousTypes_Interface(t *testing.T) {
 
 	defaultIntrinsic := func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 		fn := args[0] // The function object itself
-		var foundFunc *scanner.FunctionInfo
-		switch f := fn.(type) {
-		case *symgo.Function:
-			foundFunc = f.Def
-		case *symgo.SymbolicPlaceholder:
-			if f.UnderlyingFunc != nil {
-				foundFunc = f.UnderlyingFunc
-			}
+		t.Logf("intrinsic received function object of type: %T, value: %s", fn, fn.Inspect())
+
+		// After the accessor/resolver fixes, the method on an interface
+		// should be resolved to a body-less *object.Function, not a placeholder.
+		f, ok := fn.(*symgo.Function)
+		if !ok {
+			t.Errorf("expected fn to be *symgo.Function, but got %T", fn)
+			return &symgo.SymbolicPlaceholder{Reason: "test failed"}
 		}
 
-		if foundFunc != nil {
-			inspectedMethod = foundFunc
+		if f.Def != nil {
+			inspectedMethod = f.Def
 		}
 		return &symgo.SymbolicPlaceholder{Reason: "default intrinsic result"}
 	}

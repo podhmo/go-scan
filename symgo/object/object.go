@@ -261,6 +261,7 @@ type Instance struct {
 	BaseObject
 	TypeName   string            // e.g., "net/http.ServeMux"
 	State      map[string]Object // for mock or intrinsic state
+	Fields     map[string]Object // For struct field values
 	Underlying Object            // To hold the object that this instance wraps (e.g., for interface implementations)
 }
 
@@ -380,6 +381,8 @@ type SymbolicPlaceholder struct {
 	Reason string
 	// Original holds the concrete object that this placeholder represents after a type assertion.
 	Original Object
+	// NarrowedTypeInfo holds the type this placeholder was asserted to have.
+	NarrowedTypeInfo *scanner.TypeInfo
 	// If the placeholder is for a function, this holds its signature.
 	UnderlyingFunc *scanner.FunctionInfo
 	// The package context for the UnderlyingFunc.

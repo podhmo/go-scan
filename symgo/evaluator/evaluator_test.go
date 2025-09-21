@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	goscan "github.com/podhmo/go-scan"
@@ -97,14 +96,10 @@ var x = 10
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		val, ok := pkgEnv.Get("x")
 		if !ok {
 			return fmt.Errorf("variable 'x' not found")
@@ -149,20 +144,16 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		// Before the fix, this would return an "invalid indirect" error.
 		// After the fix, it should complete successfully.
@@ -222,21 +213,17 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, pkgEnv, mainPkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found")
-		}
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
 
-		result := eval.Apply(ctx, mainFuncObj, []object.Object{}, mainPkg)
+		result := eval.Apply(ctx, mainFuncObj, []object.Object{}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
 		}
@@ -260,7 +247,7 @@ func TestApplyFunction_ErrorOnNonCallable(t *testing.T) {
 	nonCallable := &object.Integer{Value: 123}
 	args := []object.Object{}
 
-	result := eval.applyFunction(t.Context(), nonCallable, args, nil, token.NoPos)
+	result := eval.applyFunction(t.Context(), nonCallable, args, nil, nil, token.NoPos)
 
 	errObj, ok := result.(*object.Error)
 	if !ok {
@@ -326,19 +313,15 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if len(calledFunctions) == 0 {
 			return fmt.Errorf("deferred function call was not tracked")
@@ -380,19 +363,15 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		// The result of main is the result of its last statement. An empty statement
 		// should result in something innocuous, not an error.
@@ -639,17 +618,13 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-				eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
-				pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-				if !ok {
-					return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-				}
+				pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+				eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 				mainFunc, ok := pkgEnv.Get("main")
 				if !ok {
 					return fmt.Errorf("function 'main' not found")
 				}
-				evaluated := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+				evaluated := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
 
 				// most builtins return a value, which gets wrapped in a ReturnValue
 				if ret, ok := evaluated.(*object.ReturnValue); ok {
@@ -731,19 +706,15 @@ func Do() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, pkgEnv, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		doFuncObj, _ := pkgEnv.Get("Do")
 		doFunc := doFuncObj.(*object.Function)
 		// We don't care about the result, just that the logger was called.
-		eval.Apply(ctx, doFunc, []object.Object{}, pkg)
+		eval.Apply(ctx, doFunc, []object.Object{}, pkg, pkgEnv)
 		return nil
 	}
 
@@ -815,19 +786,15 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
 
 		if len(calledFunctions) == 0 {
 			return fmt.Errorf("go function call was not tracked")
@@ -877,19 +844,15 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
 
 		if len(calledFunctions) == 0 {
 			return fmt.Errorf("deferred function call was not tracked")
@@ -954,18 +917,14 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, pkgEnv, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
@@ -1008,16 +967,12 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, _ := pkgEnv.Get("main")
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		retVal, ok := result.(*object.ReturnValue)
 		if !ok {
@@ -1056,21 +1011,17 @@ func main() {
 		allowAll := func(string) bool { return true }
 		eval := New(s, logger, nil, allowAll)
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, pkgEnv, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 
 		// The action doesn't need to return an error for a test failure.
 		// We check the log buffer after the action completes.
@@ -1092,9 +1043,6 @@ func main() {
 }
 
 func TestRecursiveMethodCallNotCached(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	code := `
 package main
 
@@ -1147,18 +1095,15 @@ func main() {
 		eval := New(s, s.Logger, nil, func(string) bool { return true })
 		eval.RegisterDefaultIntrinsic(logIntrinsic)
 
+		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate the file to populate the environment
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], object.NewEnclosedEnvironment(nil), pkg)
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
 
-		result := eval.Apply(ctx, mainFunc, nil, pkg)
+		result := eval.Apply(ctx, mainFunc, nil, pkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			if strings.Contains(err.Error(), "infinite recursion detected") {
 				return nil // This is acceptable for the test to pass before the fix
@@ -1182,7 +1127,7 @@ func main() {
 		return nil
 	}
 
-	if _, err := scantest.Run(t, ctx, dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
@@ -1320,19 +1265,15 @@ func main() {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				e := New(s, s.Logger, tracer, nil)
-				env := object.NewEnclosedEnvironment(e.UniverseEnv)
+				pkgEnv := object.NewEnclosedEnvironment(e.UniverseEnv)
 				for _, file := range pkg.AstFiles {
-					e.Eval(ctx, file, env, pkg)
-				}
-				pkgEnv, ok := e.PackageEnvForTest(pkg.ImportPath)
-				if !ok {
-					return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+					e.Eval(ctx, file, pkgEnv, pkg)
 				}
 				mainFunc, ok := pkgEnv.Get("main")
 				if !ok {
 					return fmt.Errorf("main function not found")
 				}
-				result := e.Apply(ctx, mainFunc, []object.Object{}, pkg)
+				result := e.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 				if _, ok := result.(*object.Error); ok {
 					return fmt.Errorf("evaluation failed: %v", result.Inspect())
 				}
@@ -1409,15 +1350,11 @@ func add(a, b int) int { return a + b }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Eval the whole file to populate the environment
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		fn, ok := pkgEnv.Get("add")
 		if !ok {
 			return fmt.Errorf("function add not found in environment")
@@ -1448,21 +1385,17 @@ func add(a, b int) int { return a + b }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		fn, _ := pkgEnv.Get("add")
 		args := []object.Object{
 			&object.Integer{Value: 5},
 			&object.Integer{Value: 5},
 		}
 
-		result := eval.applyFunction(ctx, fn, args, pkg, token.NoPos)
+		result := eval.applyFunction(ctx, fn, args, pkg, pkgEnv, token.NoPos)
 
 		retVal, ok := result.(*object.ReturnValue)
 		if !ok {
@@ -1502,16 +1435,12 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		newAdder, _ := pkgEnv.Get("newAdder")
-		addTwoFnResult := eval.applyFunction(ctx, newAdder, []object.Object{&object.Integer{Value: 2}}, pkg, token.NoPos)
+		addTwoFnResult := eval.applyFunction(ctx, newAdder, []object.Object{&object.Integer{Value: 2}}, pkg, pkgEnv, token.NoPos)
 		if isError(addTwoFnResult) {
 			return fmt.Errorf("calling newAdder failed: %s", addTwoFnResult.Inspect())
 		}
@@ -1521,7 +1450,7 @@ func main() {
 		}
 		addTwoFn := addTwoFnRet.Value
 
-		result := eval.applyFunction(ctx, addTwoFn, []object.Object{&object.Integer{Value: 3}}, pkg, token.NoPos)
+		result := eval.applyFunction(ctx, addTwoFn, []object.Object{&object.Integer{Value: 3}}, pkg, pkgEnv, token.NoPos)
 		retVal, ok := result.(*object.ReturnValue)
 		if !ok {
 			return fmt.Errorf("addTwo did not return a value, got %T", result)
@@ -1605,20 +1534,16 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], env, pkg)
+		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
-		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
 		// Execute main, which should trigger the call to 'add'
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if len(calledFunctions) != 1 {
 			return fmt.Errorf("expected 1 function call to be tracked, got %d", len(calledFunctions))

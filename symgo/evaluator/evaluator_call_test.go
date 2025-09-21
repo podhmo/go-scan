@@ -51,7 +51,7 @@ func main() { add(1, 2) }
 			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 		return nil
 	}
 
@@ -123,7 +123,7 @@ func useGetter(g PairGetter) {
 		}
 
 		// 3. Apply the function placeholder. This is where the bug occurs.
-		result := eval.applyFunction(ctx, fnPlaceholder, []object.Object{}, mainPkg, token.NoPos)
+		result := eval.applyFunction(ctx, fnPlaceholder, []object.Object{}, mainPkg, nil, token.NoPos)
 
 		// 4. Check the result
 		retVal, ok := result.(*object.ReturnValue)
@@ -205,7 +205,7 @@ func main() {
 		}
 
 		// Apply the unresolved function. This should trigger the new logic in `applyFunction`.
-		result := eval.applyFunction(ctx, unresolvedFn, []object.Object{}, mainPkg, token.NoPos)
+		result := eval.applyFunction(ctx, unresolvedFn, []object.Object{}, mainPkg, nil, token.NoPos)
 
 		// Check the result
 		retVal, ok := result.(*object.ReturnValue)
@@ -279,7 +279,7 @@ func main() { fmt.Println("hello") }
 		}
 		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		return nil
 	}
@@ -350,7 +350,7 @@ func main() {
 		}
 		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 		return nil
 	}
 
@@ -404,7 +404,7 @@ func main() {
 			}
 			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 			return nil
 		}
 
@@ -477,7 +477,7 @@ func main() {
 			}
 			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
 			return nil
 		}
 
@@ -532,7 +532,7 @@ func main() {
 			}
 			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
 			return nil
 		}
 
@@ -637,7 +637,7 @@ func main() {
 		// Apply the main function, which should trigger the chain of calls.
 		// We are not checking the error here because this test is DESIGNED to fail
 		// and we want to see the error log from find-orphans itself.
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv, token.NoPos)
 		return nil
 	}
 
@@ -717,7 +717,7 @@ func main() {
 		}, getPairFunc)
 
 		// Apply the function placeholder
-		result := eval.applyFunction(ctx, fnPlaceholder, []object.Object{}, mainPkg, token.NoPos)
+		result := eval.applyFunction(ctx, fnPlaceholder, []object.Object{}, mainPkg, nil, token.NoPos)
 
 		// Check the result
 		retVal, ok := result.(*object.ReturnValue)

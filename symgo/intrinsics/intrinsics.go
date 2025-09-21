@@ -54,3 +54,18 @@ func (r *Registry) Pop() {
 		r.layers = r.layers[:len(r.layers)-1]
 	}
 }
+
+// Keys returns a slice of all unique keys across all layers.
+func (r *Registry) Keys() []string {
+	keySet := make(map[string]struct{})
+	for i := len(r.layers) - 1; i >= 0; i-- {
+		for k := range r.layers[i] {
+			keySet[k] = struct{}{}
+		}
+	}
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+	return keys
+}

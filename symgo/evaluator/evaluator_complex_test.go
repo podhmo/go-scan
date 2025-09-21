@@ -100,7 +100,7 @@ func TestEvalComplex(t *testing.T) {
 				}
 				mainFunc := mainFuncObj.(*object.Function)
 
-				result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+				result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 				if isError(result) {
 					return fmt.Errorf("evaluation failed: %s", result.Inspect())
 				}

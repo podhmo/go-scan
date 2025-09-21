@@ -48,14 +48,17 @@ func main() {
 			return &object.Slice{} // Return a symbolic slice
 		})
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
-		}
-
 		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
 		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+			// This is expected if the package hasn't been evaluated yet.
+			// Create a new environment for it.
+			pkgEnv = object.NewEnclosedEnvironment(nil)
 		}
+
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, pkgEnv, pkg)
+		}
+
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
@@ -65,7 +68,7 @@ func main() {
 			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if !getItemsCalled {
 			t.Error("expected getItems() to be called, but it was not")

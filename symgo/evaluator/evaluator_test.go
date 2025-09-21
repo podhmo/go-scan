@@ -624,7 +624,7 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 				if !ok {
 					return fmt.Errorf("function 'main' not found")
 				}
-				evaluated := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+				evaluated := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 				// most builtins return a value, which gets wrapped in a ReturnValue
 				if ret, ok := evaluated.(*object.ReturnValue); ok {
@@ -794,7 +794,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if len(calledFunctions) == 0 {
 			return fmt.Errorf("go function call was not tracked")
@@ -852,7 +852,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if len(calledFunctions) == 0 {
 			return fmt.Errorf("deferred function call was not tracked")

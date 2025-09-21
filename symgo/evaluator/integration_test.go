@@ -68,7 +68,7 @@ func main() {
 		}
 
 		// We use applyFunction directly to simulate a call to main()
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if inspectedType == nil {
 			t.Fatal("intrinsic was not called")

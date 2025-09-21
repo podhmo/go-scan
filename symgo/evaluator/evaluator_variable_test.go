@@ -46,7 +46,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, fnEnv)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, fnEnv, token.NoPos)
 
 		x, ok := fnEnv.Get("x")
 		if !ok {

@@ -87,9 +87,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
-### `symgo`: Continue Implementation of Type Switch and `if-ok` Assertions ([docs/cont-symgo-type-switch-4.md](./docs/cont-symgo-type-switch-4.md))
+### `symgo`: Continue Implementation of Type Switch and `if-ok` Assertions ([docs/cont-symgo-type-switch-5.md](./docs/cont-symgo-type-switch-5.md))
+- [ ] Apply the three fixes documented in `cont-symgo-type-switch-5.md` to resolve the `TestInterfaceBinding` failure.
 - [ ] Fix the panic in `TestEval_ExternalInterfaceMethodCall`.
-- [ ] Fix the test failure in `TestInterfaceBinding`.
 - [ ] Fix the test failures in `TestTypeSwitch_MethodCall`, `TestIfOk_FieldAccess`, and `TestTypeSwitch_Complex`.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))

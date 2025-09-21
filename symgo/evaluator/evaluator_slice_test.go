@@ -68,19 +68,26 @@ func main() {
 	defer cleanup()
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
-
+		gopkg := pkgs[0]
 		pkgEnv := object.NewEnclosedEnvironment(nil)
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+		evalpkg := &object.Package{
+			Name:        gopkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: gopkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			gopkg.ImportPath: evalpkg,
+		}))
+
+		for _, file := range gopkg.AstFiles {
+			eval.Eval(ctx, file, pkgEnv, gopkg)
 		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, gopkg, pkgEnv, token.NoPos)
 
 		if isError(result) {
 			return fmt.Errorf("evaluation failed: %s", result.Inspect())
@@ -111,19 +118,26 @@ func main() {
 	defer cleanup()
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
-
+		gopkg := pkgs[0]
 		pkgEnv := object.NewEnclosedEnvironment(nil)
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+		evalpkg := &object.Package{
+			Name:        gopkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: gopkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			gopkg.ImportPath: evalpkg,
+		}))
+
+		for _, file := range gopkg.AstFiles {
+			eval.Eval(ctx, file, pkgEnv, gopkg)
 		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, gopkg, pkgEnv, token.NoPos)
 
 		// The important part is that this doesn't crash. The result of an index
 		// operation with a symbolic index is a symbolic value.
@@ -171,9 +185,16 @@ func main() {
 		if mainPkg == nil {
 			return fmt.Errorf("main package not found")
 		}
-		eval := New(s, s.Logger, nil, nil)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, pkgEnv, mainPkg)
 		}

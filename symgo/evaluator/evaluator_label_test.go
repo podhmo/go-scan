@@ -46,7 +46,7 @@ OuterLoop:
 		if len(pkgs) == 0 {
 			return fmt.Errorf("no packages were scanned")
 		}
-		pkg := pkgs[0]
+		gopkg := pkgs[0]
 
 		tracer := object.TracerFunc(func(ev object.TraceEvent) {
 			if call, ok := ev.Node.(*ast.CallExpr); ok {
@@ -62,17 +62,19 @@ OuterLoop:
 			}
 		})
 
-		eval := New(s, s.Logger, tracer, nil)
-
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			// This is expected if the package hasn't been evaluated yet.
-			// Create a new environment for it.
-			pkgEnv = object.NewEnclosedEnvironment(nil)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        gopkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: gopkg,
 		}
 
-		for _, f := range pkg.AstFiles {
-			eval.Eval(ctx, f, pkgEnv, pkg)
+		eval := New(s, s.Logger, tracer, nil, WithPackages(map[string]*object.Package{
+			gopkg.ImportPath: evalpkg,
+		}))
+
+		for _, f := range gopkg.AstFiles {
+			eval.Eval(ctx, f, pkgEnv, gopkg)
 		}
 
 		mainFuncObj, ok := pkgEnv.Get("main")
@@ -80,7 +82,7 @@ OuterLoop:
 			return fmt.Errorf("main function not found in package environment")
 		}
 
-		result := eval.Apply(ctx, mainFuncObj, nil, pkg, pkgEnv)
+		result := eval.Apply(ctx, mainFuncObj, nil, gopkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("eval failed: %s", err.Error())
 		}

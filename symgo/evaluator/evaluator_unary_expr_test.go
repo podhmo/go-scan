@@ -34,12 +34,19 @@ var result = %s
 			}
 
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-				pkg := pkgs[0]
-				eval := New(s, s.Logger, nil, nil)
-				pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+				gopkg := pkgs[0]
+				pkgEnv := object.NewEnclosedEnvironment(nil)
+				evalpkg := &object.Package{
+					Name:        gopkg.Name,
+					Env:         pkgEnv,
+					ScannedInfo: gopkg,
+				}
+				eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+					gopkg.ImportPath: evalpkg,
+				}))
 
-				for _, file := range pkg.AstFiles {
-					if err := eval.Eval(ctx, file, pkgEnv, pkg); err != nil {
+				for _, file := range gopkg.AstFiles {
+					if err := eval.Eval(ctx, file, pkgEnv, gopkg); err != nil {
 						if objErr, ok := err.(*object.Error); ok {
 							return objErr
 						}
@@ -98,15 +105,22 @@ func main() {
 	}
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
+		gopkg := pkgs[0]
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        gopkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: gopkg,
+		}
 		eval := New(s, s.Logger, nil, func(importPath string) bool {
 			// Treat the current package as source-scannable
 			return importPath == "example.com/me"
-		})
+		}, WithPackages(map[string]*object.Package{
+			gopkg.ImportPath: evalpkg,
+		}))
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		for _, file := range pkg.AstFiles {
-			if res := eval.Eval(ctx, file, pkgEnv, pkg); res != nil && isError(res) {
+		for _, file := range gopkg.AstFiles {
+			if res := eval.Eval(ctx, file, pkgEnv, gopkg); res != nil && isError(res) {
 				if err, ok := res.(*object.Error); ok {
 					return fmt.Errorf("setup eval failed: %w", err)
 				}
@@ -125,7 +139,7 @@ func main() {
 		}
 
 		// Execute the main function.
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, gopkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("symbolic execution of main failed: %w", err)
 		}
@@ -165,12 +179,19 @@ var result = %s
 			}
 
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-				pkg := pkgs[0]
-				eval := New(s, s.Logger, nil, nil)
-				pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+				gopkg := pkgs[0]
+				pkgEnv := object.NewEnclosedEnvironment(nil)
+				evalpkg := &object.Package{
+					Name:        gopkg.Name,
+					Env:         pkgEnv,
+					ScannedInfo: gopkg,
+				}
+				eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+					gopkg.ImportPath: evalpkg,
+				}))
 
-				for _, file := range pkg.AstFiles {
-					if err := eval.Eval(ctx, file, pkgEnv, pkg); err != nil {
+				for _, file := range gopkg.AstFiles {
+					if err := eval.Eval(ctx, file, pkgEnv, gopkg); err != nil {
 						if objErr, ok := err.(*object.Error); ok {
 							return objErr
 						}

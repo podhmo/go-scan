@@ -28,21 +28,28 @@ func main() {
 	defer cleanup()
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		gopkg := pkgs[0]
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        gopkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: gopkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			gopkg.ImportPath: evalpkg,
+		}))
 
 		// Evaluate the file to populate functions etc.
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		eval.Eval(ctx, gopkg.AstFiles[gopkg.Files[0]], pkgEnv, gopkg)
 
 		// Get the main function from the package environment
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
-			return fmt.Errorf("function 'main' not found in package %s", pkg.ImportPath)
+			return fmt.Errorf("function 'main' not found in package %s", gopkg.ImportPath)
 		}
 
 		// Execute main. We expect this to run without "not implemented" errors.
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, gopkg, pkgEnv, token.NoPos)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %v", err)
 		}

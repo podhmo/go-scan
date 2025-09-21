@@ -115,6 +115,16 @@ func WithMemoization() Option {
 	}
 }
 
+// WithPackages sets the initial package cache for the evaluator.
+// This is primarily intended for testing.
+func WithPackages(pkgs map[string]*object.Package) Option {
+	return func(e *Evaluator) {
+		for k, v := range pkgs {
+			e.pkgCache[k] = v
+		}
+	}
+}
+
 // getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
 // It handles cycles by keeping track of visited interface types.
 // A duplicate of this method exists in `goscan.Scanner` for historical reasons;
@@ -1622,17 +1632,56 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 }
 
 func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.SelectorExpr, left object.Object, env *object.Environment, pkg *scan.PackageInfo) object.Object {
-	// We must fully evaluate the left-hand side before trying to select a field or method from it.
-	left = e.forceEval(ctx, left, pkg)
 	if isError(left) {
 		return left
 	}
 
-	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", inspectValuer{left})
+	// DO NOT force-evaluate `left` here. We need to handle variables
+	// without unwrapping them, to preserve them as receivers for method calls.
 
 	switch val := left.(type) {
+	case *object.Variable:
+		// If we are selecting from a variable, we treat the variable itself as the receiver.
+		// The selection logic operates on the variable's static type, not its current value.
+		// This is crucial for handling method calls on nil interface variables.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason:   "method call on variable " + val.Name,
+			Receiver: val,
+		}
+		placeholder.SetTypeInfo(val.TypeInfo())
+		placeholder.SetFieldType(val.FieldType())
+		return e.evalSymbolicSelection(ctx, placeholder, n.Sel, env, val, n.X.Pos())
+
 	case *object.SymbolicPlaceholder:
-		return e.evalSymbolicSelection(ctx, val, n.Sel, env, val, n.X.Pos())
+		// NEW: Check for interface binding before falling back to symbolic selection.
+		if typeInfo := val.TypeInfo(); typeInfo != nil {
+			// HACK: Also check for UnknownKind, as the resolver sometimes fails to correctly identify interface types.
+			if typeInfo.Kind == scan.InterfaceKind || typeInfo.Kind == scan.UnknownKind {
+				ifaceName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+				if binding, ok := e.interfaceBindings[ifaceName]; ok {
+					e.logc(ctx, slog.LevelDebug, "found interface binding, redirecting method call", "interface", ifaceName, "concrete", fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name))
+
+					// Create a new object representing the concrete type.
+					instance := &object.Instance{
+						TypeName:   fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name),
+						BaseObject: object.BaseObject{ResolvedTypeInfo: binding.ConcreteType},
+					}
+
+					var concreteObj object.Object
+					if binding.IsPointer {
+						concreteObj = &object.Pointer{Value: instance}
+					} else {
+						concreteObj = instance
+					}
+
+					// Recursively call this function with the new concrete object.
+					// This will dispatch to the correct method/intrinsic on the concrete type.
+					return e.evalSelectorExprForObject(ctx, n, concreteObj, env, pkg)
+				}
+			}
+		}
+		// No binding found, or not an interface. Proceed with normal symbolic selection.
+		return e.evalSymbolicSelection(ctx, val, n.Sel, env, left, n.X.Pos())
 
 	case *object.Package:
 		e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: left is a package", "package", val.Path, "selector", n.Sel.Name)
@@ -1803,7 +1852,7 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 
 		// Fallback to searching for the method on the instance's type.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
+			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, left, n.X.Pos()); err == nil && method != nil {
 				return method
 			}
 			// If not a method, check if it's a field on the struct (including embedded).
@@ -1820,9 +1869,29 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 		// type of the object the pointer points to.
 		pointee := val.Value
 		if instance, ok := pointee.(*object.Instance); ok {
+			// First, check for an intrinsic on the concrete type. This is crucial for interface binding redirection.
+			// Check for pointer receiver intrinsic first.
+			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
+			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+				self := val // The receiver for the intrinsic is the pointer itself.
+				fn := func(ctx context.Context, args ...object.Object) object.Object {
+					return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+				}
+				return &object.Intrinsic{Fn: fn}
+			}
+			// Then check for value receiver intrinsic.
+			key = fmt.Sprintf("(%s).%s", instance.TypeName, n.Sel.Name)
+			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+				self := val
+				fn := func(ctx context.Context, args ...object.Object) object.Object {
+					return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+				}
+				return &object.Intrinsic{Fn: fn}
+			}
+
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
-				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
+				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, left, n.X.Pos()); err == nil && method != nil {
 					return method
 				}
 				// If not a method, check for a field on the underlying struct.
@@ -3765,7 +3834,7 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 						typedNil := &object.Nil{}
 						typedNil.SetFieldType(staticFieldType)
 						typedNil.SetTypeInfo(staticTypeInfo)
-						arg = typedNil // Replace untyped nil with typed nil
+						v.Value = typedNil // This is the fix
 					}
 				}
 				env.SetLocal(paramDef.Name, v)

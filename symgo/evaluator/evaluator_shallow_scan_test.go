@@ -37,17 +37,24 @@ var sentinel int
 		policy := func(path string) bool {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
-
-		evaluator := New(s, nil, nil, policy)
-
-		pkg := findPackage(t, pkgs, "example.com/me")
-		if len(pkg.AstFiles) == 0 {
+		mainPkg := findPackage(t, pkgs, "example.com/me")
+		if len(mainPkg.AstFiles) == 0 {
 			return fmt.Errorf("no ast files found in package")
 		}
 
 		pkgEnv := object.NewEnclosedEnvironment(nil)
-		for _, file := range pkg.AstFiles {
-			if result := evaluator.Eval(ctx, file, pkgEnv, pkg); result != nil {
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
+
+		for _, file := range mainPkg.AstFiles {
+			if result := evaluator.Eval(ctx, file, pkgEnv, mainPkg); result != nil {
 				if _, ok := result.(*object.Error); ok {
 					return fmt.Errorf("Eval() returned an error: %v", result.Inspect())
 				}
@@ -123,16 +130,23 @@ func (f ForeignType) DoSomething() {}
 		policy := func(path string) bool {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
+		mainPkg := findPackage(t, pkgs, "example.com/me")
 
-		evaluator := New(s, nil, nil, policy)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
 
-		mainPkg := findPackage(t, pkgs, "example.com/me")
-
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
@@ -200,16 +214,23 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 		policy := func(path string) bool {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
+		mainPkg := findPackage(t, pkgs, "example.com/me")
 
-		evaluator := New(s, nil, nil, policy)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
 
-		mainPkg := findPackage(t, pkgs, "example.com/me")
-
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
@@ -303,16 +324,22 @@ func (c ConcreteType2) Do() {}
 		policy := func(path string) bool {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
+		mainPkg := findPackage(t, pkgs, "example.com/me")
 
-		evaluator := New(s, nil, nil, policy)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
 
-		mainPkg := findPackage(t, pkgs, "example.com/me")
-
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
@@ -424,16 +451,22 @@ func MyFunction(v any) {
 			// Disallow scanning the "foreign" package.
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
+		mainPkg := findPackage(t, pkgs, "example.com/me")
 
-		evaluator := New(s, nil, nil, policy)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
 
-		mainPkg := findPackage(t, pkgs, "example.com/me")
-
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate the package to populate top-level decls.
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
@@ -525,16 +558,22 @@ func MyFunction(v any) {
 		policy := func(path string) bool {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
+		mainPkg := findPackage(t, pkgs, "example.com/me")
 
-		evaluator := New(s, nil, nil, policy)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
 
-		mainPkg := findPackage(t, pkgs, "example.com/me")
-
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())
@@ -612,10 +651,17 @@ var sentinel int
 		policy := func(path string) bool {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
-
-		evaluator := New(s, nil, nil, policy)
 		pkg := findPackage(t, pkgs, "example.com/me")
+
 		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        pkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: pkg,
+		}
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			pkg.ImportPath: evalpkg,
+		}))
 		for _, file := range pkg.AstFiles {
 			evaluator.Eval(ctx, file, pkgEnv, pkg)
 		}
@@ -723,16 +769,22 @@ func (f ForeignType) ForeignMethod() {}
 		policy := func(path string) bool {
 			return !strings.HasPrefix(path, "example.com/me/foreign/")
 		}
+		mainPkg := findPackage(t, pkgs, "example.com/me")
 
-		evaluator := New(s, nil, nil, policy)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 		evaluator.RegisterIntrinsic("example.com/me.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
 
-		mainPkg := findPackage(t, pkgs, "example.com/me")
-
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate package-level declarations first
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
@@ -796,16 +848,23 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 		policy := func(path string) bool {
 			return path != "example.com/me/extpkg"
 		}
+		mainPkg := findPackage(t, pkgs, "example.com/me/mypkg")
 
-		evaluator := New(s, nil, nil, policy)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		evaluator := New(s, nil, nil, policy, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 		evaluator.RegisterIntrinsic("example.com/me/mypkg.Sentinel", func(ctx context.Context, args ...object.Object) object.Object {
 			sentinelReached = true
 			return nil
 		})
 
 		// First, evaluate the whole package to populate top-level declarations.
-		mainPkg := findPackage(t, pkgs, "example.com/me/mypkg")
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range mainPkg.AstFiles {
 			if res := evaluator.Eval(ctx, file, pkgEnv, mainPkg); res != nil && res.Type() == object.ERROR_OBJ {
 				return fmt.Errorf("initial Eval failed: %s", res.Inspect())

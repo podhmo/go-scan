@@ -38,25 +38,27 @@ func main() {
 		if len(pkgs) != 1 {
 			return fmt.Errorf("expected 1 package, but got %d", len(pkgs))
 		}
-		pkg := pkgs[0]
+		gopkg := pkgs[0]
 
-		eval := New(s, s.Logger, nil, nil)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        gopkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: gopkg,
+		}
+
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			gopkg.ImportPath: evalpkg,
+		}))
 
 		// Register an intrinsic to track when getItems is called
-		eval.RegisterIntrinsic(fmt.Sprintf("%s.getItems", pkg.ImportPath), func(ctx context.Context, args ...object.Object) object.Object {
+		eval.RegisterIntrinsic(fmt.Sprintf("%s.getItems", gopkg.ImportPath), func(ctx context.Context, args ...object.Object) object.Object {
 			getItemsCalled = true
 			return &object.Slice{} // Return a symbolic slice
 		})
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			// This is expected if the package hasn't been evaluated yet.
-			// Create a new environment for it.
-			pkgEnv = object.NewEnclosedEnvironment(nil)
-		}
-
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+		for _, file := range gopkg.AstFiles {
+			eval.Eval(ctx, file, pkgEnv, gopkg)
 		}
 
 		mainFuncObj, ok := pkgEnv.Get("main")
@@ -68,7 +70,7 @@ func main() {
 			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, gopkg, pkgEnv, token.NoPos)
 
 		if !getItemsCalled {
 			t.Error("expected getItems() to be called, but it was not")

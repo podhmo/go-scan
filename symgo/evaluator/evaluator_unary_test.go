@@ -34,8 +34,16 @@ func main() {
 	var calledFunctions []object.Object
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		gopkg := pkgs[0]
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        gopkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: gopkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			gopkg.ImportPath: evalpkg,
+		}))
 
 		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
@@ -44,9 +52,8 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+		for _, file := range gopkg.AstFiles {
+			eval.Eval(ctx, file, pkgEnv, gopkg)
 		}
 
 		mainFuncObj, ok := pkgEnv.Get("main")
@@ -54,7 +61,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, gopkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
 		}

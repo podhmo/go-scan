@@ -44,7 +44,15 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		mainPkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 
 		// Register an intrinsic for the inspect function
 		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
@@ -91,7 +99,6 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, pkgEnv, mainPkg)
 		}
@@ -153,7 +160,15 @@ func main() {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		mainPkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 
 		// Register an intrinsic for the inspect function
 		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
@@ -161,7 +176,6 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, pkgEnv, mainPkg)
 		}
@@ -225,7 +239,15 @@ func process(prefix string, data any) {
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		mainPkg := pkgs[0]
-		eval := New(s, s.Logger, nil, nil)
+		pkgEnv := object.NewEnclosedEnvironment(nil)
+		evalpkg := &object.Package{
+			Name:        mainPkg.Name,
+			Env:         pkgEnv,
+			ScannedInfo: mainPkg,
+		}
+		eval := New(s, s.Logger, nil, nil, WithPackages(map[string]*object.Package{
+			mainPkg.ImportPath: evalpkg,
+		}))
 
 		// Register an intrinsic for the inspect function
 		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
@@ -257,7 +279,6 @@ func process(prefix string, data any) {
 			return &object.String{Value: "formatted string"}
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
 			eval.Eval(ctx, file, pkgEnv, mainPkg)
 		}

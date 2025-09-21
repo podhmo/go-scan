@@ -84,13 +84,14 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Evaluator Enhancements**:
     - **`panic(nil)` Handling**: Fixed a critical bug where the symbolic evaluator would crash when analyzing code containing a `panic(nil)` call. The evaluator now correctly handles this as a symbolic `PanicError` object, preventing the crash and allowing analysis to continue. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
 - **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md)
+- **`symgo`: Type-Narrowed Member Access** ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md)): Implemented full support for method calls and field access on variables narrowed by type switches (`switch v := i.(type)`) and `if-ok` assertions (`if v, ok := i.(T)`). The implementation correctly handles concrete types, interface types, and unresolved types from external packages by correctly populating struct literal fields and ensuring type definitions are loaded into the environment.
  
 ## To Be Implemented
 
 ### `symgo`: Continue Implementation of Type Switch and `if-ok` Assertions ([docs/cont-symgo-type-switch-4.md](./docs/cont-symgo-type-switch-4.md))
 - [ ] Fix the panic in `TestEval_ExternalInterfaceMethodCall`.
 - [ ] Fix the test failure in `TestInterfaceBinding`.
-- [ ] Fix the test failures in `TestTypeSwitch_MethodCall`, `TestIfOk_FieldAccess`, and `TestTypeSwitch_Complex`.
+- [x] Fix the test failures in `TestTypeSwitch_MethodCall`, `TestIfOk_FieldAccess`, and `TestTypeSwitch_Complex`.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

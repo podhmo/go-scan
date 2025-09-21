@@ -731,10 +731,27 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	// The failing test expects the underlying type name, not the alias name.
 	instance := &object.Instance{
 		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
+		Fields:   make(map[string]object.Object),
 		BaseObject: object.BaseObject{
 			ResolvedTypeInfo: resolvedType,
 		},
 	}
+
+	// Populate the fields of the instance.
+	for i, elt := range node.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			if key, ok := kv.Key.(*ast.Ident); ok {
+				instance.Fields[key.Name] = elements[i]
+			}
+		} else {
+			// Handle positional initializers.
+			if resolvedType != nil && resolvedType.Struct != nil && i < len(resolvedType.Struct.Fields) {
+				fieldName := resolvedType.Struct.Fields[i].Name
+				instance.Fields[fieldName] = elements[i]
+			}
+		}
+	}
+
 	instance.SetFieldType(fieldType)
 	return instance
 }
@@ -1452,6 +1469,19 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		}
 		fnObject := e.getOrResolveFunction(ctx, pkgObj, f)
 		env.SetLocal(f.Name, fnObject)
+	}
+
+	// Populate types
+	for _, t := range pkgInfo.Types {
+		if !shouldScan && !ast.IsExported(t.Name) {
+			continue
+		}
+		typeObj := &object.Type{
+			TypeName:     t.Name,
+			ResolvedType: t,
+		}
+		typeObj.SetTypeInfo(t)
+		env.SetLocal(t.Name, typeObj)
 	}
 
 	// Mark this package as fully populated.

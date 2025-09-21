@@ -30,14 +30,23 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
 		}
 
-		mainFuncObj, _ := pkgEnv.Get("main")
-		mainFunc := mainFuncObj.(*object.Function)
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, got %T", mainFuncObj)
+		}
 
 		// The variables are defined inside the function, so we need to evaluate the function
 		// to populate its environment.
@@ -46,7 +55,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, fnEnv)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, fnEnv, token.NoPos)
 
 		x, ok := fnEnv.Get("x")
 		if !ok {
@@ -90,13 +99,19 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
 		}
 
-		mainFunc, _ := pkgEnv.Get("main")
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("function 'main' not found")
+		}
 
 		blockEnv := object.NewEnclosedEnvironment(pkgEnv)
 		for _, stmt := range mainFunc.(*object.Function).Body.List {

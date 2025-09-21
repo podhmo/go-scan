@@ -477,7 +477,7 @@ func main() {
 			}
 			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 			return nil
 		}
 
@@ -532,7 +532,7 @@ func main() {
 			}
 			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
-			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 			return nil
 		}
 

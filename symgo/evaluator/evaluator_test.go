@@ -96,9 +96,13 @@ var x = 10
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		val, ok := pkgEnv.Get("x")
 		if !ok {
@@ -144,9 +148,13 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
@@ -213,9 +221,12 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/main")
+		if !ok {
+			return fmt.Errorf("package env for example.com/main not found")
 		}
 
 		mainFuncObj, ok := pkgEnv.Get("main")
@@ -313,8 +324,13 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
@@ -363,8 +379,13 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
@@ -618,13 +639,18 @@ func TestEvalBuiltinFunctionsPlaceholders(t *testing.T) {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-				eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+				for _, file := range pkg.AstFiles {
+					eval.Eval(ctx, file, nil, pkg)
+				}
+				pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+				if !ok {
+					return fmt.Errorf("package env for example.com/me not found")
+				}
 				mainFunc, ok := pkgEnv.Get("main")
 				if !ok {
 					return fmt.Errorf("function 'main' not found")
 				}
-				evaluated := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+				evaluated := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 				// most builtins return a value, which gets wrapped in a ReturnValue
 				if ret, ok := evaluated.(*object.ReturnValue); ok {
@@ -706,13 +732,22 @@ func Do() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		doFuncObj, _ := pkgEnv.Get("Do")
-		doFunc := doFuncObj.(*object.Function)
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			t.Fatal("package env for example.com/me not found")
+		}
+		doFuncObj, ok := pkgEnv.Get("Do")
+		if !ok {
+			t.Fatal("function 'Do' not found")
+		}
+		doFunc, ok := doFuncObj.(*object.Function)
+		if !ok {
+			t.Fatalf("expected 'Do' to be a function, but got %T", doFuncObj)
+		}
 		// We don't care about the result, just that the logger was called.
 		eval.Apply(ctx, doFunc, []object.Object{}, pkg, pkgEnv)
 		return nil
@@ -786,15 +821,20 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if len(calledFunctions) == 0 {
 			return fmt.Errorf("go function call was not tracked")
@@ -844,15 +884,20 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos, pkgEnv)
+			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if len(calledFunctions) == 0 {
 			return fmt.Errorf("deferred function call was not tracked")
@@ -917,12 +962,18 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			t.Fatal("package env for example.com/me not found")
 		}
 
-		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			t.Fatal("function 'main' not found")
+		}
 		mainFunc := mainFuncObj.(*object.Function)
 		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
@@ -947,7 +998,7 @@ func main() {
 	// The evaluator correctly identifies that the receiver is the variable `w`,
 	// which holds the nil value, not the nil value itself. So we expect a Variable.
 	if _, ok := calledPlaceholder.Receiver.(*object.Variable); !ok {
-		t.Errorf("expected receiver to be a *object.Variable, but got %T", calledPlaceholder.Receiver)
+		t.Errorf("expected receiver to be a *object.Variable, but got %T (%s)", calledPlaceholder.Receiver, calledPlaceholder.Receiver.Inspect())
 	}
 }
 
@@ -967,9 +1018,14 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		mainFunc, _ := pkgEnv.Get("main")
 		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
@@ -1011,9 +1067,12 @@ func main() {
 		allowAll := func(string) bool { return true }
 		eval := New(s, logger, nil, allowAll)
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
 		}
 
 		mainFunc, ok := pkgEnv.Get("main")
@@ -1095,9 +1154,14 @@ func main() {
 		eval := New(s, s.Logger, nil, func(string) bool { return true })
 		eval.RegisterDefaultIntrinsic(logIntrinsic)
 
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		// Evaluate the file to populate the environment
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
@@ -1265,9 +1329,12 @@ func main() {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				e := New(s, s.Logger, tracer, nil)
-				pkgEnv := object.NewEnclosedEnvironment(e.UniverseEnv)
 				for _, file := range pkg.AstFiles {
-					e.Eval(ctx, file, pkgEnv, pkg)
+					e.Eval(ctx, file, nil, pkg)
+				}
+				pkgEnv, ok := e.PackageEnvForTest("example.com/main")
+				if !ok {
+					return fmt.Errorf("package env for example.com/main not found")
 				}
 				mainFunc, ok := pkgEnv.Get("main")
 				if !ok {
@@ -1350,10 +1417,15 @@ func add(a, b int) int { return a + b }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Eval the whole file to populate the environment
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		fn, ok := pkgEnv.Get("add")
 		if !ok {
@@ -1385,9 +1457,14 @@ func add(a, b int) int { return a + b }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		fn, _ := pkgEnv.Get("add")
 		args := []object.Object{
@@ -1435,9 +1512,14 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		newAdder, _ := pkgEnv.Get("newAdder")
 		addTwoFnResult := eval.applyFunction(ctx, newAdder, []object.Object{&object.Integer{Value: 2}}, pkg, pkgEnv, token.NoPos)
@@ -1534,8 +1616,13 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
+		}
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("package env for example.com/me not found")
+		}
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {

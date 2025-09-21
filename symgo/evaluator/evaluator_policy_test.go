@@ -52,12 +52,18 @@ func DoSomething() string {
 			t.Fatal("main package not found")
 		}
 
-		pkgEnv := object.NewEnclosedEnvironment(evaluator.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			evaluator.Eval(ctx, file, pkgEnv, mainPkg)
+			evaluator.Eval(ctx, file, nil, mainPkg)
 		}
 
-		mainFunc, _ := pkgEnv.Get("main")
+		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
+		if !ok {
+			t.Fatal("main package environment not found in evaluator cache")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			t.Fatal("main function not found in package environment")
+		}
 
 		var capturedFunc object.Object
 		evaluator.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {

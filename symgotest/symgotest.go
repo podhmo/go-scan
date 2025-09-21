@@ -94,8 +94,13 @@ func runLogic(t *testing.T, tc TestCase) *Result {
 		return res
 	}
 
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	if cfg.Logger != nil {
+		logger = cfg.Logger
+	}
+
 	interpreterOpts := []symgo.Option{
-		symgo.WithLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))),
+		symgo.WithLogger(logger),
 		symgo.WithTracer(tracer),
 		symgo.WithMaxSteps(cfg.MaxSteps),
 	}
@@ -368,10 +373,18 @@ type config struct {
 	DefaultIntrinsic symgo.IntrinsicFunc
 	SetupFunc        func(interp *symgo.Interpreter) error
 	Tracer           object.Tracer
+	Logger           *slog.Logger
 }
 
 // Option configures a test run.
 type Option func(*config)
+
+// WithLogger provides a custom logger for the symgo interpreter.
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *config) {
+		c.Logger = logger
+	}
+}
 
 // WithTracer provides a custom tracer for the symgo interpreter.
 // If this option is used, the default execution trace in the Result will not be populated.

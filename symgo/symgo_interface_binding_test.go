@@ -1,7 +1,9 @@
 package symgo_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo"
@@ -23,6 +25,11 @@ func TargetFunc(writer io.Writer) {
 }`,
 	}
 
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
 	setup := symgotest.WithSetup(func(interp *symgo.Interpreter) error {
 		// Action: Bind the interface `io.Writer` to the concrete type `*bytes.Buffer`.
 		// This must happen after the interpreter is created but before analysis runs.
@@ -42,10 +49,11 @@ func TargetFunc(writer io.Writer) {
 		Source:     source,
 		EntryPoint: "myapp.TargetFunc",
 		// Args is nil; symgotest will create a symbolic placeholder for the io.Writer argument.
-		Options: []symgotest.Option{setup},
+		Options: []symgotest.Option{setup, symgotest.WithLogger(logger)},
 	}
 
 	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
+		t.Logf("captured logs:\n%s", logBuf.String())
 		if r.Error != nil {
 			t.Fatalf("symgotest.Run failed: %+v", r.Error)
 		}

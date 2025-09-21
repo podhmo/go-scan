@@ -2043,7 +2043,8 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					}
 
 					val := &object.SymbolicPlaceholder{
-						Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
+						Reason:     fmt.Sprintf("value from type switch to %s", fieldType.String()),
+						Original:   originalObj,
 						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 					}
 					v := &object.Variable{
@@ -2375,8 +2376,10 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				return e.newError(ctx, n.Pos(), "type assertion with 2 values on RHS must have 2 variables on LHS, got %d", len(n.Lhs))
 			}
 
-			// Evaluate the source expression to trace calls
-			e.Eval(ctx, typeAssert.X, env, pkg)
+			originalObj := e.Eval(ctx, typeAssert.X, env, pkg)
+			if isError(originalObj) {
+				return originalObj
+			}
 
 			// Resolve the asserted type (T).
 			if pkg == nil || pkg.Fset == nil {
@@ -2408,6 +2411,7 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			// Create placeholders for the two return values.
 			valuePlaceholder := &object.SymbolicPlaceholder{
 				Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
+				Original:   originalObj,
 				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
 			}
 
@@ -3177,6 +3181,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 }
 
 func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, env *object.Environment, callPos token.Pos) object.Object {
+	if fn == nil {
+		return e.newError(ctx, callPos, "cannot apply nil function")
+	}
 	var name string
 
 	if f, ok := fn.(*object.Function); ok {
@@ -3246,7 +3253,11 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		for i, arg := range args {
 			argStrs[i] = arg.Inspect()
 		}
-		e.logc(ctx, slog.LevelDebug, "applyFunction", "in_func", name, "in_func_pos", e.scanner.Fset().Position(callPos), "exec_pos", callPos, "type", fn.Type(), "value", inspectValuer{fn}, "args", strings.Join(argStrs, ", "))
+		posStr := ""
+		if callPos.IsValid() && e.scanner != nil && e.scanner.Fset() != nil {
+			posStr = e.scanner.Fset().Position(callPos).String()
+		}
+		e.logc(ctx, slog.LevelDebug, "applyFunction", "in_func", name, "in_func_pos", posStr, "exec_pos", callPos, "type", fn.Type(), "value", inspectValuer{fn}, "args", strings.Join(argStrs, ", "))
 	}
 
 	// If `fn` is a variable, we need to evaluate it to get the underlying function.
@@ -3303,15 +3314,19 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 			if fn.Receiver != nil {
 				receiverTypeInfo := fn.Receiver.TypeInfo()
 				if receiverTypeInfo != nil && receiverTypeInfo.Kind == scan.InterfaceKind {
+					e.logc(ctx, slog.LevelDebug, "receiver is an interface", "pkg", receiverTypeInfo.PkgPath, "name", receiverTypeInfo.Name)
 					ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
+					e.logc(ctx, slog.LevelDebug, "checking for interface binding", "ifaceName", ifaceName)
 					if binding, ok := e.interfaceBindings[ifaceName]; ok {
 						e.logc(ctx, slog.LevelDebug, "found interface binding, dispatching call", "interface", ifaceName, "concrete", binding.ConcreteType.Name)
 
 						// Find the corresponding method on the concrete type.
 						methodInfo := e.accessor.findMethodInfoOnType(ctx, binding.ConcreteType, fn.Name.Name)
 						if methodInfo == nil {
+						e.logc(ctx, slog.LevelWarn, "method not found on concrete type for interface binding", "method", fn.Name.Name, "concrete_type", binding.ConcreteType.Name)
 							return e.newError(ctx, callPos, "method %s not found on concrete type %s for interface %s", fn.Name.Name, binding.ConcreteType.Name, ifaceName)
 						}
+					e.logc(ctx, slog.LevelDebug, "found concrete method", "method", methodInfo.Name)
 
 						// Get the package object for the concrete method.
 						concretePkg, err := e.getOrLoadPackage(ctx, binding.ConcreteType.PkgPath)
@@ -3319,10 +3334,35 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 							return e.newError(ctx, callPos, "could not load package for concrete type %s: %v", binding.ConcreteType.PkgPath, err)
 						}
 
-						// Create a new function object for the concrete method.
+						// Check for an intrinsic on the concrete type before trying to execute it.
+						var intrinsicKey string
+						if binding.IsPointer {
+							intrinsicKey = fmt.Sprintf("(*%s.%s).%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name, methodInfo.Name)
+						} else {
+							intrinsicKey = fmt.Sprintf("(%s.%s).%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name, methodInfo.Name)
+						}
+						e.logc(ctx, slog.LevelDebug, "checking for intrinsic on concrete type", "key", intrinsicKey)
+						if intrinsicFn, ok := e.intrinsics.Get(intrinsicKey); ok {
+							e.logc(ctx, slog.LevelDebug, "found and executing intrinsic for concrete type", "key", intrinsicKey)
+							// The receiver for the intrinsic call is a placeholder for the concrete type.
+							var newReceiver object.Object
+							concreteInstance := &object.Instance{
+								TypeName:   fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name),
+								BaseObject: object.BaseObject{ResolvedTypeInfo: binding.ConcreteType},
+							}
+							if binding.IsPointer {
+								newReceiver = &object.Pointer{Value: concreteInstance}
+							} else {
+								newReceiver = concreteInstance
+							}
+							// The first arg to an intrinsic is the receiver.
+							allArgs := append([]object.Object{newReceiver}, args...)
+							return intrinsicFn(ctx, allArgs...)
+						}
+
+						// No intrinsic, proceed with symbolic execution of the concrete method.
 						concreteFuncObj := e.getOrResolveFunction(ctx, concretePkg, methodInfo)
 						if concreteFunc, ok := concreteFuncObj.(*object.Function); ok {
-							// The receiver for the new call is a symbolic instance of the concrete type.
 							var newReceiver object.Object
 							concreteInstance := &object.Instance{
 								TypeName:   fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name),
@@ -3334,10 +3374,6 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 								newReceiver = concreteInstance
 							}
 							concreteFunc.Receiver = newReceiver
-
-							// Re-dispatch the call to the concrete method. It's crucial to use `applyFunction`
-							// here, not `applyFunctionImpl`, to ensure the entire call pipeline (including
-							// intrinsic checks) is executed for the new concrete method.
 							return e.applyFunction(ctx, concreteFunc, args, concretePkg.ScannedInfo, env, callPos)
 						}
 						return e.newError(ctx, callPos, "failed to resolve concrete function for method %s", fn.Name.Name)
@@ -3503,7 +3539,7 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		}
 
 		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
-		if err != nil {
+		if err != nil || scannedPkg == nil {
 			e.logc(ctx, slog.LevelDebug, "could not scan package for unresolved symbol (or denied by policy)", "package", fn.PkgPath, "symbol", fn.TypeName, "error", err)
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved symbol %s.%s", fn.PkgPath, fn.TypeName)}
 		}
@@ -3654,7 +3690,23 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				arg = args[argIndex]
 				argIndex++
 			} else {
-				arg = &object.SymbolicPlaceholder{Reason: "symbolic parameter for entry point"}
+				// Create placeholder with type info from the signature
+				staticFieldType := paramDef.Type
+				var staticTypeInfo *scan.TypeInfo
+				if staticFieldType != nil {
+					staticTypeInfo = e.resolver.ResolveType(ctx, staticFieldType)
+					if staticTypeInfo != nil {
+						e.logc(ctx, slog.LevelDebug, "creating symbolic param", "name", paramDef.Name, "fieldType", staticFieldType.String(), "typeInfo_name", staticTypeInfo.Name, "typeInfo_pkg", staticTypeInfo.PkgPath)
+					} else {
+						e.logc(ctx, slog.LevelWarn, "creating symbolic param with nil typeInfo", "name", paramDef.Name, "fieldType", staticFieldType.String())
+					}
+				} else {
+					e.logc(ctx, slog.LevelWarn, "creating symbolic param with nil fieldType", "name", paramDef.Name)
+				}
+				placeholder := &object.SymbolicPlaceholder{Reason: "symbolic parameter for entry point"}
+				placeholder.SetFieldType(staticFieldType)
+				placeholder.SetTypeInfo(staticTypeInfo)
+				arg = placeholder
 			}
 
 			if paramDef.Name != "" && paramDef.Name != "_" {
@@ -3677,9 +3729,14 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				}
 
 				// If the argument is NIL and we have static type info, preserve it on the object.
-				if nilObj, ok := arg.(*object.Nil); ok && staticFieldType != nil {
-					nilObj.SetFieldType(v.FieldType())
-					nilObj.SetTypeInfo(v.TypeInfo())
+				if _, ok := arg.(*object.Nil); ok {
+					if staticFieldType != nil {
+						staticTypeInfo := e.resolver.ResolveType(ctx, staticFieldType)
+						typedNil := &object.Nil{}
+						typedNil.SetFieldType(staticFieldType)
+						typedNil.SetTypeInfo(staticTypeInfo)
+						arg = typedNil // Replace untyped nil with typed nil
+					}
 				}
 				env.SetLocal(paramDef.Name, v)
 			}

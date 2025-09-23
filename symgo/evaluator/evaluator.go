@@ -1578,9 +1578,23 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if placeholder.Original != nil {
 			narrowedFt := placeholder.FieldType()
 			if narrowedFt == nil {
+				// No type info on the placeholder, can't make a decision.
+				// Fallback to default behavior.
 				return e.evalSelectorExprForObject(ctx, n, leftObj, env, pkg)
 			}
 
+			// Resolve the type that the placeholder was narrowed to.
+			narrowedTi := e.resolver.ResolveType(ctx, narrowedFt)
+
+			// If the narrowed-to type is an interface, we must NOT unwrap the original value.
+			// We need to proceed with the symbolic placeholder so that interface method
+			// resolution can work.
+			if narrowedTi != nil && narrowedTi.Kind == scan.InterfaceKind {
+				return e.evalSelectorExprForObject(ctx, n, placeholder, env, pkg)
+			}
+
+			// If we are here, it means the narrowed-to type is a CONCRETE type.
+			// We must unwrap to the original concrete object to access its fields/methods.
 			originalConcreteObj := e.forceEval(ctx, placeholder.Original, pkg)
 			if isError(originalConcreteObj) {
 				return originalConcreteObj
@@ -1849,28 +1863,45 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
 
 	case *object.Nil:
-		// Nil can have methods in Go (e.g., interface with nil value).
-		// Check if we have type information for this nil (it might be a typed nil interface)
-		placeholder := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("method %s on nil", n.Sel.Name),
+		// Nil can have methods in Go (e.g., a typed nil interface value).
+		typeInfo := left.TypeInfo()
+		if typeInfo == nil || typeInfo.Interface == nil {
+			// Untyped nil, or not an interface.
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("method %s on untyped nil", n.Sel.Name)}
 		}
 
-		// If the NIL has type information (e.g., it's a typed interface nil),
-		// try to find the method in the interface definition
-		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
-			for _, method := range left.TypeInfo().Interface.Methods {
-				if method.Name == n.Sel.Name {
-					placeholder.UnderlyingFunc = &scan.FunctionInfo{
-						Name:       method.Name,
-						Parameters: method.Parameters,
-						Results:    method.Results,
-					}
-					placeholder.Receiver = left
-					break
+		// This is a typed nil (an interface). Check for intrinsics on the interface type.
+		fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+		key := fmt.Sprintf("(*%s).%s", fullTypeName, n.Sel.Name) // Check pointer receiver first
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			fn := func(ctx context.Context, args ...object.Object) object.Object {
+				return intrinsicFn(ctx, append([]object.Object{left}, args...)...)
+			}
+			return &object.Intrinsic{Fn: fn}
+		}
+		key = fmt.Sprintf("(%s).%s", fullTypeName, n.Sel.Name) // Then check value receiver
+		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+			fn := func(ctx context.Context, args ...object.Object) object.Object {
+				return intrinsicFn(ctx, append([]object.Object{left}, args...)...)
+			}
+			return &object.Intrinsic{Fn: fn}
+		}
+
+		// Fallback to creating a symbolic placeholder if no intrinsic is found.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("method %s on nil interface %s", n.Sel.Name, fullTypeName),
+		}
+		for _, method := range typeInfo.Interface.Methods {
+			if method.Name == n.Sel.Name {
+				placeholder.UnderlyingFunc = &scan.FunctionInfo{
+					Name:       method.Name,
+					Parameters: method.Parameters,
+					Results:    method.Results,
 				}
+				placeholder.Receiver = left
+				break
 			}
 		}
-
 		return placeholder
 
 	case *object.UnresolvedType:

@@ -44,10 +44,15 @@ func main() {
 			return nil
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
+
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {

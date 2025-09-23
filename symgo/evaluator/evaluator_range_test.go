@@ -48,15 +48,13 @@ func main() {
 			return &object.Slice{} // Return a symbolic slice
 		})
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			// This is expected if the package hasn't been evaluated yet.
-			// Create a new environment for it.
-			pkgEnv = object.NewEnclosedEnvironment(nil)
+		for _, file := range pkg.AstFiles {
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		mainFuncObj, ok := pkgEnv.Get("main")

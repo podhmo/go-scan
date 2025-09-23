@@ -64,15 +64,13 @@ OuterLoop:
 
 		eval := New(s, s.Logger, tracer, nil)
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			// This is expected if the package hasn't been evaluated yet.
-			// Create a new environment for it.
-			pkgEnv = object.NewEnclosedEnvironment(nil)
+		for _, f := range pkg.AstFiles {
+			eval.Eval(ctx, f, nil, pkg)
 		}
 
-		for _, f := range pkg.AstFiles {
-			eval.Eval(ctx, f, pkgEnv, pkg)
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
 
 		mainFuncObj, ok := pkgEnv.Get("main")

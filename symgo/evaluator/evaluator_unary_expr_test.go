@@ -36,16 +36,21 @@ var result = %s
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {
-					if err := eval.Eval(ctx, file, pkgEnv, pkg); err != nil {
+					if err := eval.Eval(ctx, file, nil, pkg); err != nil {
 						if objErr, ok := err.(*object.Error); ok {
 							return objErr
 						}
 						return fmt.Errorf("unexpected error: %v", err)
 					}
 				}
+
+				loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+				if err != nil {
+					return fmt.Errorf("failed to get loaded package: %w", err)
+				}
+				pkgEnv := loadedPkg.Env
 
 				val, ok := pkgEnv.Get("result")
 				if !ok {
@@ -104,15 +109,20 @@ func main() {
 			return importPath == "example.com/me"
 		})
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			if res := eval.Eval(ctx, file, pkgEnv, pkg); res != nil && isError(res) {
+			if res := eval.Eval(ctx, file, nil, pkg); res != nil && isError(res) {
 				if err, ok := res.(*object.Error); ok {
 					return fmt.Errorf("setup eval failed: %w", err)
 				}
 				return fmt.Errorf("setup eval failed with unexpected type: %T", res)
 			}
 		}
+
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
 		// Find the main function from the populated environment.
 		mainObj, ok := pkgEnv.Get("main")
@@ -167,16 +177,21 @@ var result = %s
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {
-					if err := eval.Eval(ctx, file, pkgEnv, pkg); err != nil {
+					if err := eval.Eval(ctx, file, nil, pkg); err != nil {
 						if objErr, ok := err.(*object.Error); ok {
 							return objErr
 						}
 						return fmt.Errorf("unexpected error: %v", err)
 					}
 				}
+
+				loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+				if err != nil {
+					return fmt.Errorf("failed to get loaded package: %w", err)
+				}
+				pkgEnv := loadedPkg.Env
 
 				val, ok := pkgEnv.Get("result")
 				if !ok {

@@ -54,9 +54,8 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
 		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
@@ -136,9 +135,8 @@ func main() {
 			return &object.String{Value: "Alice"}
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
 		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
@@ -238,9 +236,8 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
 		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)

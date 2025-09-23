@@ -1034,7 +1034,15 @@ func main() {
 		if !ok {
 			return fmt.Errorf("expected return value, got %T", result)
 		}
-		if diff := cmp.Diff(&object.Integer{Value: 5}, retVal.Value); diff != "" {
+
+		// The last expression is an identifier, which now evaluates to a Variable.
+		// We need to get its value for the comparison.
+		finalValue := retVal.Value
+		if v, ok := finalValue.(*object.Variable); ok {
+			finalValue = v.Value
+		}
+
+		if diff := cmp.Diff(&object.Integer{Value: 5}, finalValue); diff != "" {
 			return fmt.Errorf("result mismatch (-want +got):\n%s", diff)
 		}
 		return nil

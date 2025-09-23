@@ -30,10 +30,15 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Evaluate the file to populate functions etc.
-		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], pkgEnv, pkg)
+		eval.Eval(ctx, pkg.AstFiles[pkg.Files[0]], nil, pkg)
+
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
 		// Get the main function from the package environment
 		mainFunc, ok := pkgEnv.Get("main")

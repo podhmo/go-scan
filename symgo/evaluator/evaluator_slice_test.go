@@ -71,10 +71,15 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
+
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
@@ -114,10 +119,15 @@ func main() {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
 
-		pkgEnv := object.NewEnclosedEnvironment(nil)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
+
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
@@ -173,10 +183,15 @@ func main() {
 		}
 		eval := New(s, s.Logger, nil, nil)
 
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
+
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {

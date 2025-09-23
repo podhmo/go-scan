@@ -43,10 +43,15 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		var inspectedType object.Object
-		pkgEnv := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, pkgEnv, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
+
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
 		intrinsic := &object.Intrinsic{
 			Fn: func(ctx context.Context, args ...object.Object) object.Object {

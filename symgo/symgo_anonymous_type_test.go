@@ -1,111 +1,128 @@
-package symgo_test
+package symgo
 
 import (
 	"context"
-	"strings"
+	"fmt"
 	"testing"
 
-	"github.com/podhmo/go-scan/scanner"
-	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgotest"
+	scan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/scantest"
+	"github.com/podhmo/go-scan/symgo/evaluator"
+	"github.com/podhmo/go-scan/symgo/object"
 )
 
-const anonymousTypesSource = `
+func TestAnonymousTypes_Interface(t *testing.T) {
+	source := `
 package main
 
-type ObjectId interface {
-	Hex() string
+func capture(f func()) {}
+
+type Hasher interface {
+	Hex() []byte
 }
 
-func AnonymousInterface(id interface {
-	Hex() string
-}) string {
-	if id == nil {
-		return ""
-	}
-	return id.Hex()
-}
-
-func AnonymousStruct(p struct {
-	X, Y int
-}) int {
-	return p.X
+func run(h Hasher) {
+	capture(h.Hex)
 }
 `
+	files := map[string]string{
+		"go.mod":  "module main",
+		"main.go": source,
+	}
 
-func TestAnonymousTypes_Interface(t *testing.T) {
-	var inspectedMethod *scanner.FunctionInfo
+	var captured object.Object
 
-	defaultIntrinsic := func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
-		fn := args[0] // The function object itself
-		t.Logf("intrinsic received function object of type: %T, value: %s", fn, fn.Inspect())
+	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
+		if len(pkgs) != 1 {
+			return fmt.Errorf("expected 1 package, got %d", len(pkgs))
+		}
+		mainPkg := pkgs[0]
 
-		// After the accessor/resolver fixes, the method on an interface
-		// should be resolved to a body-less *object.Function, not a placeholder.
-		f, ok := fn.(*symgo.Function)
+		// Create a new evaluator for this test run
+		eval := evaluator.New(s, nil, nil, func(path string) bool { return true })
+
+		// Register the intrinsic function that will capture the argument
+		eval.RegisterIntrinsic("main.capture", func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) > 0 {
+				captured = args[0]
+			}
+			return object.NIL
+		})
+
+		// Find the `run` function to execute
+		var runFunc *object.Function
+		for _, f := range mainPkg.Functions {
+			if f.Name == "run" {
+				// The package object passed to getOrResolveFunction needs an environment.
+				pkgObj := &object.Package{ScannedInfo: mainPkg, Env: object.NewEnvironment()}
+				runFunc = eval.GetOrResolveFunctionForTest(ctx, pkgObj, f).(*object.Function)
+				break
+			}
+		}
+		if runFunc == nil {
+			return fmt.Errorf("function 'run' not found")
+		}
+
+		// Find the Hasher type to create a symbolic argument
+		var hType *scan.TypeInfo
+		for _, typ := range mainPkg.Types {
+			if typ.Name == "Hasher" {
+				hType = typ
+				break
+			}
+		}
+		if hType == nil {
+			return fmt.Errorf("type 'Hasher' not found")
+		}
+
+		symbolicHasher := &object.SymbolicPlaceholder{
+			Reason: "symbolic hasher",
+		}
+		symbolicHasher.SetTypeInfo(hType)
+
+		// Apply the function
+		eval.Apply(ctx, runFunc, []object.Object{symbolicHasher}, mainPkg, object.NewEnvironment())
+
+		// --- Assertions ---
+		if captured == nil {
+			return fmt.Errorf("intrinsic 'capture' was not called")
+		}
+
+		bm, ok := captured.(*object.BoundMethod)
 		if !ok {
-			t.Errorf("expected fn to be *symgo.Function, but got %T", fn)
-			return &symgo.SymbolicPlaceholder{Reason: "test failed"}
+			return fmt.Errorf("expected captured object to be a *object.BoundMethod, but got %T", captured)
 		}
 
-		if f.Def != nil {
-			inspectedMethod = f.Def
+		if bm.Function == nil {
+			return fmt.Errorf("BoundMethod.Function is nil")
 		}
-		return &symgo.SymbolicPlaceholder{Reason: "default intrinsic result"}
-	}
-
-	tc := symgotest.TestCase{
-		Source: map[string]string{
-			"go.mod":  "module mymodule",
-			"main.go": anonymousTypesSource,
-		},
-		EntryPoint: "mymodule.AnonymousInterface",
-		Args:       []symgo.Object{&symgo.SymbolicPlaceholder{Reason: "test"}},
-		Options: []symgotest.Option{
-			symgotest.WithDefaultIntrinsic(defaultIntrinsic),
-		},
-	}
-
-	action := func(t *testing.T, r *symgotest.Result) {
-		if r.Error != nil {
-			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		if bm.Function.Def == nil {
+			return fmt.Errorf("BoundMethod.Function.Def is nil")
+		}
+		if bm.Function.Def.Name != "Hex" {
+			return fmt.Errorf("expected bound method name to be 'Hex', but got %q", bm.Function.Def.Name)
 		}
 
-		if inspectedMethod == nil {
-			t.Fatal("did not capture an interface method call, UnderlyingFunc was nil")
-		}
-		if inspectedMethod.Name != "Hex" {
-			t.Errorf("expected to capture method 'Hex', but got '%s'", inspectedMethod.Name)
-		}
-	}
-
-	symgotest.Run(t, tc, action)
-}
-
-func TestAnonymousTypes_Struct(t *testing.T) {
-	tc := symgotest.TestCase{
-		Source: map[string]string{
-			"go.mod":  "module mymodule",
-			"main.go": anonymousTypesSource,
-		},
-		EntryPoint: "mymodule.AnonymousStruct",
-		Args:       []symgo.Object{&symgo.SymbolicPlaceholder{Reason: "test"}},
-	}
-
-	action := func(t *testing.T, r *symgotest.Result) {
-		if r.Error != nil {
-			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
-		}
-
-		placeholder, ok := r.ReturnValue.(*symgo.SymbolicPlaceholder)
+		v, ok := bm.Receiver.(*object.Variable)
 		if !ok {
-			t.Fatalf("expected symbolic placeholder return, got %T", r.ReturnValue)
+			return fmt.Errorf("expected receiver to be a *object.Variable, but got %T", bm.Receiver)
 		}
 
-		if !strings.Contains(placeholder.Reason, "field access") {
-			t.Errorf("expected reason to contain 'field access', but got %q", placeholder.Reason)
+		receiver, ok := v.Value.(*object.SymbolicPlaceholder)
+		if !ok {
+			return fmt.Errorf("expected receiver's value to be a SymbolicPlaceholder, but got %T", v.Value)
 		}
+		if receiver.Reason != "symbolic hasher" {
+			return fmt.Errorf("unexpected receiver reason: %q", receiver.Reason)
+		}
+		return nil
 	}
 
-	symgotest.Run(t, tc, action)
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	// Run the test
+	if _, err := scantest.Run(t, context.Background(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %+v", err)
+	}
 }

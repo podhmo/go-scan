@@ -69,7 +69,11 @@ func (s *S) GetName() string {
 			if method == nil {
 				t.Fatal("method 'GetName' not found")
 			}
-			if diff := cmp.Diff("GetName", method.Name.Name); diff != "" {
+			boundMethod, ok := method.(*object.BoundMethod)
+			if !ok {
+				t.Fatalf("expected a *object.BoundMethod, but got %T", method)
+			}
+			if diff := cmp.Diff("GetName", boundMethod.Function.Name.Name); diff != "" {
 				t.Errorf("method name mismatch (-want +got):\n%s", diff)
 			}
 		})

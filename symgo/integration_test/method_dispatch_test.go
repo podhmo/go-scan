@@ -45,8 +45,16 @@ func main() {
 				if len(args) == 0 {
 					return nil
 				}
-				fn, ok := args[0].(*object.Function)
-				if !ok {
+				var fn *object.Function
+				switch f := args[0].(type) {
+				case *object.Function:
+					fn = f
+				case *object.BoundMethod:
+					fn = f.Function
+				default:
+					return nil
+				}
+				if fn == nil {
 					return nil
 				}
 

@@ -382,10 +382,10 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		// we just need to acknowledge it without producing a concrete value.
 		return &object.SymbolicPlaceholder{Reason: "map type expression"}
 	case *ast.ChanType:
-		if pkg == nil || pkg.Fset == nil {
+		if pkg == nil || e.scanner.Fset() == nil {
 			return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for chan type")
 		}
-		file := pkg.Fset.File(n.Pos())
+		file := e.scanner.Fset().File(n.Pos())
 		if file == nil {
 			return e.newError(ctx, n.Pos(), "could not find file for node position")
 		}
@@ -636,11 +636,11 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	// If type information is still missing (e.g., for implicit types in slice literals
 	// or if resolution from env failed), fall back to the scanner.
 	if resolvedType == nil {
-		if pkg == nil || pkg.Fset == nil {
+		if pkg == nil || e.scanner.Fset() == nil {
 			// Cannot proceed without package info, might be an implicit type we can't infer.
 			return &object.SymbolicPlaceholder{Reason: "unresolved composite literal with no type"}
 		}
-		file := pkg.Fset.File(node.Pos())
+		file := e.scanner.Fset().File(node.Pos())
 		if file == nil {
 			return e.newError(ctx, node.Pos(), "could not find file for node position")
 		}
@@ -1125,10 +1125,10 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	switch node.Tok {
 	case token.VAR:
-		if pkg == nil || pkg.Fset == nil {
+		if pkg == nil || e.scanner.Fset() == nil {
 			return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types")
 		}
-		file := pkg.Fset.File(node.Pos())
+		file := e.scanner.Fset().File(node.Pos())
 		if file == nil {
 			return e.newError(ctx, node.Pos(), "could not find file for node position")
 		}
@@ -1503,11 +1503,36 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.SymbolicPlaceholder, sel *ast.Ident, env *object.Environment, receiver object.Object, receiverPos token.Pos) object.Object {
 	typeInfo := val.TypeInfo()
 	if typeInfo == nil {
-		// If we are calling a method on a placeholder that has no type info (e.g., from an
-		// undefined identifier in an out-of-policy package), we can't resolve the method.
-		// Instead of erroring, we return another placeholder representing the result of the call.
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of call to method %q on typeless placeholder", sel.Name)}
 	}
+
+	if typeInfo.Kind == scan.InterfaceKind {
+		ifaceName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+		if binding, ok := e.interfaceBindings[ifaceName]; ok {
+			method, err := e.accessor.findMethodOnType(ctx, binding.ConcreteType, sel.Name, env, val, receiverPos)
+			if err == nil && method != nil {
+				return method
+			}
+		}
+
+		var methodDef *scan.FunctionInfo
+		for _, m := range typeInfo.Interface.Methods {
+			if m.Name == sel.Name {
+				methodDef = m
+				break
+			}
+		}
+		if methodDef == nil {
+			return e.newError(ctx, sel.Pos(), "method %s not found on interface %s", sel.Name, ifaceName)
+		}
+		abstractFn := &object.Function{
+			Name:       sel,
+			Def:        methodDef,
+			IsAbstract: true,
+		}
+		return &object.BoundMethod{Function: abstractFn, Receiver: val}
+	}
+
 	fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 	key := fmt.Sprintf("(*%s).%s", fullTypeName, sel.Name)
 	if intrinsicFn, ok := e.intrinsics.Get(key); ok {
@@ -1526,18 +1551,15 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 		return &object.Intrinsic{Fn: fn}
 	}
 
-	// Fallback to searching for the method on the instance's type.
 	if typeInfo := val.TypeInfo(); typeInfo != nil {
-		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
-			return method
-		}
-
-		// If it's not a method, check if it's a field on the struct (including embedded).
-		// This must be done *before* the unresolved check, as an unresolved type can still have field info.
 		if typeInfo.Struct != nil {
 			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
 				return e.resolver.ResolveSymbolicField(ctx, field, val)
 			}
+		}
+
+		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
+			return method
 		}
 
 		if typeInfo.Unresolved {
@@ -1545,11 +1567,9 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 				Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", sel.Name, typeInfo.Name),
 				Receiver: val,
 			}
-			// Try to find method in interface definition if available
 			if typeInfo.Interface != nil {
 				for _, method := range typeInfo.Interface.Methods {
 					if method.Name == sel.Name {
-						// Convert MethodInfo to a temporary FunctionInfo
 						placeholder.UnderlyingFunc = &scan.FunctionInfo{
 							Name:       method.Name,
 							Parameters: method.Parameters,
@@ -1563,8 +1583,6 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 		}
 	}
 
-	// For symbolic placeholders, don't error - return another placeholder
-	// This allows analysis to continue even when types are unresolved
 	return &object.SymbolicPlaceholder{
 		Reason:   "method or field " + sel.Name + " on symbolic type " + val.Inspect(),
 		Receiver: val,
@@ -1577,17 +1595,15 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return leftObj
 	}
 
-	// Unwrap return values early.
 	if ret, ok := leftObj.(*object.ReturnValue); ok {
 		leftObj = ret.Value
 	}
 
-	// Check for type-narrowed placeholders
 	if placeholder, ok := leftObj.(*object.SymbolicPlaceholder); ok {
 		if placeholder.Original != nil {
 			narrowedFt := placeholder.FieldType()
 			if narrowedFt == nil {
-				return e.evalSelectorExprForObject(ctx, n, leftObj, env, pkg)
+				return e.evalSelectorExprForObject(ctx, leftObj, n.Sel, env, n.X.Pos())
 			}
 
 			originalConcreteObj := e.forceEval(ctx, placeholder.Original, pkg)
@@ -1608,130 +1624,99 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			if concreteTi != nil {
-				// Check 1: Package path must match.
-				// Check 2: Pointer-ness must match.
-				// Check 3: Base type name must match.
 				if narrowedFt.FullImportPath == concreteTi.PkgPath && narrowedFt.IsPointer == concreteIsPointer {
 					baseNarrowedName := narrowedFt.TypeName
 					if narrowedFt.IsPointer && narrowedFt.Elem != nil {
 						baseNarrowedName = narrowedFt.Elem.TypeName
 					}
 					if baseNarrowedName == concreteTi.Name {
-						// Compatible. Unwrap and evaluate on the original concrete object.
-						return e.evalSelectorExprForObject(ctx, n, placeholder.Original, env, pkg)
+						return e.evalSelectorExprForObject(ctx, placeholder.Original, n.Sel, env, n.X.Pos())
 					}
 				}
 			}
-			// If not compatible, it's an impossible path. Prune it by returning a placeholder.
 			return &object.SymbolicPlaceholder{Reason: "pruned path in type switch/assertion"}
 		}
 	}
 
-	// Fallback to original logic for non-narrowed placeholders or other types.
-	return e.evalSelectorExprForObject(ctx, n, leftObj, env, pkg)
+	return e.evalSelectorExprForObject(ctx, leftObj, n.Sel, env, n.X.Pos())
 }
 
-func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.SelectorExpr, left object.Object, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, left object.Object, sel *ast.Ident, env *object.Environment, receiverPos token.Pos) object.Object {
 	if isError(left) {
 		return left
 	}
 
-	// DO NOT force-evaluate `left` here. We need to handle variables
-	// without unwrapping them, to preserve them as receivers for method calls.
-
 	switch val := left.(type) {
 	case *object.Variable:
-		// If we are selecting from a variable, we treat the variable itself as the receiver.
-		// The selection logic operates on the variable's static type, not its current value.
-		// This is crucial for handling method calls on nil interface variables.
-		placeholder := &object.SymbolicPlaceholder{
-			Reason:   "method call on variable " + val.Name,
-			Receiver: val,
-		}
-		placeholder.SetTypeInfo(val.TypeInfo())
-		placeholder.SetFieldType(val.FieldType())
-		return e.evalSymbolicSelection(ctx, placeholder, n.Sel, env, val, n.X.Pos())
+		typeInfo := val.TypeInfo()
+		if typeInfo != nil && typeInfo.Kind == scan.InterfaceKind {
+			ifaceName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+			if binding, ok := e.interfaceBindings[ifaceName]; ok {
+				method, err := e.accessor.findMethodOnType(ctx, binding.ConcreteType, sel.Name, env, val, receiverPos)
+				if err == nil && method != nil {
+					return method
+				}
+				return e.newError(ctx, sel.Pos(), "method %s not found on bound concrete type %s for interface %s", sel.Name, binding.ConcreteType.Name, ifaceName)
+			}
 
-	case *object.SymbolicPlaceholder:
-		// NEW: Check for interface binding before falling back to symbolic selection.
-		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			// HACK: Also check for UnknownKind, as the resolver sometimes fails to correctly identify interface types.
-			if typeInfo.Kind == scan.InterfaceKind || typeInfo.Kind == scan.UnknownKind {
-				ifaceName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
-				if binding, ok := e.interfaceBindings[ifaceName]; ok {
-					e.logc(ctx, slog.LevelDebug, "found interface binding, redirecting method call", "interface", ifaceName, "concrete", fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name))
-
-					// Create a new object representing the concrete type.
-					instance := &object.Instance{
-						TypeName:   fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name),
-						BaseObject: object.BaseObject{ResolvedTypeInfo: binding.ConcreteType},
-					}
-
-					var concreteObj object.Object
-					if binding.IsPointer {
-						concreteObj = &object.Pointer{Value: instance}
-					} else {
-						concreteObj = instance
-					}
-
-					// Recursively call this function with the new concrete object.
-					// This will dispatch to the correct method/intrinsic on the concrete type.
-					return e.evalSelectorExprForObject(ctx, n, concreteObj, env, pkg)
+			var methodDef *scan.FunctionInfo
+			for _, m := range typeInfo.Interface.Methods {
+				if m.Name == sel.Name {
+					methodDef = m
+					break
 				}
 			}
+			if methodDef == nil {
+				return e.newError(ctx, sel.Pos(), "method %s not found on interface %s", sel.Name, ifaceName)
+			}
+
+			abstractFn := &object.Function{
+				Name:       sel,
+				Def:        methodDef,
+				IsAbstract: true,
+			}
+			return &object.BoundMethod{Function: abstractFn, Receiver: val}
 		}
-		// No binding found, or not an interface. Proceed with normal symbolic selection.
-		return e.evalSymbolicSelection(ctx, val, n.Sel, env, left, n.X.Pos())
+
+		concreteValue := e.forceEval(ctx, val, nil)
+		return e.evalSelectorExprForObject(ctx, concreteValue, sel, env, receiverPos)
 
 	case *object.Package:
-		e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: left is a package", "package", val.Path, "selector", n.Sel.Name)
+		e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: left is a package", "package", val.Path, "selector", sel.Name)
 
-		// If the package object is just a shell, try to fully load it now.
 		if val.ScannedInfo == nil {
 			e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: package not scanned, attempting to load", "package", val.Path)
 			loadedPkg, err := e.getOrLoadPackage(ctx, val.Path)
 			if err != nil {
-				// if loading fails, it's a real error
-				return e.newError(ctx, n.Pos(), "failed to load package %s: %v", val.Path, err)
+				return e.newError(ctx, sel.Pos(), "failed to load package %s: %v", val.Path, err)
 			}
-			// Replace the shell package object with the fully loaded one for the rest of the logic.
 			val = loadedPkg
 		}
 
-		// If ScannedInfo is still nil after trying to load, it means it's out of policy.
 		if val.ScannedInfo == nil {
-			e.logc(ctx, slog.LevelDebug, "package not scanned (out of policy), creating placeholder for symbol", "package", val.Path, "symbol", n.Sel.Name)
-			// When a symbol is from an unscanned package, we don't know if it's a type or a function.
-			// We now correctly represent it as a generic UnresolvedType.
-			// The consumer of this object (e.g., `new()` or a function call) will determine how to interpret it.
+			e.logc(ctx, slog.LevelDebug, "package not scanned (out of policy), creating placeholder for symbol", "package", val.Path, "symbol", sel.Name)
 			unresolvedType := &object.UnresolvedType{
 				PkgPath:  val.Path,
-				TypeName: n.Sel.Name,
+				TypeName: sel.Name,
 			}
-			val.Env.Set(n.Sel.Name, unresolvedType)
+			val.Env.Set(sel.Name, unresolvedType)
 			return unresolvedType
 		}
 
-		// When we encounter a package selector, we must ensure its environment
-		// is populated with all its top-level declarations. This is crucial
-		// for closures to capture their environment correctly.
 		e.ensurePackageEnvPopulated(ctx, val)
 
-		key := val.Path + "." + n.Sel.Name
+		key := val.Path + "." + sel.Name
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			return &object.Intrinsic{Fn: intrinsicFn}
 		}
 
-		// If the symbol is already in the package's environment, return it.
-		if symbol, ok := val.Env.Get(n.Sel.Name); ok {
-			// If the cached symbol is not callable, but a function with the same name exists,
-			// it's a sign of cache pollution. We prioritize the function.
+		if symbol, ok := val.Env.Get(sel.Name); ok {
 			if !isCallable(symbol) {
 				for _, f := range val.ScannedInfo.Functions {
-					if f.Name == n.Sel.Name {
-						e.logc(ctx, slog.LevelWarn, "correcting polluted cache: found function for non-callable symbol", "package", val.Path, "symbol", n.Sel.Name)
+					if f.Name == sel.Name {
+						e.logc(ctx, slog.LevelWarn, "correcting polluted cache: found function for non-callable symbol", "package", val.Path, "symbol", sel.Name)
 						fnObject := e.getOrResolveFunction(ctx, val, f)
-						val.Env.Set(n.Sel.Name, fnObject) // Correct the cache
+						val.Env.Set(sel.Name, fnObject)
 						return fnObject
 					}
 				}
@@ -1739,58 +1724,49 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 			return symbol
 		}
 
-		// Try to find the symbol as a function.
 		for _, f := range val.ScannedInfo.Functions {
-			if f.Name == n.Sel.Name {
+			if f.Name == sel.Name {
 				if !ast.IsExported(f.Name) {
 					continue
 				}
-
-				// Delegate function object creation to the resolver.
 				fnObject := e.getOrResolveFunction(ctx, val, f)
-				val.Env.Set(n.Sel.Name, fnObject)
+				val.Env.Set(sel.Name, fnObject)
 				return fnObject
 			}
 		}
 
-		// If it's not a function, check for constants.
 		for _, c := range val.ScannedInfo.Constants {
-			if c.Name == n.Sel.Name {
+			if c.Name == sel.Name {
 				if !c.IsExported {
-					continue // Cannot access unexported constants.
+					continue
 				}
-
 				var constObj object.Object
 				switch c.ConstVal.Kind() {
 				case constant.String:
 					constObj = &object.String{Value: constant.StringVal(c.ConstVal)}
 				case constant.Int:
-					val, ok := constant.Int64Val(c.ConstVal)
+					v, ok := constant.Int64Val(c.ConstVal)
 					if !ok {
-						return e.newError(ctx, n.Pos(), "could not convert constant %s to int64", c.Name)
+						return e.newError(ctx, sel.Pos(), "could not convert constant %s to int64", c.Name)
 					}
-					constObj = &object.Integer{Value: val}
+					constObj = &object.Integer{Value: v}
 				case constant.Bool:
 					if constant.BoolVal(c.ConstVal) {
 						constObj = object.TRUE
 					} else {
 						constObj = object.FALSE
 					}
-				default:
-					// Other constant types (float, complex, etc.) are not yet supported.
-					// Fall through to create a placeholder.
 				}
 
 				if constObj != nil {
-					val.Env.Set(n.Sel.Name, constObj) // Cache the resolved constant.
+					val.Env.Set(sel.Name, constObj)
 					return constObj
 				}
 			}
 		}
 
-		// Check for types.
 		for _, t := range val.ScannedInfo.Types {
-			if t.Name == n.Sel.Name {
+			if t.Name == sel.Name {
 				if !ast.IsExported(t.Name) {
 					continue
 				}
@@ -1799,14 +1775,13 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 					ResolvedType: t,
 				}
 				typeObj.SetTypeInfo(t)
-				val.Env.Set(n.Sel.Name, typeObj) // Cache it
+				val.Env.Set(sel.Name, typeObj)
 				return typeObj
 			}
 		}
 
-		// Check for variables.
 		for _, v := range val.ScannedInfo.Variables {
-			if v.Name == n.Sel.Name {
+			if v.Name == sel.Name {
 				if !ast.IsExported(v.Name) {
 					continue
 				}
@@ -1816,24 +1791,20 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 				}
 				placeholder.SetFieldType(v.Type)
 				placeholder.SetTypeInfo(resolvedType)
-
-				val.Env.Set(n.Sel.Name, placeholder)
+				val.Env.Set(sel.Name, placeholder)
 				return placeholder
 			}
 		}
 
-		// If the symbol is not found, assume it's a function we can't see
-		// due to the scan policy. Create an UnresolvedFunction object.
-		// This allows `applyFunction` to handle it gracefully.
 		unresolvedFn := &object.UnresolvedFunction{
 			PkgPath:  val.Path,
-			FuncName: n.Sel.Name,
+			FuncName: sel.Name,
 		}
-		val.Env.Set(n.Sel.Name, unresolvedFn)
+		val.Env.Set(sel.Name, unresolvedFn)
 		return unresolvedFn
 
 	case *object.Instance:
-		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
+		key := fmt.Sprintf("(%s).%s", val.TypeName, sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
 			fn := func(ctx context.Context, args ...object.Object) object.Object {
@@ -1841,7 +1812,7 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 			}
 			return &object.Intrinsic{Fn: fn}
 		}
-		key = fmt.Sprintf("(*%s).%s", val.TypeName, n.Sel.Name)
+		key = fmt.Sprintf("(*%s).%s", val.TypeName, sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
 			fn := func(ctx context.Context, args ...object.Object) object.Object {
@@ -1850,37 +1821,41 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 			return &object.Intrinsic{Fn: fn}
 		}
 
-		// Fallback to searching for the method on the instance's type.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, left, n.X.Pos()); err == nil && method != nil {
+			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, left, receiverPos); err == nil && method != nil {
 				return method
 			}
-			// If not a method, check if it's a field on the struct (including embedded).
 			if typeInfo.Struct != nil {
-				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
 					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
 			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
+		return e.newError(ctx, sel.Pos(), "undefined method or field: %s on %s", sel.Name, val.TypeName)
 	case *object.Pointer:
-		// When we have a selector on a pointer, we look for the method on the
-		// type of the object the pointer points to.
 		pointee := val.Value
+
+		if variable, ok := pointee.(*object.Variable); ok {
+			placeholder := &object.SymbolicPlaceholder{
+				Reason:   "selection on pointer to variable " + variable.Name,
+				Receiver: val,
+			}
+			placeholder.SetTypeInfo(variable.TypeInfo())
+			placeholder.SetFieldType(variable.FieldType())
+			return e.evalSymbolicSelection(ctx, placeholder, sel, env, val, receiverPos)
+		}
+
 		if instance, ok := pointee.(*object.Instance); ok {
-			// First, check for an intrinsic on the concrete type. This is crucial for interface binding redirection.
-			// Check for pointer receiver intrinsic first.
-			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
+			key := fmt.Sprintf("(*%s).%s", instance.TypeName, sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				self := val // The receiver for the intrinsic is the pointer itself.
+				self := val
 				fn := func(ctx context.Context, args ...object.Object) object.Object {
 					return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
 				}
 				return &object.Intrinsic{Fn: fn}
 			}
-			// Then check for value receiver intrinsic.
-			key = fmt.Sprintf("(%s).%s", instance.TypeName, n.Sel.Name)
+			key = fmt.Sprintf("(%s).%s", instance.TypeName, sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 				self := val
 				fn := func(ctx context.Context, args ...object.Object) object.Object {
@@ -1890,43 +1865,31 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 			}
 
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
-				// The receiver for the method call is the pointer itself, not the instance.
-				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, left, n.X.Pos()); err == nil && method != nil {
+				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, left, receiverPos); err == nil && method != nil {
 					return method
 				}
-				// If not a method, check for a field on the underlying struct.
 				if typeInfo.Struct != nil {
-					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
 						return e.resolver.ResolveSymbolicField(ctx, field, instance)
 					}
 				}
 			}
 		}
 
-		// Handle pointers to symbolic placeholders, which can occur with pointers to unresolved types.
 		if sp, ok := pointee.(*object.SymbolicPlaceholder); ok {
-			// The logic for selecting from a symbolic placeholder is already well-defined.
-			// We can simulate calling that logic with the pointee. The receiver for any
-			// method call is the pointer `val`, not the placeholder `sp`.
-			// This is effectively doing `(*p).N` where `*p` is a symbolic value.
-			return e.evalSymbolicSelection(ctx, sp, n.Sel, env, val, n.X.Pos())
+			return e.evalSymbolicSelection(ctx, sp, sel, env, val, receiverPos)
 		}
 
-		// If the pointee is not an instance or nothing is found, fall through to the error.
-		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
+		return e.newError(ctx, sel.Pos(), "undefined method or field: %s for pointer type %s", sel.Name, pointee.Type())
 
 	case *object.Nil:
-		// Nil can have methods in Go (e.g., interface with nil value).
-		// Check if we have type information for this nil (it might be a typed nil interface)
 		placeholder := &object.SymbolicPlaceholder{
-			Reason: fmt.Sprintf("method %s on nil", n.Sel.Name),
+			Reason: fmt.Sprintf("method %s on nil", sel.Name),
 		}
 
-		// If the NIL has type information (e.g., it's a typed interface nil),
-		// try to find the method in the interface definition
 		if left.TypeInfo() != nil && left.TypeInfo().Interface != nil {
 			for _, method := range left.TypeInfo().Interface.Methods {
-				if method.Name == n.Sel.Name {
+				if method.Name == sel.Name {
 					placeholder.UnderlyingFunc = &scan.FunctionInfo{
 						Name:       method.Name,
 						Parameters: method.Parameters,
@@ -1937,17 +1900,14 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 				}
 			}
 		}
-
 		return placeholder
 
 	case *object.UnresolvedType:
-		// If we are selecting from an unresolved type, we can't know what the field or method is.
-		// We return a placeholder to allow analysis to continue.
 		return &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("selection from unresolved type %s.%s", val.PkgPath, val.TypeName),
 		}
 	default:
-		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
+		return e.newError(ctx, sel.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
 }
 
@@ -2091,7 +2051,7 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 	}
 
 	if n.Body != nil {
-		file := pkg.Fset.File(n.Pos())
+		file := e.scanner.Fset().File(n.Pos())
 		if file == nil {
 			return e.newError(ctx, n.Pos(), "could not find file for node position")
 		}
@@ -2187,10 +2147,10 @@ func (e *Evaluator) evalTypeAssertExpr(ctx context.Context, n *ast.TypeAssertExp
 	}
 
 	// Next, resolve the asserted type (T).
-	if pkg == nil || pkg.Fset == nil {
+	if pkg == nil || e.scanner.Fset() == nil {
 		return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
 	}
-	file := pkg.Fset.File(n.Pos())
+	file := e.scanner.Fset().File(n.Pos())
 	if file == nil {
 		return e.newError(ctx, n.Pos(), "could not find file for node position")
 	}
@@ -2432,6 +2392,16 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 		}
 	}
 
+	if result != nil {
+		// The final value of a block should be the concrete value, not the variable holding it.
+		// But don't unwrap control flow objects.
+		switch result.(type) {
+		case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue, *object.Fallthrough:
+			return result
+		default:
+			return e.forceEval(ctx, result, pkg)
+		}
+	}
 	return result
 }
 
@@ -2476,6 +2446,10 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 			}
 
 			originalObj := e.Eval(ctx, typeAssert.X, env, pkg)
+			if isError(originalObj) {
+				return originalObj
+			}
+			originalObj = e.forceEval(ctx, originalObj, pkg)
 			if isError(originalObj) {
 				return originalObj
 			}
@@ -2905,19 +2879,16 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", inspectValuer{val})
-		if _, ok := val.(*object.Variable); ok {
-			e.logger.Debug("evalIdent: identifier is a variable, evaluating it", "name", n.Name)
-			// When an identifier is accessed, we must force its full evaluation.
-			evaluatedValue := e.forceEval(ctx, val, pkg)
-			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", evaluatedValue.Type(), "value", inspectValuer{evaluatedValue})
-			return evaluatedValue
-		}
+		// If the identifier refers to a variable, return the variable object itself.
+		// Do not force evaluation here. The caller (e.g., evalSelectorExpr)
+		// is responsible for deciding how to handle the variable. This is crucial
+		// for preserving the variable as the receiver in method calls.
 		return val
 	}
 
 	// If the identifier is not in the environment, it might be a package name.
-	if pkg != nil && pkg.Fset != nil {
-		file := pkg.Fset.File(n.Pos())
+	if pkg != nil && e.scanner.Fset() != nil {
+		file := e.scanner.Fset().File(n.Pos())
 		if file != nil {
 			if astFile, ok := pkg.AstFiles[file.Name()]; ok {
 				for _, imp := range astFile.Imports {
@@ -3151,6 +3122,7 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		e.defaultIntrinsic(ctx, append([]object.Object{function}, args...)...)
 	}
 
+	e.logc(ctx, slog.LevelInfo, "about to apply function", "func_type", function.Type(), "func_inspect", function.Inspect())
 	result := e.applyFunction(ctx, function, args, pkg, env, n.Pos())
 	if isError(result) {
 		return result
@@ -3166,7 +3138,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 		return // Nothing to scan.
 	}
 
-	e.logger.DebugContext(ctx, "scanning function literal to find usages", "pos", fn.Package.Fset.Position(fn.Body.Pos()))
+	e.logger.DebugContext(ctx, "scanning function literal to find usages", "pos", e.scanner.Fset().Position(fn.Body.Pos()))
 
 	// Create a new environment for the function literal's execution.
 	// It's enclosed by the environment where the literal was defined.
@@ -3177,7 +3149,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 		var importLookup map[string]string
 		// A FuncLit doesn't have a specific *ast.File, but its body has a position.
 		// We can use this position to find the containing file and its imports.
-		file := fn.Package.Fset.File(fn.Body.Pos())
+		file := e.scanner.Fset().File(fn.Body.Pos())
 		if file != nil {
 			if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
 				importLookup = e.scanner.BuildImportLookup(astFile)
@@ -3370,6 +3342,20 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 	}
 
 	switch fn := fn.(type) {
+	case *object.BoundMethod:
+		// When applying a bound method, we call the underlying function
+		// but ensure the receiver from the binding is used for this call.
+		underlyingFunc, ok := fn.Function.(*object.Function)
+		if !ok {
+			// The "function" part of a bound method could also be a symbolic placeholder
+			// if we couldn't resolve the method. In that case, we apply the placeholder.
+			return e.applyFunction(ctx, fn.Function, args, pkg, env, callPos)
+		}
+
+		// We create a copy of the function to avoid mutating the cached version.
+		newFn := underlyingFunc.WithReceiver(fn.Receiver, token.NoPos) // pos is not critical here
+		return e.applyFunction(ctx, newFn, args, pkg, env, callPos)
+
 	case *object.InstantiatedFunction:
 		// This is the new logic for handling calls to generic functions.
 		extendedEnv := object.NewEnclosedEnvironment(fn.Function.Env)
@@ -3407,79 +3393,45 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		return &object.ReturnValue{Value: evaluated}
 
 	case *object.Function:
+		if fn.IsAbstract {
+			// This is a call to an abstract interface method.
+			// Instead of executing, we create a symbolic placeholder for the call
+			// and pass it to the default intrinsic for tracking.
+			e.trackCalledInterfaceMethod(ctx, fn.Receiver, fn)
+			placeholder := &object.SymbolicPlaceholder{
+				Reason:   fmt.Sprintf("abstract method call to %s", fn.Name),
+				Receiver: fn.Receiver,
+			}
+			if e.defaultIntrinsic != nil {
+				// The default intrinsic is responsible for tracking this symbolic call.
+				// It doesn't "return" a value in the traditional sense, but we return its result
+				// in case it wants to substitute a different object.
+				return e.defaultIntrinsic(ctx, append([]object.Object{placeholder}, args...)...)
+			}
+			// If no default intrinsic, the result is just the placeholder itself.
+			return placeholder
+		}
+
 		// If the function has no body, it's a declaration (e.g., in an interface, or an external function).
 		if fn.Body == nil {
 			// Check for interface binding.
 			if fn.Receiver != nil {
 				receiverTypeInfo := fn.Receiver.TypeInfo()
-				if receiverTypeInfo != nil && receiverTypeInfo.Kind == scan.InterfaceKind {
-					e.logc(ctx, slog.LevelDebug, "receiver is an interface", "pkg", receiverTypeInfo.PkgPath, "name", receiverTypeInfo.Name)
-					ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
-					e.logc(ctx, slog.LevelDebug, "checking for interface binding", "ifaceName", ifaceName)
-					if binding, ok := e.interfaceBindings[ifaceName]; ok {
-						e.logc(ctx, slog.LevelDebug, "found interface binding, dispatching call", "interface", ifaceName, "concrete", binding.ConcreteType.Name)
-
-						// Find the corresponding method on the concrete type.
-						methodInfo := e.accessor.findMethodInfoOnType(ctx, binding.ConcreteType, fn.Name.Name)
-						if methodInfo == nil {
-						e.logc(ctx, slog.LevelWarn, "method not found on concrete type for interface binding", "method", fn.Name.Name, "concrete_type", binding.ConcreteType.Name)
-							return e.newError(ctx, callPos, "method %s not found on concrete type %s for interface %s", fn.Name.Name, binding.ConcreteType.Name, ifaceName)
-						}
-					e.logc(ctx, slog.LevelDebug, "found concrete method", "method", methodInfo.Name)
-
-						// Get the package object for the concrete method.
-						concretePkg, err := e.getOrLoadPackage(ctx, binding.ConcreteType.PkgPath)
-						if err != nil {
-							return e.newError(ctx, callPos, "could not load package for concrete type %s: %v", binding.ConcreteType.PkgPath, err)
-						}
-
-						// Check for an intrinsic on the concrete type before trying to execute it.
-						var intrinsicKey string
-						if binding.IsPointer {
-							intrinsicKey = fmt.Sprintf("(*%s.%s).%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name, methodInfo.Name)
-						} else {
-							intrinsicKey = fmt.Sprintf("(%s.%s).%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name, methodInfo.Name)
-						}
-						e.logc(ctx, slog.LevelDebug, "checking for intrinsic on concrete type", "key", intrinsicKey)
-						if intrinsicFn, ok := e.intrinsics.Get(intrinsicKey); ok {
-							e.logc(ctx, slog.LevelDebug, "found and executing intrinsic for concrete type", "key", intrinsicKey)
-							// The receiver for the intrinsic call is a placeholder for the concrete type.
-							var newReceiver object.Object
-							concreteInstance := &object.Instance{
-								TypeName:   fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name),
-								BaseObject: object.BaseObject{ResolvedTypeInfo: binding.ConcreteType},
-							}
-							if binding.IsPointer {
-								newReceiver = &object.Pointer{Value: concreteInstance}
-							} else {
-								newReceiver = concreteInstance
-							}
-							// The first arg to an intrinsic is the receiver.
-							allArgs := append([]object.Object{newReceiver}, args...)
-							return intrinsicFn(ctx, allArgs...)
-						}
-
-						// No intrinsic, proceed with symbolic execution of the concrete method.
-						concreteFuncObj := e.getOrResolveFunction(ctx, concretePkg, methodInfo)
-						if concreteFunc, ok := concreteFuncObj.(*object.Function); ok {
-							var newReceiver object.Object
-							concreteInstance := &object.Instance{
-								TypeName:   fmt.Sprintf("%s.%s", binding.ConcreteType.PkgPath, binding.ConcreteType.Name),
-								BaseObject: object.BaseObject{ResolvedTypeInfo: binding.ConcreteType},
-							}
-							if binding.IsPointer {
-								newReceiver = &object.Pointer{Value: concreteInstance}
-							} else {
-								newReceiver = concreteInstance
-							}
-							concreteFunc.Receiver = newReceiver
-							return e.applyFunction(ctx, concreteFunc, args, concretePkg.ScannedInfo, env, callPos)
-						}
-						return e.newError(ctx, callPos, "failed to resolve concrete function for method %s", fn.Name.Name)
+				if receiverTypeInfo != nil {
+					e.logc(ctx, slog.LevelDebug, "applyFunctionImpl: nil body", "receiver_type", receiverTypeInfo.Name, "receiver_kind", receiverTypeInfo.Kind)
+					if receiverTypeInfo.Kind == scan.InterfaceKind {
+						e.trackCalledInterfaceMethod(ctx, fn.Receiver, fn)
+						e.logc(ctx, slog.LevelDebug, "applyFunctionImpl: tracked interface call", "receiver", fn.Receiver.Inspect(), "func", fn.Name.Name)
+						return e.createSymbolicResultForFunc(ctx, fn)
 					}
+				} else {
+					e.logc(ctx, slog.LevelDebug, "applyFunctionImpl: nil body, but receiver has no type info")
 				}
+			} else {
+				e.logc(ctx, slog.LevelDebug, "applyFunctionImpl: nil body and nil receiver")
 			}
-			// No binding found, treat as an external call and create a symbolic result.
+
+			// Fallback for function pointers or other callable objects without a body
 			return e.createSymbolicResultForFunc(ctx, fn)
 		}
 
@@ -3554,6 +3506,16 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 			// If it has an AST declaration, it's a real function from source.
 			if fn.UnderlyingFunc.AstDecl != nil {
 				return e.createSymbolicResultForFuncInfo(ctx, fn.UnderlyingFunc, fn.Package, "result of external call to %s", fn.UnderlyingFunc.Name)
+			}
+
+			// It's a symbolic call on an interface method. Record it for final analysis.
+			if fn.Receiver != nil {
+				if receiverType := fn.Receiver.TypeInfo(); receiverType != nil && receiverType.Kind == scan.InterfaceKind {
+					methodName := fn.UnderlyingFunc.Name
+					key := fmt.Sprintf("%s.%s.%s", receiverType.PkgPath, receiverType.Name, methodName)
+					e.calledInterfaceMethods[key] = append(e.calledInterfaceMethods[key], fn.Receiver)
+					e.logc(ctx, slog.LevelDebug, "recorded interface method call", "key", key)
+				}
 			}
 
 			// Otherwise, it's a constructed FunctionInfo for an interface method.
@@ -3936,7 +3898,7 @@ func (e *Evaluator) createSymbolicResultForFuncInfo(ctx context.Context, funcInf
 	}
 
 	var importLookup map[string]string
-	if file := pkgInfo.Fset.File(funcInfo.AstDecl.Pos()); file != nil {
+	if file := e.scanner.Fset().File(funcInfo.AstDecl.Pos()); file != nil {
 		if astFile, ok := pkgInfo.AstFiles[file.Name()]; ok {
 			importLookup = e.scanner.BuildImportLookup(astFile)
 		}
@@ -4018,6 +3980,23 @@ func (e *Evaluator) createSymbolicResultForFunc(ctx context.Context, fn *object.
 		return &object.SymbolicPlaceholder{Reason: "result of external call with incomplete info"}
 	}
 	return e.createSymbolicResultForFuncInfo(ctx, fn.Def, fn.Package, "result of out-of-policy call to %s", fn.Name.Name)
+}
+
+func (e *Evaluator) trackCalledInterfaceMethod(ctx context.Context, receiver object.Object, fn *object.Function) {
+	receiverType := receiver.TypeInfo()
+	if receiverType == nil || receiverType.Kind != scan.InterfaceKind {
+		e.logc(ctx, slog.LevelWarn, "trackCalledInterfaceMethod: receiver is not a valid interface", "receiver_type", receiver.Type(), "receiver_info", receiverType)
+		return
+	}
+	if fn.Name == nil {
+		e.logc(ctx, slog.LevelWarn, "trackCalledInterfaceMethod: function has no name")
+		return
+	}
+	methodName := fn.Name.Name
+	// The key format must match the fragile logic in Finalize.
+	key := fmt.Sprintf("%s.%s.%s", receiverType.PkgPath, receiverType.Name, methodName)
+	e.calledInterfaceMethods[key] = append(e.calledInterfaceMethods[key], receiver)
+	e.logc(ctx, slog.LevelDebug, "trackCalledInterfaceMethod: recorded interface method call", "key", key)
 }
 
 // Files returns the file scopes that have been loaded into the evaluator.

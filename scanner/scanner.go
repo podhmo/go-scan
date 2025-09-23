@@ -782,6 +782,7 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 			parsedFuncDetails := s.parseFuncType(ctx, funcType, currentTypeParams, info, importLookup)
 			methodInfo.Parameters = parsedFuncDetails.Parameters
 			methodInfo.Results = parsedFuncDetails.Results
+			methodInfo.IsVariadic = parsedFuncDetails.IsVariadic
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
 		} else { // This is an embedded type
 			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)

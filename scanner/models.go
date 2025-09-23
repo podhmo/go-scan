@@ -227,6 +227,7 @@ type MethodInfo struct {
 	Name       string
 	Parameters []*FieldInfo
 	Results    []*FieldInfo
+	IsVariadic bool `json:"isVariadic,omitempty"`
 	// We might need position or AST node info later if generating code that needs to refer back to the source.
 }
 
@@ -517,6 +518,7 @@ type VariableInfo struct {
 
 // FunctionInfo represents a single top-level function or method declaration.
 type FunctionInfo struct {
+	Owner      *TypeInfo        `json:"-"` // The type this method belongs to.
 	Name       string           `json:"name"`
 	FilePath   string           `json:"filePath"`
 	Doc        string           `json:"doc,omitempty"`

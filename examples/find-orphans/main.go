@@ -471,14 +471,40 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	}
 
 	usageMap := make(map[string]bool)
+	var markUsage func(object.Object)
+
+	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
+		// The intrinsic is triggered for every function call.
+		// We need to mark the function being called (args[0]) as used.
+		// We also need to check if any of the arguments themselves are function
+		// values being passed along, and mark them as used too.
+		for _, arg := range args {
+			markUsage(arg)
+		}
+		return nil
+	})
 
 	// markUsage is a helper function to mark a function/method as used.
 	// It's designed to be called on any object, and it will figure out if it's a function.
-	markUsage := func(obj object.Object) {
+	markUsage = func(obj object.Object) {
 		var fullName string
 		switch fn := obj.(type) {
+		case *object.BoundMethod:
+			markUsage(fn.Function) // Recurse with the unwrapped function
+			return
 		case *object.Function:
 			if fn.Package != nil && fn.Name != nil {
+				if fn.Decl == nil {
+					// This can happen for interface methods.
+					if fn.Receiver != nil {
+						if recvType := fn.Receiver.TypeInfo(); recvType != nil {
+							fullName = fmt.Sprintf("(%s.%s).%s", recvType.PkgPath, recvType.Name, fn.Name.Name)
+							usageMap[fullName] = true
+						}
+					}
+					return
+				}
+
 				if _, isScannable := a.scanPackages[fn.Package.ImportPath]; !isScannable {
 					return // Don't track usage for functions outside the scan scope.
 				}
@@ -534,17 +560,6 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 			}
 		}
 	}
-
-	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
-		// The intrinsic is triggered for every function call.
-		// We need to mark the function being called (args[0]) as used.
-		// We also need to check if any of the arguments themselves are function
-		// values being passed along, and mark them as used too.
-		for _, arg := range args {
-			markUsage(arg)
-		}
-		return nil
-	})
 
 	slog.DebugContext(ctx, "running symbolic execution from entry points")
 	// First, find all potential entry points.
@@ -794,6 +809,9 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 }
 
 func (a *analyzer) markMethodAsUsed(ctx context.Context, usageMap map[string]bool, implFt *scanner.FieldType, methodName string) {
+	if implFt == nil {
+		return // Defensive check to prevent panics.
+	}
 	typeInfo, err := implFt.Resolve(ctx)
 	if err != nil || typeInfo == nil {
 		return // Cannot resolve the type, so cannot mark its methods.

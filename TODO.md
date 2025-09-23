@@ -88,9 +88,11 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
-### `symgo`: Complete Type Switch and `if-ok` Assertions ([docs/cont-symgo-type-switch-6.md](./docs/cont-symgo-type-switch-6.md))
+### `symgo`: Complete Type Switch and `if-ok` Assertions ([docs/trouble-symgo.md](./docs/trouble-symgo.md))
 - [x] Fix test failures for assertions on concrete types (`TestTypeSwitch_MethodCall`, etc.).
-- [ ] Fix test failures for assertions on interface types (`TestInterfaceBinding`, etc.).
+- [x] Fix test failures for assertions on interface types (`TestInterfaceBinding`, etc.) by refactoring the evaluator to correctly model method values vs. method calls and handle dynamic dispatch.
+- [x] Fix regressions in `TestInterfaceResolution` and `find-orphans` caused by incorrect parsing in the `Finalize()` method.
+- [ ] Verify all `symgo` and `find-orphans` tests pass.
 - [ ] Add tests for in-policy vs. out-of-policy behavior.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))

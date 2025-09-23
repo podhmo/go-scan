@@ -48,6 +48,7 @@ const (
 	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
 	UNRESOLVED_TYPE_OBJ       ObjectType = "UNRESOLVED_TYPE"
 	PANIC_OBJ                 ObjectType = "PANIC"
+	BOUND_METHOD_OBJ          ObjectType = "BOUND_METHOD"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -215,6 +216,7 @@ type Function struct {
 	Receiver    Object // The receiver for a method call ("self" or "this").
 	ReceiverPos token.Pos
 	Def         *scanner.FunctionInfo
+	IsAbstract  bool // True if this represents an abstract interface method
 }
 
 // Type returns the type of the Function object.
@@ -928,6 +930,24 @@ func (ut *UnresolvedType) Type() ObjectType { return UNRESOLVED_TYPE_OBJ }
 func (ut *UnresolvedType) Inspect() string {
 	return fmt.Sprintf("<Unresolved Type: %s.%s>", ut.PkgPath, ut.TypeName)
 }
+
+// --- BoundMethod Object ---
+
+// BoundMethod represents a method that is bound to a specific receiver object.
+type BoundMethod struct {
+	BaseObject
+	Function Object // Can be a *Function or a *SymbolicPlaceholder
+	Receiver Object
+}
+
+// Type returns the type of the BoundMethod object.
+func (b *BoundMethod) Type() ObjectType { return BOUND_METHOD_OBJ }
+
+// Inspect returns a string representation of the bound method.
+func (b *BoundMethod) Inspect() string {
+	return fmt.Sprintf("bound-method(%s)", b.Function.Inspect())
+}
+
 
 // --- Global Instances ---
 var (

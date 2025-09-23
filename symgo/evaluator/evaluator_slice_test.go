@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"testing"
 
 	goscan "github.com/podhmo/go-scan"
@@ -74,15 +75,17 @@ func main() {
 			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
+
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if isError(result) {
 			return fmt.Errorf("evaluation failed: %s", result.Inspect())
@@ -120,15 +123,17 @@ func main() {
 			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
+
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		// The important part is that this doesn't crash. The result of an index
 		// operation with a symbolic index is a symbolic value.
@@ -141,6 +146,16 @@ func main() {
 	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
+}
+
+// findPkgInSliceTest is a helper function to find a package by name in a slice of packages.
+func findPkgInSliceTest(pkgs []*goscan.Package, name string) *goscan.Package {
+	for _, p := range pkgs {
+		if p.Name == name {
+			return p
+		}
+	}
+	return nil
 }
 
 func TestSliceTypeFromExternalPackage(t *testing.T) {
@@ -162,7 +177,7 @@ func main() {
 	defer cleanup()
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		mainPkg := findPkg(pkgs, "main")
+		mainPkg := findPkgInSliceTest(pkgs, "main")
 		if mainPkg == nil {
 			return fmt.Errorf("main package not found")
 		}
@@ -172,15 +187,17 @@ func main() {
 			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
+
 		mainFunc, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, 0)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv, token.NoPos)
 
 		if isError(result) {
 			return fmt.Errorf("evaluation failed: %s", result.Inspect())

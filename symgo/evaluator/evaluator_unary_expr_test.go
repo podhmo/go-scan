@@ -36,10 +36,9 @@ var result = %s
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {
-					if err := eval.Eval(ctx, file, env, pkg); err != nil {
+					if err := eval.Eval(ctx, file, nil, pkg); err != nil {
 						if objErr, ok := err.(*object.Error); ok {
 							return objErr
 						}
@@ -47,10 +46,12 @@ var result = %s
 					}
 				}
 
-				pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-				if !ok {
-					return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+				loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+				if err != nil {
+					return fmt.Errorf("failed to get loaded package: %w", err)
 				}
+				pkgEnv := loadedPkg.Env
+
 				val, ok := pkgEnv.Get("result")
 				if !ok {
 					return fmt.Errorf("variable 'result' not found")
@@ -108,9 +109,8 @@ func main() {
 			return importPath == "example.com/me"
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			if res := eval.Eval(ctx, file, env, pkg); res != nil && isError(res) {
+			if res := eval.Eval(ctx, file, nil, pkg); res != nil && isError(res) {
 				if err, ok := res.(*object.Error); ok {
 					return fmt.Errorf("setup eval failed: %w", err)
 				}
@@ -118,11 +118,13 @@ func main() {
 			}
 		}
 
-		// Find the main function from the populated environment.
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
+
+		// Find the main function from the populated environment.
 		mainObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
@@ -133,7 +135,7 @@ func main() {
 		}
 
 		// Execute the main function.
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("symbolic execution of main failed: %w", err)
 		}
@@ -175,10 +177,9 @@ var result = %s
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 				for _, file := range pkg.AstFiles {
-					if err := eval.Eval(ctx, file, env, pkg); err != nil {
+					if err := eval.Eval(ctx, file, nil, pkg); err != nil {
 						if objErr, ok := err.(*object.Error); ok {
 							return objErr
 						}
@@ -186,10 +187,12 @@ var result = %s
 					}
 				}
 
-				pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-				if !ok {
-					return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+				loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+				if err != nil {
+					return fmt.Errorf("failed to get loaded package: %w", err)
 				}
+				pkgEnv := loadedPkg.Env
+
 				val, ok := pkgEnv.Get("result")
 				if !ok {
 					return fmt.Errorf("variable 'result' not found")

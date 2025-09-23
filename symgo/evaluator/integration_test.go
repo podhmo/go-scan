@@ -43,15 +43,15 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		var inspectedType object.Object
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/me")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		intrinsic := &object.Intrinsic{
 			Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -73,7 +73,7 @@ func main() {
 		}
 
 		// We use applyFunction directly to simulate a call to main()
-		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if inspectedType == nil {
 			t.Fatal("intrinsic was not called")

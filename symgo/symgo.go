@@ -401,7 +401,7 @@ func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 
 // ApplyFunction is a test helper to expose the evaluator's ApplyFunction method.
 func (i *Interpreter) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn object.Object, args []object.Object, fscope *evaluator.FileScope) object.Object {
-	return i.eval.ApplyFunction(ctx, call, fn, args, fscope)
+	return i.eval.ApplyFunction(ctx, call, fn, args, fscope, i.globalEnv)
 }
 
 // EvaluatorForTest returns the evaluator for testing.
@@ -471,7 +471,7 @@ func (i *Interpreter) FindObjectInPackage(ctx context.Context, pkgPath string, n
 // It is intended for advanced use cases like docgen where direct function invocation is needed.
 func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *scanner.PackageInfo) (Object, error) {
 	// This is a simplified wrapper. A real implementation might need more context.
-	result := i.eval.Apply(ctx, fn, args, pkg)
+	result := i.eval.Apply(ctx, fn, args, pkg, nil) // HACK: passing nil for env
 	if err, ok := result.(*Error); ok {
 		return nil, errors.New(err.Inspect())
 	}

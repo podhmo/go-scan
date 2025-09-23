@@ -91,7 +91,7 @@ func main() {
 		}
 		mainFunc := mainFuncObj.(*object.Function)
 
-		eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		return nil
 	}
 
@@ -201,7 +201,7 @@ func main() {
 		}
 		mainFunc := mainFuncObj.(*object.Function)
 
-		eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		return nil
 	}
 

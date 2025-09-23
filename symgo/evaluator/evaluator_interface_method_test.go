@@ -37,9 +37,9 @@ func main() {
 
 	var writeCalled bool
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		mainPkg := pkgs[0]
-		if mainPkg.Name != "main" {
-			mainPkg = findPkg(pkgs, "main")
+		mainPkg := findPkgInInterfaceMethodTest(pkgs, "main")
+		if mainPkg == nil {
+			return fmt.Errorf("main package not found")
 		}
 		eval := New(s, s.Logger, nil, nil)
 
@@ -49,17 +49,20 @@ func main() {
 			return nil
 		})
 
-		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, nil, mainPkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return err
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		mainFuncObj, ok := pkgEnv.Env.Get("main")
 		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+			return fmt.Errorf("main function not found")
 		}
-		mainFuncObj, _ := pkgEnv.Get("main")
-		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not an object.Function, got %T", mainFuncObj)
+		}
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
@@ -111,17 +114,17 @@ func main() {
 			return nil
 		})
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return err
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		mainFuncObj, ok := pkgEnv.Env.Get("main")
 		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+			return fmt.Errorf("main function not found")
 		}
-		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
@@ -190,17 +193,16 @@ func main() {
 			return nil
 		})
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return err
 		}
-
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		mainFuncObj, ok := pkgEnv.Env.Get("main")
 		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+			return fmt.Errorf("main function not found")
 		}
-		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
@@ -271,17 +273,16 @@ func main() {
 			return nil
 		})
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return err
 		}
-
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		mainFuncObj, ok := pkgEnv.Env.Get("main")
 		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+			return fmt.Errorf("main function not found")
 		}
-		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed: %s", err.Message)
 		}
@@ -321,8 +322,8 @@ func main() {
 	}
 }
 
-// findPkg is a helper to find a package by name.
-func findPkg(pkgs []*goscan.Package, name string) *goscan.Package {
+// findPkgInInterfaceMethodTest is a helper to find a package by name.
+func findPkgInInterfaceMethodTest(pkgs []*goscan.Package, name string) *goscan.Package {
 	for _, p := range pkgs {
 		if p.Name == name {
 			return p
@@ -380,21 +381,17 @@ func main() {
 			return &object.Integer{Value: 1} // Return a value consistent with the function signature
 		})
 
-		// Evaluate the whole file to populate functions etc.
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return err
 		}
 
 		// Get the main function to start evaluation from.
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
-		}
-		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFuncObj, _ := pkgEnv.Env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 
 		// Apply the main function.
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			// We expect no evaluation error. The original code would produce one.
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
@@ -454,21 +451,17 @@ func main() {
 			return nil
 		})
 
-		// Evaluate the whole file to populate functions etc.
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return err
 		}
 
 		// Get the main function to start evaluation from.
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
-		}
-		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFuncObj, _ := pkgEnv.Env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 
 		// Apply the main function.
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
 		}
@@ -528,21 +521,17 @@ func main() {
 			return nil
 		})
 
-		// Evaluate the whole file to populate functions etc.
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return err
 		}
 
 		// Get the main function to start evaluation from.
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
-		}
-		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFuncObj, _ := pkgEnv.Env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 
 		// Apply the main function.
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
 		}
@@ -654,18 +643,14 @@ func main() {
 			return path == pkg.ImportPath
 		})
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, nil, pkg)
+		pkgEnv, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return err
 		}
-
-		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
-		}
-		mainFuncObj, _ := pkgEnv.Get("main")
+		mainFuncObj, _ := pkgEnv.Env.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, pkg, pkgEnv.Env)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Error())
 		}

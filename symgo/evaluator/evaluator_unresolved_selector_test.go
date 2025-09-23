@@ -40,7 +40,7 @@ func main() {
 		}
 
 		// After the fix, this should pass without error.
-		result := eval.Apply(ctx, mainFunc, nil, mainPkg)
+		result := eval.Apply(ctx, mainFunc, nil, mainPkg, pkgObj.Env)
 
 		if err, ok := result.(*object.Error); ok {
 			t.Fatalf("evaluation failed unexpectedly: %v", err)

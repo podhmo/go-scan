@@ -53,11 +53,17 @@ func DoSomething() string {
 		}
 
 		for _, file := range mainPkg.AstFiles {
-			evaluator.Eval(ctx, file, evaluator.UniverseEnv, mainPkg)
+			evaluator.Eval(ctx, file, nil, mainPkg)
 		}
 
-		pkgEnv, _ := evaluator.PackageEnvForTest("example.com/me")
-		mainFunc, _ := pkgEnv.Get("main")
+		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
+		if !ok {
+			t.Fatal("main package environment not found in evaluator cache")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			t.Fatal("main function not found in package environment")
+		}
 
 		var capturedFunc object.Object
 		evaluator.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
@@ -67,7 +73,7 @@ func DoSomething() string {
 			return nil
 		})
 
-		result := evaluator.Apply(ctx, mainFunc, nil, mainPkg)
+		result := evaluator.Apply(ctx, mainFunc, nil, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			t.Fatalf("Apply() failed: %s", err.Inspect())
 		}

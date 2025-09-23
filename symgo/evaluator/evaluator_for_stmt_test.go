@@ -63,7 +63,7 @@ func main() {
 		if !ok {
 			t.Fatal("main function not found")
 		}
-		result := eval.Apply(ctx, mainFunc, nil, mainPkg)
+		result := eval.Apply(ctx, mainFunc, nil, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return err
 		}
@@ -133,7 +133,7 @@ func main() {
 		if !ok {
 			t.Fatal("main function not found")
 		}
-		result := eval.Apply(ctx, mainFunc, nil, mainPkg)
+		result := eval.Apply(ctx, mainFunc, nil, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return err
 		}

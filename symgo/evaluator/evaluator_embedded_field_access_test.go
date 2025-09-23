@@ -75,7 +75,7 @@ func GetBody(resp *TestResponse) io.Reader {
 		// Create a symbolic TestResponse to pass to the function
 		// We don't need a concrete value, just a symbolic one.
 		// The evaluator should be able to resolve `resp.Body` symbolically.
-		result := eval.Apply(ctx, getBodyFunc, nil, mainPkg)
+		result := eval.Apply(ctx, getBodyFunc, nil, mainPkg, pkgEnv)
 
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %w", err)

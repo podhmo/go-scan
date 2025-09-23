@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/token"
 	"strings"
 	"testing"
 
@@ -46,7 +47,7 @@ func main() {
 			return fmt.Errorf("function 'main' not found")
 		}
 
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, pkgEnv, token.NoPos)
 
 		if errObj, ok := result.(*object.Error); ok {
 			// This is the bug we are targeting. The test should fail if it sees this error.

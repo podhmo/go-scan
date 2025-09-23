@@ -78,7 +78,7 @@ func (t *MyType) GetName() string {
 			Def:     targetFuncInfo,
 		}
 
-		result := eval.Apply(ctx, targetFunc, nil, pkg)
+		result := eval.Apply(ctx, targetFunc, nil, pkg, env)
 
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("evaluation failed unexpectedly: %w", err)

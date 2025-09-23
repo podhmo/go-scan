@@ -1,7 +1,9 @@
 package symgo_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo"
@@ -19,9 +21,14 @@ import "io"
 
 // TargetFunc is the function we will analyze.
 func TargetFunc(writer io.Writer) {
-	writer.WriteString("hello")
+	writer.Write([]byte("hello"))
 }`,
 	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 
 	setup := symgotest.WithSetup(func(interp *symgo.Interpreter) error {
 		// Action: Bind the interface `io.Writer` to the concrete type `*bytes.Buffer`.
@@ -31,7 +38,7 @@ func TargetFunc(writer io.Writer) {
 		}
 
 		// Action: Register an intrinsic for the method on the concrete type.
-		interp.RegisterIntrinsic("(*bytes.Buffer).WriteString", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+		interp.RegisterIntrinsic("(*bytes.Buffer).Write", func(ctx context.Context, i *symgo.Interpreter, args []symgo.Object) symgo.Object {
 			intrinsicCalled = true
 			return nil
 		})
@@ -42,16 +49,17 @@ func TargetFunc(writer io.Writer) {
 		Source:     source,
 		EntryPoint: "myapp.TargetFunc",
 		// Args is nil; symgotest will create a symbolic placeholder for the io.Writer argument.
-		Options: []symgotest.Option{setup},
+		Options: []symgotest.Option{setup, symgotest.WithLogger(logger)},
 	}
 
 	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
+		t.Logf("captured logs:\n%s", logBuf.String())
 		if r.Error != nil {
 			t.Fatalf("symgotest.Run failed: %+v", r.Error)
 		}
 
 		if !intrinsicCalled {
-			t.Errorf("expected intrinsic for (*bytes.Buffer).WriteString to be called, but it was not")
+			t.Errorf("expected intrinsic for (*bytes.Buffer).Write to be called, but it was not")
 		}
 	})
 }

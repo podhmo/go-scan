@@ -202,7 +202,40 @@ func (a *accessor) findMethodInfoRecursive(ctx context.Context, typeInfo *scanne
 }
 
 func (a *accessor) findDirectMethodInfoOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) (*scanner.FunctionInfo, error) {
-	if typeInfo == nil || typeInfo.PkgPath == "" {
+	if typeInfo == nil {
+		return nil, nil
+	}
+
+	// Handle interface types.
+	if typeInfo.Interface != nil {
+		// getAllInterfaceMethods handles embedded interfaces correctly.
+		allMethods := a.eval.getAllInterfaceMethods(ctx, typeInfo, make(map[string]struct{}))
+		for _, method := range allMethods {
+			if method.Name == methodName {
+				// We found the method in the interface definition.
+				// We need to convert the MethodInfo to a FunctionInfo.
+				// Interface methods don't have a body, so AstDecl will be nil.
+				return &scanner.FunctionInfo{
+					Name:       method.Name,
+					Parameters: method.Parameters,
+					Results:    method.Results,
+					Receiver: &scanner.FieldInfo{ // The receiver is the interface itself.
+						Type: &scanner.FieldType{
+							Name:           typeInfo.Name,
+							PkgName:        typeInfo.PkgPath,
+							FullImportPath: typeInfo.PkgPath,
+							TypeName:       typeInfo.Name,
+							Definition:     typeInfo,
+						},
+					},
+					AstDecl: nil, // No AST declaration for interface methods.
+				}, nil
+			}
+		}
+		return nil, nil // Method not found in interface definition.
+	}
+
+	if typeInfo.PkgPath == "" {
 		return nil, nil
 	}
 

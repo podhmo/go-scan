@@ -47,11 +47,13 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register an intrinsic for the inspect function
-		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 1 {
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
+			// The first argument to a default intrinsic is the function being called.
+			// The subsequent arguments are the function's actual arguments.
+			if len(args) != 2 {
 				return nil
 			}
-			arg := args[0]
+			arg := args[1]
 			var typeName string
 			if p, ok := arg.(*object.SymbolicPlaceholder); ok {
 				if ft := p.FieldType(); ft != nil {
@@ -91,22 +93,25 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg) // The env is not used at file-level eval
 		}
 
-		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		// After eval, the package environment is stored in the evaluator's cache.
+		// We need to retrieve it from there.
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/main")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
+
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
-			return fmt.Errorf("main function not found")
+			return fmt.Errorf("main function not found in package environment")
 		}
 		mainFunc := mainFuncObj.(*object.Function)
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
 		}
@@ -165,22 +170,22 @@ func main() {
 			return nil
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/main")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
-		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
-		}
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
-			return fmt.Errorf("main function not found")
+			return fmt.Errorf("main function not found in environment")
 		}
 		mainFunc := mainFuncObj.(*object.Function)
 
-		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
 		}
@@ -265,15 +270,15 @@ func process(prefix string, data any) {
 			return &object.String{Value: "formatted string"}
 		})
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
+		loadedPkg, err := eval.GetOrLoadPackageForTest(ctx, "example.com/main")
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
+		}
+		pkgEnv := loadedPkg.Env
 
-		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
-		if !ok {
-			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
-		}
 		processFuncObj, ok := pkgEnv.Get("process")
 		if !ok {
 			return fmt.Errorf("process function not found")
@@ -286,7 +291,7 @@ func process(prefix string, data any) {
 			&object.Integer{Value: 123},
 		}
 		t.Logf("Calling process function with args: %v", args)
-		result := eval.Apply(ctx, processFunc, args, mainPkg)
+		result := eval.Apply(ctx, processFunc, args, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Inspect())
 		}

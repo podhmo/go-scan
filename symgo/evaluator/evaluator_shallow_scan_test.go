@@ -53,10 +53,11 @@ var sentinel int
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		// Check the unresolved variable
 		obj, ok := pkgEnv.Get("x")
@@ -143,10 +144,11 @@ func (f ForeignType) DoSomething() {}
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		// Now, call the function that performs the calls.
 		fnObj, ok := pkgEnv.Get("DoCall")
@@ -155,7 +157,7 @@ func (f ForeignType) DoSomething() {}
 		}
 		fn := fnObj.(*object.Function)
 
-		result := evaluator.Apply(ctx, fn, nil, mainPkg)
+		result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv)
 		if result != nil && result.Type() == object.ERROR_OBJ {
 			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
 		}
@@ -224,10 +226,11 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		// Now, call the function that performs the calls.
 		fnObj, ok := pkgEnv.Get("DoCalls")
@@ -236,7 +239,7 @@ func GetTwo() (ForeignType, error) { return ForeignType{}, nil }
 		}
 		fn := fnObj.(*object.Function)
 
-		if result := evaluator.Apply(ctx, fn, nil, mainPkg); result != nil && result.Type() == object.ERROR_OBJ {
+		if result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv); result != nil && result.Type() == object.ERROR_OBJ {
 			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
 		}
 
@@ -331,10 +334,11 @@ func (c ConcreteType2) Do() {}
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		// Verify the initial state of the interface variable 'i'
 		iObj, ok := pkgEnv.Get("i")
@@ -356,7 +360,7 @@ func (c ConcreteType2) Do() {}
 		}
 		fn := fnObj.(*object.Function)
 
-		if result := evaluator.Apply(ctx, fn, nil, mainPkg); result != nil && result.Type() == object.ERROR_OBJ {
+		if result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv); result != nil && result.Type() == object.ERROR_OBJ {
 			return fmt.Errorf("Apply() returned an error: %s", result.Inspect())
 		}
 
@@ -456,10 +460,11 @@ func MyFunction(v any) {
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		fnObj, ok := pkgEnv.Get("MyFunction")
 		if !ok {
@@ -475,7 +480,7 @@ func MyFunction(v any) {
 		}
 		arg.SetFieldType(argFieldType)
 
-		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg)
+		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
 		}
@@ -560,10 +565,12 @@ func MyFunction(v any) {
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
+
 		fnObj, ok := pkgEnv.Get("MyFunction")
 		if !ok {
 			return fmt.Errorf("MyFunction function not found")
@@ -571,7 +578,7 @@ func MyFunction(v any) {
 		fn := fnObj.(*object.Function)
 
 		arg := &object.SymbolicPlaceholder{Reason: "test argument"}
-		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg)
+		result := evaluator.Apply(ctx, fn, []object.Object{arg}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
 		}
@@ -643,10 +650,11 @@ var sentinel int
 			evaluator.Eval(ctx, file, nil, pkg)
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		// Check the unresolved variable
 		obj, ok := pkgEnv.Get("x")
@@ -767,10 +775,11 @@ func (f ForeignType) ForeignMethod() {}
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		// Now, call the function that performs the calls.
 		fnObj, ok := pkgEnv.Get("DoCall")
@@ -779,7 +788,7 @@ func (f ForeignType) ForeignMethod() {}
 		}
 		fn := fnObj.(*object.Function)
 
-		result := evaluator.Apply(ctx, fn, nil, mainPkg)
+		result := evaluator.Apply(ctx, fn, nil, mainPkg, pkgEnv)
 		if result != nil && result.Type() == object.ERROR_OBJ {
 			t.Fatalf("Apply() returned an error, but it should have succeeded symbolically: %s", result.Inspect())
 		}
@@ -843,10 +852,11 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 			}
 		}
 
-		pkgEnv, ok := evaluator.PackageEnvForTest("example.com/me/mypkg")
-		if !ok {
-			return fmt.Errorf("could not get package env for 'example.com/me/mypkg'")
+		loadedPkg, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to get loaded package: %w", err)
 		}
+		pkgEnv := loadedPkg.Env
 
 		// Now, find the function and call it.
 		fnObj, ok := pkgEnv.Get("MyFunction")
@@ -874,7 +884,7 @@ func MyFunction(p *extpkg.ExternalType, s []extpkg.ExternalType) {
 		arg2 := &object.SymbolicPlaceholder{Reason: "s"}
 		arg2.SetFieldType(sliceOfExtType)
 
-		result := evaluator.Apply(ctx, fn, []object.Object{arg1, arg2}, mainPkg)
+		result := evaluator.Apply(ctx, fn, []object.Object{arg1, arg2}, mainPkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("Apply() returned an error: %s", err.Inspect())
 		}

@@ -113,3 +113,24 @@ The implementation must be robust with respect to `symgo`'s scan policy. The tes
 ### Step 6: Verify and Finalize
 
 Once all new tests pass and existing tests continue to pass, the feature is complete. The implementation has been successfully guided and verified by the test suite.
+
+## 4. Architectural Challenge: Static vs. Dynamic Dispatch
+
+During the implementation of this feature (see `docs/cont-symgo-type-switch-8.md`), a fundamental architectural challenge in the `symgo` evaluator was identified. The evaluator must correctly handle two conflicting scenarios for method resolution:
+
+1.  **Static Type Dispatch (for Interfaces):** When evaluating a method call on a variable that is statically typed as an interface (e.g., `var w io.Writer; w.Write(...)`), the analysis must treat this as a symbolic call on the *interface*. It should not immediately resolve to the method of the concrete type the variable might hold at that moment. This is crucial for tools like `find-orphans` that need to understand that the code depends on the interface contract itself.
+
+2.  **Dynamic Type Dispatch (for Type Narrowing):** When evaluating a method call on a variable that has been narrowed by a type switch or `if-ok` assertion (e.g., `if v, ok := i.(*bytes.Buffer); ok { v.Len() }`), the analysis must resolve the call to the method on the *concrete type* (`*bytes.Buffer`). This is the entire point of the type-narrowing feature.
+
+### The Conflict
+
+The core conflict arises from how the evaluator resolves variables. The `evalIdent` function tends to eagerly resolve a variable to its dynamic, concrete value, discarding the static type information of the variable's declaration.
+
+-   This eager evaluation is good for **Dynamic Type Dispatch** (scenario #2).
+-   However, it breaks **Static Type Dispatch** (scenario #1) because the static interface type is lost before `evalSelectorExpr` can even see it.
+
+Attempts to fix this by making `evalSelectorExpr` "smarter" about the variable's static type led to regressions, as this interfered with the shadowing and narrowing mechanics of `switch` statements.
+
+### Path Forward
+
+A robust solution will likely require a more significant architectural change to how the evaluator handles variables. A promising direction is to modify `evalIdent` to *not* eagerly evaluate variables, instead returning the `*object.Variable` itself. This would preserve the static type context. Consequently, `evalSelectorExpr` and other parts of the evaluator would need to be updated to handle receiving a `*object.Variable` and explicitly decide whether to use its static type for interface dispatch or to evaluate it to its dynamic value for concrete dispatch. This approach, while more invasive, would make the evaluator's state more expressive and capable of handling both scenarios correctly.

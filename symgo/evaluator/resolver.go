@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/ast"
 	"log/slog"
 
 	goscan "github.com/podhmo/go-scan"
@@ -79,6 +80,21 @@ func (r *Resolver) resolveTypeWithoutPolicyCheck(ctx context.Context, fieldType 
 // ResolveFunction creates a function object or a symbolic placeholder based on the scan policy.
 func (r *Resolver) ResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scanner.FunctionInfo) object.Object {
 	if r.ScanPolicy(pkg.Path) {
+		// **FIX**: Handle symbolic/interface methods that don't have an AST declaration.
+		if funcInfo.AstDecl == nil {
+			// This is a symbolic function, like a method from an interface definition.
+			// Create a function object without a body. `applyFunction` will handle this
+			// by returning a symbolic result based on the signature.
+			return &object.Function{
+				Name: &ast.Ident{Name: funcInfo.Name},
+				// We don't have Parameters or Body as AST nodes, but `applyFunction`
+				// can use the info on `funcInfo.Parameters` and `funcInfo.Results`.
+				Env:     pkg.Env,
+				Package: pkg.ScannedInfo,
+				Def:     funcInfo,
+			}
+		}
+
 		fn := &object.Function{
 			Name:       funcInfo.AstDecl.Name,
 			Parameters: funcInfo.AstDecl.Type.Params,
@@ -138,6 +154,15 @@ func (r *Resolver) ResolveCompositeLit(ctx context.Context, fieldType *scanner.F
 
 // ResolveSymbolicField creates a symbolic placeholder for a field access on a symbolic value.
 func (r *Resolver) ResolveSymbolicField(ctx context.Context, field *scanner.FieldInfo, receiver object.Object) object.Object {
+	// If the receiver is an instance with concrete fields, try to get the value.
+	if inst, ok := receiver.(*object.Instance); ok {
+		if inst.Fields != nil {
+			if val, ok := inst.Fields[field.Name]; ok {
+				return val // Return the concrete value from the literal.
+			}
+		}
+	}
+
 	fieldTypeInfo := r.ResolveType(ctx, field.Type)
 	var reason string
 	if v, ok := receiver.(*object.Variable); ok {

@@ -72,12 +72,13 @@ OuterLoop:
 		if !ok {
 			return fmt.Errorf("could not get package env for 'example.com/me'")
 		}
+
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in package environment")
 		}
 
-		result := eval.Apply(ctx, mainFuncObj, nil, pkg)
+		result := eval.Apply(ctx, mainFuncObj, nil, pkg, pkgEnv)
 		if err, ok := result.(*object.Error); ok {
 			return fmt.Errorf("eval failed: %s", err.Error())
 		}

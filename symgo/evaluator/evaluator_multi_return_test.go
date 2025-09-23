@@ -55,7 +55,7 @@ func main() {
 			t.Fatalf("main function not found in package %q", mainPkg.ImportPath)
 		}
 
-		eval.applyFunction(ctx, mainFunc, nil, mainPkg, token.NoPos)
+		eval.applyFunction(ctx, mainFunc, nil, mainPkg, pkgObj.Env, token.NoPos)
 		return nil
 	}
 

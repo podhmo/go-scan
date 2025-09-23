@@ -1518,16 +1518,17 @@ func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.Symbo
 
 	// Fallback to searching for the method on the instance's type.
 	if typeInfo := val.TypeInfo(); typeInfo != nil {
-		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
-			return method
-		}
-
-		// If it's not a method, check if it's a field on the struct (including embedded).
-		// This must be done *before* the unresolved check, as an unresolved type can still have field info.
+		// Field-first lookup: Check for a field on the struct (including embedded) first.
+		// This is crucial for unresolved types where a field access could be mistaken for a method call.
 		if typeInfo.Struct != nil {
 			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
 				return e.resolver.ResolveSymbolicField(ctx, field, val)
 			}
+		}
+
+		// If it's not a field, then check for a method.
+		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
+			return method
 		}
 
 		if typeInfo.Unresolved {
@@ -1803,14 +1804,15 @@ func (e *Evaluator) evalSelectorExprForObject(ctx context.Context, n *ast.Select
 
 		// Fallback to searching for the method on the instance's type.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
-				return method
-			}
-			// If not a method, check if it's a field on the struct (including embedded).
+			// Field-first lookup
 			if typeInfo.Struct != nil {
 				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
 					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
+			}
+			// If not a field, then check for a method.
+			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
+				return method
 			}
 		}
 

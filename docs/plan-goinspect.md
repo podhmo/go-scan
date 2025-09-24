@@ -90,3 +90,33 @@ This is the core of the tool and will rely heavily on `symgo`.
 - **`go` and `defer`**: These will be captured as standard calls. The output could optionally annotate them.
 - **External Libraries**: Calls to functions outside the primary analysis scope will be treated as terminal nodes, which is the desired behavior.
 - **Accessor Heuristics**: Defining a robust heuristic for what constitutes an "accessor/getter/setter" will be important. It should probably be limited to functions with 1 or 2 statements that just access fields.
+
+## 6. Testing Strategy
+
+To ensure the tool is robust and correct, a comprehensive test suite is required. We will use a golden-file testing approach, where the output of the tool for a given set of inputs is compared against a pre-recorded `.golden` file.
+
+The test cases should cover a wide range of Go language features and tool configurations:
+
+### Analysis Scenarios
+- **Basic Calls**: Simple function-to-function and method-to-method calls.
+- **Interface Calls**: Calls on an interface method, testing that the symbolic call is recorded.
+- **Embedded Types**: Calls to methods defined on an embedded struct.
+- **Higher-Order Functions**: A function that accepts another function as an argument and calls it.
+- **Anonymous Functions**: Calls inside an anonymous function literal.
+- **`go` and `defer`**: Functions called within `go` and `defer` statements.
+- **Recursive Calls**:
+    - Direct recursion (`A -> A`).
+    - Mutual recursion (`A -> B -> A`).
+- **Scope Boundaries**: Calls to functions inside and outside the primary analysis scope to ensure external calls are treated as terminal nodes.
+- **Complex Expressions**: Calls that are part of complex expressions (e.g., `foo(bar())`).
+
+### Configuration Scenarios
+- **CLI Flags**: Test various combinations of CLI flags to ensure they interact correctly.
+    - `--include-unexported`
+    - `--short`
+    - `--expand`
+    - `--short` and `--expand` used together (the tool should define a clear precedence, likely favoring `--expand`).
+- **Output Formats**:
+    - Verify the default hierarchical output is correct.
+    - Verify the `--short` format correctly abbreviates signatures.
+    - Verify the `--expand` format correctly assigns UIDs and uses them for subsequent calls and cycles.

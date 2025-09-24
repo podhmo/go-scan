@@ -86,6 +86,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
+### `examples/goinspect`: Call-Graph Explorer ([docs/plan-goinspect.md](./docs/plan-goinspect.md))
+- [ ] Implement the `goinspect` tool based on the planning document.
+
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
 - [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.
 

@@ -302,6 +302,7 @@ func (p *Package) Inspect() string {
 type CallFrame struct {
 	Pos      token.Pos
 	Function string // Name of the function for stack traces
+	Fn       *Function
 }
 
 // Format formats the call frame into a readable string.

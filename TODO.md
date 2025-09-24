@@ -84,29 +84,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **`panic(nil)` Handling**: Fixed a critical bug where the symbolic evaluator would crash when analyzing code containing a `panic(nil)` call. The evaluator now correctly handles this as a symbolic `PanicError` object, preventing the crash and allowing analysis to continue. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
 - **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md)
  
-## To Be Implemented
+- **`examples/goinspect`: Call-Graph Explorer**: A new tool that uses the `symgo` engine to analyze Go source code and display a human-readable call graph. It supports package pattern matching and filtering by exported symbols. The core analysis and default hierarchical output are implemented, along with a golden-file test suite.
+    - **Note**: Advanced formatting features like `--short` and `--expand` are not yet implemented.
 
-### `examples/goinspect`: Call-Graph Explorer ([docs/plan-goinspect.md](./docs/plan-goinspect.md))
-- [ ] **1. Foundational CLI & Scanning**:
-    - [ ] Create the `main` package and basic CLI structure using the `flag` package.
-    - [ ] Implement the logic to parse the `--pkg` pattern and use `goscan` to load the packages.
-    - [ ] Implement the `--include-unexported` flag to filter the initial list of functions.
-- [ ] **2. Core Call-Graph Analysis**:
-    - [ ] Initialize the `symgo.Evaluator` with the scanned packages and a strict primary analysis scope.
-    - [ ] Implement the core tracing loop that iterates through entry-point functions.
-    - [ ] Implement a `Visitor` or `Trace` hook to capture function call relationships and populate a graph data structure.
-- [ ] **3. Basic Hierarchical Output**:
-    - [ ] Implement a recursive printer that traverses the call graph.
-    - [ ] Produce the default indented, hierarchical text output with full function signatures.
-- [ ] **4. Advanced Features & Formatting**:
-    - [ ] Implement the `--short` output format.
-    - [ ] Implement the `--expand` output format, including UID assignment and reference (`#<id>`) rendering.
-    - [ ] Implement a heuristic to detect simple accessor/getter/setter functions.
-    - [ ] Add a visual marker (e.g., `[accessor]`) to the output for identified accessors.
-- [ ] **5. Testing**:
-    - [ ] Create a `testdata` directory with various Go files covering the scenarios in the "Testing Strategy" section.
-    - [ ] Set up a golden-file testing framework.
-    - [ ] Add golden-file tests for the default, `--short`, and `--expand` output formats.
+## To Be Implemented
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
 - [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.

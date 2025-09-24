@@ -488,6 +488,11 @@ func (i *Interpreter) CalledInterfaceMethodsForTest() map[string][]object.Object
 	return i.eval.CalledInterfaceMethodsForTest()
 }
 
+// CurrentFrame returns the current call frame from the evaluator's stack.
+func (i *Interpreter) CurrentFrame() *object.CallFrame {
+	return i.eval.CurrentFrame()
+}
+
 // SeenPackagesForTest returns the map of seen packages for testing.
 func (i *Interpreter) SeenPackagesForTest() map[string]*goscan.Package {
 	return i.eval.SeenPackagesForTest()

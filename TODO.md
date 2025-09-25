@@ -83,32 +83,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo` Evaluator Enhancements**:
     - **`panic(nil)` Handling**: Fixed a critical bug where the symbolic evaluator would crash when analyzing code containing a `panic(nil)` call. The evaluator now correctly handles this as a symbolic `PanicError` object, preventing the crash and allowing analysis to continue. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
 - **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md)
+- **`examples/goinspect`: Call-Graph Explorer**: A tool to analyze Go source code and display the call graph for specified functions. It supports multiple output formats (`--short`, `--expand`) and uses stable, position-based UIDs to correctly handle duplicate functions and recursion in expanded view. The test suite is comprehensive, using golden files to validate output for various scenarios including cross-package calls. ([docs/plan-goinspect.md](./docs/plan-goinspect.md))
  
 ## To Be Implemented
-
-### `examples/goinspect`: Call-Graph Explorer ([docs/plan-goinspect.md](./docs/plan-goinspect.md))
-- [x] **1. Foundational CLI & Scanning**:
-    - [x] Create the `main` package and basic CLI structure using the `flag` package.
-    - [x] Implement the logic to parse the `--pkg` pattern and use `goscan` to load the packages.
-    - [x] Implement the `--include-unexported` flag to filter the initial list of functions.
-- [x] **2. Core Call-Graph Analysis**:
-    - [x] Initialize the `symgo.Evaluator` with the scanned packages and a strict primary analysis scope.
-    - [x] Implement the core tracing loop that iterates through entry-point functions.
-    - [x] Implement a `Visitor` or `Trace` hook to capture function call relationships and populate a graph data structure.
-- [x] **3. Basic Hierarchical Output**:
-    - [x] Implement a recursive printer that traverses the call graph.
-    - [x] Produce the default indented, hierarchical text output with full function signatures.
-- [x] **4. Advanced Features & Formatting**:
-    - [x] Implement the `--short` output format.
-    - [x] Implement the `--expand` output format, including UID assignment and reference (`#<id>`) rendering.
-    - [x] Implement a heuristic to detect simple accessor/getter/setter functions.
-    - [x] Add a visual marker (e.g., `[accessor]`) to the output for identified accessors.
-- [-] **5. Testing**:
-    - [x] Create a `testdata` directory with various Go files covering the scenarios in the "Testing Strategy" section.
-    - [x] Set up a golden-file testing framework.
-    - [x] Add golden-file tests for the default, `--short`, and `--expand` output formats.
-    - [x] Add golden-file tests for accessor detection and cross-package calls.
-    - **Note**: Current tests reveal limitations in `symgo`'s handling of cross-package calls and higher-order functions, which are tracked in the `symgo` section below.
 
 ### `symgo`: Improve Analysis Capabilities
 - [ ] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.

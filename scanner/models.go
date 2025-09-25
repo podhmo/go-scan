@@ -527,6 +527,7 @@ type FunctionInfo struct {
 	Results    []*FieldInfo     `json:"results,omitempty"`
 	IsVariadic bool             `json:"isVariadic,omitempty"`
 	AstDecl    *ast.FuncDecl    `json:"-"` // Avoid cyclic JSON.
+	Pkg        *PackageInfo     `json:"-"` // Back-reference to the containing package.
 }
 
 // SetResolver is a test helper to overwrite the internal resolver.

@@ -839,6 +839,7 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 	funcInfo.Doc = commentText(f.Doc)
 	funcInfo.AstDecl = f
 	funcInfo.TypeParams = funcOwnTypeParams
+	funcInfo.Pkg = pkgInfo // Set the back-reference to the package
 
 	// After parsing the function signature, walk its body to find and resolve local type declarations.
 	if f.Body != nil {

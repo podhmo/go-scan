@@ -45,6 +45,7 @@ The implementation will be broken down into four main parts.
 - Define flags to control the tool's behavior:
     - `--pkg <pattern>`: (Required) A glob pattern for the target packages that form the primary analysis scope.
     - `--target <name>`: (Optional) The fully qualified name of a function or method to use as an entry point (e.g., `mypkg.MyFunc`, `(*mypkg.MyType).MyMethod`). Can be specified multiple times. If omitted, all exported functions in the scanned packages are used as entry points.
+    - `--trim-prefix`: (Optional) A boolean flag to trim the module path prefix from the output, resulting in shorter, more relative paths.
     - `--include-unexported`: (Optional) A boolean flag to include unexported functions as analysis entry points. Defaults to `false`. This is ignored if `--target` is used.
     - `--short`: (Optional) A boolean flag to enable the short output format.
     - `--expand`: (Optional) A boolean flag to enable the expanded, UID-based output format.

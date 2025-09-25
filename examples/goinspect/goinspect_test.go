@@ -18,6 +18,7 @@ func TestGoInspect(t *testing.T) {
 		name              string
 		pkgPattern        string
 		targets           []string
+		trimPrefix        bool
 		includeUnexported bool
 		shortFormat       bool
 		expandFormat      bool
@@ -64,6 +65,11 @@ func TestGoInspect(t *testing.T) {
 			pkgPattern: "./testdata/src/target",
 			targets:    []string{"github.com/podhmo/go-scan/examples/goinspect/testdata/src/target.FuncA"},
 		},
+		{
+			name:       "trim_prefix",
+			pkgPattern: "./testdata/src/myapp",
+			trimPrefix: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -71,7 +77,7 @@ func TestGoInspect(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-			err := run(&buf, logger, tc.pkgPattern, tc.targets, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
+			err := run(&buf, logger, tc.pkgPattern, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
 			if err != nil {
 				t.Fatalf("run() failed: %v", err)
 			}

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/evaluator"
@@ -40,6 +41,7 @@ func main() {
 	var targets stringSlice
 	flag.Var(&targets, "target", "Target function or method to inspect (e.g., mypkg.MyFunc, (*mypkg.MyType).MyMethod). Can be specified multiple times.")
 	pkgPattern := flag.String("pkg", "", "Go package pattern to inspect (e.g., ./...)")
+	trimPrefix := flag.Bool("trim-prefix", false, "Trim module path prefix from output")
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
 	expandFormat := flag.Bool("expand", false, "Use expand format for output with UIDs")
@@ -67,7 +69,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(os.Stdout, logger, *pkgPattern, targets, *includeUnexported, *shortFormat, *expandFormat); err != nil {
+	if err := run(os.Stdout, logger, *pkgPattern, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
@@ -89,7 +91,7 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
 }
 
-func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string, includeUnexported, shortFormat, expandFormat bool) error {
+func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 	ctx := context.Background()
 
 	// 2. Scan packages using goscan.
@@ -221,11 +223,22 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string
 	}
 
 	// 6. Print the call graph starting from the true top-level functions.
+	var modulePrefix string
+	if trimPrefix {
+		l, err := locator.New(".")
+		if err != nil {
+			logger.Warn("could not find module root, --trim-prefix will be ignored", "error", err)
+		} else {
+			modulePrefix = l.ModulePath()
+		}
+	}
+
 	p := &Printer{
-		Graph:  graph,
-		Short:  shortFormat,
-		Expand: expandFormat,
-		Out:    out,
+		Graph:      graph,
+		Short:      shortFormat,
+		Expand:     expandFormat,
+		Out:        out,
+		TrimPrefix: modulePrefix,
 		// visited and assigned are initialized in Print()
 	}
 	p.Print(topLevelFunctions)
@@ -252,10 +265,11 @@ func getFuncID(f *scanner.FunctionInfo) string {
 
 // Printer handles the output of the call graph.
 type Printer struct {
-	Graph  callGraph
-	Short  bool
-	Expand bool
-	Out    io.Writer
+	Graph      callGraph
+	Short      bool
+	Expand     bool
+	Out        io.Writer
+	TrimPrefix string
 
 	// State for printing
 	visited  map[string]bool // Key: func ID. For preventing infinite recursion in printing.
@@ -286,7 +300,7 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 	if isAccessor(f) {
 		accessorPrefix = "[accessor] "
 	}
-	formatted := formatFunc(f, p.Short)
+	formatted := p.formatFunc(f)
 
 	// Default mode (expand=false): Use IDs to show a function's tree only once.
 	if !p.Expand {
@@ -402,30 +416,41 @@ func isAccessor(f *scanner.FunctionInfo) bool {
 }
 
 // formatFunc formats the function info into a string.
-func formatFunc(f *scanner.FunctionInfo, short bool) string {
+func (p *Printer) formatFunc(f *scanner.FunctionInfo) string {
 	if f == nil {
 		return "<nil>"
 	}
+
+	// Helper function to trim the prefix from a qualified path.
+	trim := func(s string) string {
+		if p.TrimPrefix == "" {
+			return s
+		}
+		// Use strings.ReplaceAll to handle cases like "(*pkg.Type)"
+		// Add a "/" to avoid trimming "github.com/foo/bar" from "github.com/foo/bar-baz".
+		return strings.ReplaceAll(s, p.TrimPrefix+"/", "")
+	}
+
 	var b strings.Builder
 	b.WriteString("func ")
 	if f.Receiver != nil {
 		b.WriteString("(")
-		b.WriteString(f.Receiver.Type.String())
+		b.WriteString(trim(f.Receiver.Type.String()))
 		b.WriteString(")")
 		b.WriteString(".")
 	} else {
-		b.WriteString(f.PkgPath)
+		b.WriteString(trim(f.PkgPath))
 		b.WriteString(".")
 	}
 	b.WriteString(f.Name)
 
-	if short {
+	if p.Short {
 		b.WriteString("(...)")
 	} else {
 		b.WriteString("(")
 		params := []string{}
-		for _, p := range f.Parameters {
-			params = append(params, p.Type.String())
+		for _, param := range f.Parameters {
+			params = append(params, trim(param.Type.String()))
 		}
 		b.WriteString(strings.Join(params, ", "))
 		b.WriteString(")")

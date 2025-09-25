@@ -1,0 +1,5 @@
+func (*Person).Greet() #1
+  func testdata/src/myapp.privateFunc() #2
+[accessor] func (*Person).String() #3
+func (*Service).Do(Greeter) #4
+  func .Greet() #5

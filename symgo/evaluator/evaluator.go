@@ -1776,15 +1776,16 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// If ScannedInfo is still nil after trying to load, it means it's out of policy.
 		if val.ScannedInfo == nil {
 			e.logc(ctx, slog.LevelDebug, "package not scanned (out of policy), creating placeholder for symbol", "package", val.Path, "symbol", n.Sel.Name)
-			// When a symbol is from an unscanned package, we don't know if it's a type or a function.
-			// We now correctly represent it as a generic UnresolvedType.
-			// The consumer of this object (e.g., `new()` or a function call) will determine how to interpret it.
-			unresolvedType := &object.UnresolvedType{
+			// When a symbol is from an unscanned package, we assume it's a function call.
+			// Returning a specific UnresolvedFunction allows the call graph to correctly
+			// represent this as a terminal node. If it's a type, a subsequent operation
+			// like `new()` might fail, but for call-graph analysis, this is the correct trade-off.
+			unresolvedFn := &object.UnresolvedFunction{
 				PkgPath:  val.Path,
-				TypeName: n.Sel.Name,
+				FuncName: n.Sel.Name,
 			}
-			val.Env.Set(n.Sel.Name, unresolvedType)
-			return unresolvedType
+			val.Env.Set(n.Sel.Name, unresolvedFn)
+			return unresolvedFn
 		}
 
 		// When we encounter a package selector, we must ensure its environment
@@ -1995,6 +1996,13 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		return placeholder
 
+	case *object.UnresolvedFunction:
+		// If we are attempting to select a field or method from something we've already
+		// determined to be an unresolved function, we can't proceed meaningfully.
+		// Return a placeholder to allow analysis to continue without crashing.
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("selection from unresolved function %s.%s", val.PkgPath, val.FuncName),
+		}
 	case *object.UnresolvedType:
 		// If we are selecting from an unresolved type, we can't know what the field or method is.
 		// We return a placeholder to allow analysis to continue.
@@ -2046,7 +2054,9 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 					switch result.Type() {
 					case object.FALLTHROUGH_OBJ:
 						hasFallthrough = true
-						break // Exit statement loop, continue to next case
+						// The break was redundant here. The switch statement exits, and the
+						// inner for-loop continues to the next statement in the case body.
+						// The `hasFallthrough` flag is handled after the loop.
 					case object.BREAK_OBJ:
 						break pathLoop // This path is terminated by break.
 					case object.RETURN_VALUE_OBJ, object.ERROR_OBJ, object.CONTINUE_OBJ:
@@ -3102,20 +3112,6 @@ func isError(obj object.Object) bool {
 		return obj.Type() == object.ERROR_OBJ
 	}
 	return false
-}
-
-// areArgsEqual is a helper to compare function arguments for recursion detection.
-// It performs a direct object comparison.
-func areArgsEqual(a, b []object.Object) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func isInfiniteRecursionError(obj object.Object) bool {

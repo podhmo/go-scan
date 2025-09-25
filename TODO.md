@@ -89,7 +89,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `symgo`: Improve Analysis Capabilities
-- [ ] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.
+- [x] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.
 - [ ] **Higher-Order & Anonymous Functions**: Improve symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. This includes resolving the function signature correctly instead of `unhandled_type_*ast.FuncType`.
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))

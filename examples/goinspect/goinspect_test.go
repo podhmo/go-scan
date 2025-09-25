@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"io"
 	"log/slog"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 )
+
+var update = flag.Bool("update", false, "update golden files")
 
 func TestGoInspect(t *testing.T) {
 	testCases := []struct {
@@ -68,7 +71,7 @@ func TestGoInspect(t *testing.T) {
 			}
 
 			goldenFile := filepath.Join("testdata", tc.name+".golden")
-			if os.Getenv("UPDATE_GOLDEN") != "" {
+			if *update {
 				err := os.WriteFile(goldenFile, buf.Bytes(), 0644)
 				if err != nil {
 					t.Fatalf("failed to update golden file %s: %v", goldenFile, err)

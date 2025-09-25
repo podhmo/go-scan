@@ -1,10 +1,16 @@
-.PHONY: all test format clean
+.PHONY: all test format clean lint go-mod-tidy-all
 
 all:
 	go build ./...
 
 format:
-	go run golang.org/x/tools/cmd/goimports@latest -w $(shell find . -name '*.go')
+	go tool goimports -w $(shell find . -name '*.go')
+
+lint:
+	go tool staticcheck ./...
+
+go-mod-tidy-all:
+	for i in `find . -name go.mod | grep -v testdata | xargs dirname`; do pushd $$i; go mod tidy; popd; done
 
 STDLIB_PKGS= \
 	bufio \

@@ -834,6 +834,7 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 
 	funcInfo := s.parseFuncType(ctx, f.Type, funcOwnTypeParams, pkgInfo, importLookup)
 	funcInfo.Name = f.Name.Name
+	funcInfo.PkgPath = pkgInfo.ImportPath
 	funcInfo.FilePath = absFilePath
 	funcInfo.Doc = commentText(f.Doc)
 	funcInfo.AstDecl = f

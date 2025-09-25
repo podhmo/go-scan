@@ -2949,6 +2949,10 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 						// the base of the import path. This works for `fmt`, `os`, etc.
 						parts := strings.Split(importPath, "/")
 						assumedName := parts[len(parts)-1]
+					// Handle gopkg.in/yaml.v2 -> yaml
+					if dotIndex := strings.LastIndex(assumedName, "."); dotIndex > 0 && len(assumedName) > dotIndex+1 && assumedName[dotIndex+1] == 'v' {
+						assumedName = assumedName[:dotIndex]
+					}
 						if n.Name == assumedName {
 							return pkgObj
 						}

@@ -150,7 +150,22 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexporte
 		}
 	}
 
-	// 5. Print the call graph.
+	// 5. Filter for true top-level functions (not called by any other entry point).
+	callees := make(map[string]bool)
+	for _, calledFuncs := range graph {
+		for _, f := range calledFuncs {
+			callees[getFuncID(f)] = true
+		}
+	}
+
+	var topLevelFunctions []*scanner.FunctionInfo
+	for _, f := range entryPoints {
+		if !callees[getFuncID(f)] {
+			topLevelFunctions = append(topLevelFunctions, f)
+		}
+	}
+
+	// 6. Print the call graph starting from the true top-level functions.
 	p := &Printer{
 		Graph:  graph,
 		Short:  shortFormat,
@@ -158,7 +173,7 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexporte
 		Out:    out,
 		// visited and assigned are initialized in Print()
 	}
-	p.Print(entryPoints)
+	p.Print(topLevelFunctions)
 
 	return nil
 }
@@ -205,11 +220,7 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 	})
 
 	for _, f := range entryPoints {
-		// Only print functions that are actual entry points (not just called by other entry points).
-		// A simple heuristic: if a function is a key in the graph, it's a caller.
-		if _, isCaller := p.Graph[f]; isCaller {
-			p.printRecursive(f, 0)
-		}
+		p.printRecursive(f, 0)
 	}
 }
 

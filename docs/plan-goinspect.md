@@ -29,6 +29,7 @@ package github.com/podhmo/goinspect/internal/x
 - **Advanced Call Detection**: The tool must detect not only direct function/method calls but also calls to functions passed as arguments (higher-order functions).
 - **Function Filtering**: The user should be able to filter the initial set of functions to analyze (e.g., exported only vs. all).
 - **Accessor/Getter/Setter Distinction**: The output should visually distinguish simple functions like accessors, getters, and setters from more complex functions.
+- **Orphan-Style Top-Level Output**: The tool should only display functions that are not called by any other function within the analysis scope as top-level entries in the output. Functions that are called by others should only appear nested within their callers. This ensures the output focuses on the true entry points of the program or library.
 - **Flexible Output Formatting**:
     - **Default Hierarchical Output**: A text-based, indented tree representing the call graph.
     - **Short Format (`--short`)**: An abbreviated format that shortens function signatures, for example by replacing the argument list with `(...)`.
@@ -59,16 +60,18 @@ This is the core of the tool and will rely heavily on `symgo`.
 
 1.  **Initialize `symgo`**: Create a new `symgo.Evaluator` instance. The `Resolver` will be configured to strictly enforce the primary analysis scope defined by the `--pkg` patterns.
 2.  **Define Entry Points**: Iterate through the functions in the scanned packages. Based on the `--include-unexported` flag, create a list of `scanner.FunctionInfo` objects to serve as the starting points for the analysis.
-3.  **Trace Execution**: For each entry point function:
-    - Start symbolic execution using the `symgo` evaluator.
-    - **Higher-Order Functions**: Leverage `symgo`'s `scanFunctionLiteral` heuristic, which automatically analyzes anonymous functions passed as arguments. This will be key to detecting calls within them.
-    - **Accessor/Getter/Setter Detection**: After building the graph, post-process each `scanner.FunctionInfo` node. Analyze the function's body to determine if it's a simple accessor (e.g., a single return statement of a struct field). This information will be stored with the node.
-    - We will build a graph data structure (e.g., a map `map[FunctionInfo][]FunctionInfo`) to store the caller-callee relationships.
-4.  **Handle Recursion**: The call graph must handle recursive calls gracefully. `symgo`'s built-in bounded recursion will prevent infinite loops during analysis. The output formatting step will use the UID mechanism in `--expand` mode to represent cycles.
+3.  **Trace Execution**: For each entry point function, start symbolic execution using the `symgo` evaluator to build a complete call graph (e.g., a map `map[FunctionInfo][]FunctionInfo`).
+4.  **Filter for Top-Level Functions**: After the full call graph is constructed:
+    - Create a set of all functions that have been *called* at least once by iterating through the values of the call graph map.
+    - Filter the initial list of entry points from step 2, keeping only those that are *not* present in the "callee" set. These are the true top-level functions.
+5.  **Post-Processing**:
+    - **Accessor/Getter/Setter Detection**: Analyze each `scanner.FunctionInfo` node in the graph. Analyze the function's body to determine if it's a simple accessor (e.g., a single return statement of a struct field). This information will be stored with the node.
+6.  **Handle Recursion**: The call graph must handle recursive calls gracefully. `symgo`'s built-in bounded recursion will prevent infinite loops during analysis. The output formatting step will use the UID mechanism in `--expand` mode to represent cycles.
 
 ### d. Output Formatting
 
 - The output logic will be chosen based on the `--short` and `--expand` flags.
+- The recursive printer will be initialized with the filtered list of true top-level functions.
 - **Default/Short Mode**: A recursive function will traverse the graph, printing function signatures. The `--short` flag will cause it to print `(...)` for arguments.
 - **Expand Mode**:
     - A pre-traversal step will assign a unique integer ID to every function node in the graph.

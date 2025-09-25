@@ -51,6 +51,10 @@ func TestGoInspect(t *testing.T) {
 			pkgPattern:   "./testdata/src/...",
 			expandFormat: true,
 		},
+		{
+			name:       "toplevel",
+			pkgPattern: "./testdata/src/toplevel",
+		},
 	}
 
 	for _, tc := range testCases {

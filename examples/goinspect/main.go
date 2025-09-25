@@ -421,36 +421,57 @@ func (p *Printer) formatFunc(f *scanner.FunctionInfo) string {
 		return "<nil>"
 	}
 
-	// Helper function to trim the prefix from a qualified path.
+	// trim is a helper function that removes the module prefix from a given string.
+	// It correctly handles package paths and fully qualified type names for
+	// both root packages and sub-packages.
 	trim := func(s string) string {
 		if p.TrimPrefix == "" {
 			return s
 		}
-		// Use strings.ReplaceAll to handle cases like "(*pkg.Type)"
-		// Add a "/" to avoid trimming "github.com/foo/bar" from "github.com/foo/bar-baz".
-		return strings.ReplaceAll(s, p.TrimPrefix+"/", "")
+		// First, replace the prefix for sub-packages (e.g., "my/module/pkg" -> "pkg").
+		// This also handles nested types like "(*my/module/pkg.Type)".
+		res := strings.ReplaceAll(s, p.TrimPrefix+"/", "")
+		// Second, replace the prefix for root package types (e.g., "my/module.Type" -> "Type").
+		res = strings.ReplaceAll(res, p.TrimPrefix+".", "")
+		// Finally, if the string was the module path itself, it will not have been
+		// modified by the replacements. In this case, return an empty string.
+		if res == p.TrimPrefix {
+			return ""
+		}
+		return res
 	}
 
 	var b strings.Builder
 	b.WriteString("func ")
+
 	if f.Receiver != nil {
+		// Method: func (receiver) MethodName(...)
 		b.WriteString("(")
 		b.WriteString(trim(f.Receiver.Type.String()))
 		b.WriteString(")")
 		b.WriteString(".")
 	} else {
-		b.WriteString(trim(f.PkgPath))
-		b.WriteString(".")
+		// Function: func pkg.FuncName(...)
+		trimmedPkgPath := trim(f.PkgPath)
+		if trimmedPkgPath != "" {
+			b.WriteString(trimmedPkgPath)
+			b.WriteString(".")
+		} else if f.PkgPath == "" {
+			// This handles interface methods where PkgPath is empty.
+			// The golden files expect a leading dot in this case (e.g., ".Greet").
+			b.WriteString(".")
+		}
 	}
+
 	b.WriteString(f.Name)
 
 	if p.Short {
 		b.WriteString("(...)")
 	} else {
 		b.WriteString("(")
-		params := []string{}
-		for _, param := range f.Parameters {
-			params = append(params, trim(param.Type.String()))
+		params := make([]string, len(f.Parameters))
+		for i, param := range f.Parameters {
+			params[i] = trim(param.Type.String())
 		}
 		b.WriteString(strings.Join(params, ", "))
 		b.WriteString(")")

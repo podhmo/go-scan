@@ -16,7 +16,7 @@ var update = flag.Bool("update", false, "update golden files")
 func TestGoInspect(t *testing.T) {
 	testCases := []struct {
 		name              string
-		pkgPattern        string
+		pkgPatterns       []string
 		targets           []string
 		trimPrefix        bool
 		includeUnexported bool
@@ -24,51 +24,55 @@ func TestGoInspect(t *testing.T) {
 		expandFormat      bool
 	}{
 		{
-			name:       "default",
-			pkgPattern: "./testdata/src/myapp",
+			name:        "default",
+			pkgPatterns: []string{"./testdata/src/myapp"},
 		},
 		{
 			name:        "short",
-			pkgPattern:  "./testdata/src/myapp",
+			pkgPatterns: []string{"./testdata/src/myapp"},
 			shortFormat: true,
 		},
 		{
-			name:         "expand",
-			pkgPattern:   "./testdata/src/myapp",
+			name:        "expand",
+			pkgPatterns: []string{"./testdata/src/myapp"},
 			expandFormat: true,
 		},
 		{
 			name:              "unexported",
-			pkgPattern:        "./testdata/src/myapp",
+			pkgPatterns:       []string{"./testdata/src/myapp"},
 			includeUnexported: true,
 		},
 		{
 			name:              "accessor",
-			pkgPattern:        "./testdata/src/features",
+			pkgPatterns:       []string{"./testdata/src/features"},
 			includeUnexported: true, // To see setters on unexported fields
 		},
 		{
-			name:       "cross_package",
-			pkgPattern: "./testdata/src/features",
+			name:        "cross_package",
+			pkgPatterns: []string{"./testdata/src/features"},
 		},
 		{
 			name:         "multi_package_expand",
-			pkgPattern:   "./testdata/src/...",
+			pkgPatterns:  []string{"./testdata/src/..."},
 			expandFormat: true,
 		},
 		{
-			name:       "toplevel",
-			pkgPattern: "./testdata/src/toplevel",
+			name:        "toplevel",
+			pkgPatterns: []string{"./testdata/src/toplevel"},
 		},
 		{
-			name:       "target_func_a",
-			pkgPattern: "./testdata/src/target",
-			targets:    []string{"github.com/podhmo/go-scan/examples/goinspect/testdata/src/target.FuncA"},
+			name:        "target_func_a",
+			pkgPatterns: []string{"./testdata/src/target"},
+			targets:     []string{"github.com/podhmo/go-scan/examples/goinspect/testdata/src/target.FuncA"},
 		},
 		{
-			name:       "trim_prefix",
-			pkgPattern: "./testdata/src/myapp",
-			trimPrefix: true,
+			name:        "trim_prefix",
+			pkgPatterns: []string{"./testdata/src/myapp"},
+			trimPrefix:  true,
+		},
+		{
+			name:        "multi_pkg_target",
+			pkgPatterns: []string{"./testdata/src/myapp", "./testdata/src/another"},
 		},
 	}
 
@@ -77,7 +81,7 @@ func TestGoInspect(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-			err := run(&buf, logger, tc.pkgPattern, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
+			err := run(&buf, logger, tc.pkgPatterns, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
 			if err != nil {
 				t.Fatalf("run() failed: %v", err)
 			}

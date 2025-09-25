@@ -40,7 +40,8 @@ func main() {
 	// 1. Define and parse command-line flags.
 	var targets stringSlice
 	flag.Var(&targets, "target", "Target function or method to inspect (e.g., mypkg.MyFunc, (*mypkg.MyType).MyMethod). Can be specified multiple times.")
-	pkgPattern := flag.String("pkg", "", "Go package pattern to inspect (e.g., ./...)")
+	var pkgPatterns stringSlice
+	flag.Var(&pkgPatterns, "pkg", "Go package pattern to inspect (e.g., ./...). Can be specified multiple times.")
 	trimPrefix := flag.Bool("trim-prefix", false, "Trim module path prefix from output")
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
@@ -49,7 +50,7 @@ func main() {
 
 	flag.Parse()
 
-	if *pkgPattern == "" {
+	if len(pkgPatterns) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -69,7 +70,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(os.Stdout, logger, *pkgPattern, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
+	if err := run(os.Stdout, logger, pkgPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
@@ -91,7 +92,7 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
 }
 
-func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
+func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 	ctx := context.Background()
 
 	// 2. Scan packages using goscan.
@@ -103,9 +104,13 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	pkgs, err := s.Scan(ctx, pkgPattern)
-	if err != nil {
-		return fmt.Errorf("failed to scan package pattern %q: %w", pkgPattern, err)
+	var pkgs []*scanner.PackageInfo
+	for _, pkgPattern := range pkgPatterns {
+		scannedPkgs, err := s.Scan(ctx, pkgPattern)
+		if err != nil {
+			return fmt.Errorf("failed to scan package pattern %q: %w", pkgPattern, err)
+		}
+		pkgs = append(pkgs, scannedPkgs...)
 	}
 
 	// Define the analysis scope.
@@ -421,36 +426,57 @@ func (p *Printer) formatFunc(f *scanner.FunctionInfo) string {
 		return "<nil>"
 	}
 
-	// Helper function to trim the prefix from a qualified path.
+	// trim is a helper function that removes the module prefix from a given string.
+	// It correctly handles package paths and fully qualified type names for
+	// both root packages and sub-packages.
 	trim := func(s string) string {
 		if p.TrimPrefix == "" {
 			return s
 		}
-		// Use strings.ReplaceAll to handle cases like "(*pkg.Type)"
-		// Add a "/" to avoid trimming "github.com/foo/bar" from "github.com/foo/bar-baz".
-		return strings.ReplaceAll(s, p.TrimPrefix+"/", "")
+		// First, replace the prefix for sub-packages (e.g., "my/module/pkg" -> "pkg").
+		// This also handles nested types like "(*my/module/pkg.Type)".
+		res := strings.ReplaceAll(s, p.TrimPrefix+"/", "")
+		// Second, replace the prefix for root package types (e.g., "my/module.Type" -> "Type").
+		res = strings.ReplaceAll(res, p.TrimPrefix+".", "")
+		// Finally, if the string was the module path itself, it will not have been
+		// modified by the replacements. In this case, return an empty string.
+		if res == p.TrimPrefix {
+			return ""
+		}
+		return res
 	}
 
 	var b strings.Builder
 	b.WriteString("func ")
+
 	if f.Receiver != nil {
+		// Method: func (receiver) MethodName(...)
 		b.WriteString("(")
 		b.WriteString(trim(f.Receiver.Type.String()))
 		b.WriteString(")")
 		b.WriteString(".")
 	} else {
-		b.WriteString(trim(f.PkgPath))
-		b.WriteString(".")
+		// Function: func pkg.FuncName(...)
+		trimmedPkgPath := trim(f.PkgPath)
+		if trimmedPkgPath != "" {
+			b.WriteString(trimmedPkgPath)
+			b.WriteString(".")
+		} else if f.PkgPath == "" {
+			// This handles interface methods where PkgPath is empty.
+			// The golden files expect a leading dot in this case (e.g., ".Greet").
+			b.WriteString(".")
+		}
 	}
+
 	b.WriteString(f.Name)
 
 	if p.Short {
 		b.WriteString("(...)")
 	} else {
 		b.WriteString("(")
-		params := []string{}
-		for _, param := range f.Parameters {
-			params = append(params, trim(param.Type.String()))
+		params := make([]string, len(f.Parameters))
+		for i, param := range f.Parameters {
+			params[i] = trim(param.Type.String())
 		}
 		b.WriteString(strings.Join(params, ", "))
 		b.WriteString(")")

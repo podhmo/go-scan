@@ -125,27 +125,47 @@ The test cases should cover a wide range of Go language features and tool config
 
 This plan can be broken down into the following concrete implementation tasks.
 
-- [ ] **1. Foundational CLI & Scanning**:
-    - [ ] Create the `main` package and basic CLI structure using the `flag` package.
-    - [ ] Implement the logic to parse the `--pkg` pattern and use `goscan` to load the packages.
-    - [ ] Implement the `--include-unexported` flag to filter the initial list of functions.
+- [x] **1. Foundational CLI & Scanning**:
+    - [x] Create the `main` package and basic CLI structure using the `flag` package.
+    - [x] Implement the logic to parse the `--pkg` pattern and use `goscan` to load the packages.
+    - [x] Implement the `--include-unexported` flag to filter the initial list of functions.
 
-- [ ] **2. Core Call-Graph Analysis**:
-    - [ ] Initialize the `symgo.Evaluator` with the scanned packages and a strict primary analysis scope.
-    - [ ] Implement the core tracing loop that iterates through entry-point functions.
-    - [ ] Implement a `Visitor` or `Trace` hook to capture function call relationships and populate a graph data structure.
+- [x] **2. Core Call-Graph Analysis**:
+    - [x] Initialize the `symgo.Evaluator` with the scanned packages and a strict primary analysis scope.
+    - [x] Implement the core tracing loop that iterates through entry-point functions.
+    - [x] Implement a `Visitor` or `Trace` hook to capture function call relationships and populate a graph data structure.
 
-- [ ] **3. Basic Hierarchical Output**:
-    - [ ] Implement a recursive printer that traverses the call graph.
-    - [ ] Produce the default indented, hierarchical text output with full function signatures.
+- [x] **3. Basic Hierarchical Output**:
+    - [x] Implement a recursive printer that traverses the call graph.
+    - [x] Produce the default indented, hierarchical text output with full function signatures.
 
-- [ ] **4. Advanced Features & Formatting**:
-    - [ ] Implement the `--short` output format.
-    - [ ] Implement the `--expand` output format, including UID assignment and reference (`#<id>`) rendering.
-    - [ ] Implement a heuristic to detect simple accessor/getter/setter functions.
-    - [ ] Add a visual marker (e.g., `[accessor]`) to the output for identified accessors.
+- [x] **4. Advanced Features & Formatting**:
+    - [x] Implement the `--short` output format.
+    - [x] Implement the `--expand` output format, including UID assignment and reference (`#<id>`) rendering.
+    - [x] Implement a heuristic to detect simple accessor/getter/setter functions.
+    - [x] Add a visual marker (e.g., `[accessor]`) to the output for identified accessors.
 
-- [ ] **5. Testing**:
-    - [ ] Create a `testdata` directory with various Go files covering the scenarios in the "Testing Strategy" section.
-    - [ ] Set up a golden-file testing framework.
-    - [ ] Add golden-file tests for the default, `--short`, and `--expand` output formats.
+- [x] **5. Testing**:
+    - [x] Create a `testdata` directory with various Go files covering the scenarios in the "Testing Strategy" section.
+    - [x] Set up a golden-file testing framework.
+    - [x] Add golden-file tests for the default, `--short`, and `--expand` output formats.
+    - [x] Add golden-file tests for accessor detection and cross-package calls.
+
+## 8. Known Limitations and Future Work
+
+The development and testing of `goinspect` have highlighted several limitations in the underlying `symgo` engine. These issues prevent `goinspect` from generating a complete call graph in certain scenarios. Addressing them will require enhancements to `symgo` itself.
+
+### a. `symgo` Engine Limitations
+
+-   **Cross-Package Call Representation**: The symbolic execution engine does not currently represent calls to functions outside the primary analysis scope as terminal nodes in the call graph. For example, a call to `another.Helper()` from a `features` package is not captured if `another` is not in the primary scope. The expected behavior is for `symgo` to yield a symbolic placeholder for such calls, which `goinspect` could then display.
+
+-   **Higher-Order and Anonymous Functions**: The engine has limited support for analyzing anonymous functions (function literals) passed as arguments to other functions. This leads to two problems in `goinspect`:
+    1.  The function signature is not resolved correctly and may appear as `unhandled_type_*ast.FuncType`.
+    2.  The symbolic execution does not trace calls made *inside* the anonymous function body.
+
+### b. `goinspect` Future Enhancements
+
+-   Once the `symgo` limitations are addressed, `goinspect` should be updated to correctly visualize the new information. This includes:
+    -   Displaying calls to functions outside the primary scope as terminal nodes.
+    -   Showing the correct signature for higher-order functions.
+    -   Including calls made from within anonymous functions in the call graph.

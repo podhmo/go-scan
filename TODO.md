@@ -101,12 +101,18 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **4. Advanced Features & Formatting**:
     - [x] Implement the `--short` output format.
     - [x] Implement the `--expand` output format, including UID assignment and reference (`#<id>`) rendering.
-    - [ ] Implement a heuristic to detect simple accessor/getter/setter functions.
-    - [ ] Add a visual marker (e.g., `[accessor]`) to the output for identified accessors.
-- [x] **5. Testing**:
+    - [x] Implement a heuristic to detect simple accessor/getter/setter functions.
+    - [x] Add a visual marker (e.g., `[accessor]`) to the output for identified accessors.
+- [-] **5. Testing**:
     - [x] Create a `testdata` directory with various Go files covering the scenarios in the "Testing Strategy" section.
     - [x] Set up a golden-file testing framework.
     - [x] Add golden-file tests for the default, `--short`, and `--expand` output formats.
+    - [x] Add golden-file tests for accessor detection and cross-package calls.
+    - **Note**: Current tests reveal limitations in `symgo`'s handling of cross-package calls and higher-order functions, which are tracked in the `symgo` section below.
+
+### `symgo`: Improve Analysis Capabilities
+- [ ] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.
+- [ ] **Higher-Order & Anonymous Functions**: Improve symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. This includes resolving the function signature correctly instead of `unhandled_type_*ast.FuncType`.
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
 - [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.

@@ -37,6 +37,15 @@ func TestGoInspect(t *testing.T) {
 			pkgPattern:        "./testdata/src/myapp",
 			includeUnexported: true,
 		},
+		{
+			name:              "accessor",
+			pkgPattern:        "./testdata/src/features",
+			includeUnexported: true, // To see setters on unexported fields
+		},
+		{
+			name:       "cross_package",
+			pkgPattern: "./testdata/src/features",
+		},
 	}
 
 	for _, tc := range testCases {

@@ -171,11 +171,13 @@ type Printer struct {
 	Out      io.Writer
 	visited  map[*scanner.FunctionInfo]bool // For preventing infinite recursion in printing
 	assigned map[*scanner.FunctionInfo]int  // For assigning UIDs in expand mode
+	printed  map[*scanner.FunctionInfo]bool // For expand=false, to print each func only once
 	nextID   int
 }
 
 // Print starts the printing process for the given entry points.
 func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
+	p.printed = make(map[*scanner.FunctionInfo]bool)
 	for _, f := range entryPoints {
 		// Only print functions that are actual entry points (not just called by other entry points).
 		// A simple heuristic: if a function is a key in the graph, it's a caller.
@@ -186,6 +188,12 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 }
 
 func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
+	// In non-expand mode, if we've already printed this function, stop.
+	if !p.Expand && p.printed[f] {
+		return
+	}
+
+	// In any mode, if we are currently visiting this node in this path, it's a cycle.
 	if p.visited[f] {
 		if p.Expand {
 			fmt.Fprintf(p.Out, "%s%s #%d\n", strings.Repeat("  ", indent), formatFunc(f, p.Short), p.assigned[f])
@@ -194,26 +202,81 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 	}
 
 	// Assign UID if in expand mode and not yet assigned
+	formatted := formatFunc(f, p.Short)
+	if isAccessor(f) {
+		formatted += " [accessor]"
+	}
+
 	if p.Expand {
 		if _, ok := p.assigned[f]; !ok {
 			p.nextID++
 			p.assigned[f] = p.nextID
 		}
-		fmt.Fprintf(p.Out, "%s%s #%d\n", strings.Repeat("  ", indent), formatFunc(f, p.Short), p.assigned[f])
+		fmt.Fprintf(p.Out, "%s%s #%d\n", strings.Repeat("  ", indent), formatted, p.assigned[f])
 	} else {
-		fmt.Fprintf(p.Out, "%s%s\n", strings.Repeat("  ", indent), formatFunc(f, p.Short))
+		fmt.Fprintf(p.Out, "%s%s\n", strings.Repeat("  ", indent), formatted)
 	}
-
+	p.printed[f] = true
 	p.visited[f] = true
 
 	if callees, ok := p.Graph[f]; ok {
+		// Remove duplicates to prevent printing the same callee multiple times under one caller
+		uniqueCallees := make([]*scanner.FunctionInfo, 0, len(callees))
+		seen := make(map[*scanner.FunctionInfo]bool)
 		for _, callee := range callees {
+			if !seen[callee] {
+				uniqueCallees = append(uniqueCallees, callee)
+				seen[callee] = true
+			}
+		}
+
+		for _, callee := range uniqueCallees {
 			p.printRecursive(callee, indent+1)
 		}
 	}
 
 	// Reset visited flag for this path to allow it to be printed in other branches
 	p.visited[f] = false
+}
+
+// isAccessor checks if a function is a simple getter or setter.
+func isAccessor(f *scanner.FunctionInfo) bool {
+	if f == nil || f.AstDecl == nil || f.AstDecl.Recv == nil || f.AstDecl.Body == nil || len(f.AstDecl.Body.List) != 1 {
+		return false
+	}
+
+	stmt := f.AstDecl.Body.List[0]
+
+	// Getter heuristic
+	// e.g., func (d *Data) GetID() string { return d.id }
+	if len(f.Parameters) == 0 && len(f.Results) == 1 {
+		if ret, ok := stmt.(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+			if sel, ok := ret.Results[0].(*ast.SelectorExpr); ok {
+				if ident, ok := sel.X.(*ast.Ident); ok {
+					// Check if the receiver name matches
+					if len(f.AstDecl.Recv.List) > 0 && len(f.AstDecl.Recv.List[0].Names) > 0 {
+						return ident.Name == f.AstDecl.Recv.List[0].Names[0].Name
+					}
+				}
+			}
+		}
+	}
+
+	// Setter heuristic
+	// e.g., func (d *Data) SetName(name string) { d.name = name }
+	if len(f.Parameters) == 1 && len(f.Results) == 0 {
+		if assign, ok := stmt.(*ast.AssignStmt); ok && len(assign.Lhs) == 1 && len(assign.Rhs) == 1 {
+			if sel, ok := assign.Lhs[0].(*ast.SelectorExpr); ok {
+				if ident, ok := sel.X.(*ast.Ident); ok {
+					if len(f.AstDecl.Recv.List) > 0 && len(f.AstDecl.Recv.List[0].Names) > 0 {
+						return ident.Name == f.AstDecl.Recv.List[0].Names[0].Name
+					}
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 // formatFunc formats the function info into a string.

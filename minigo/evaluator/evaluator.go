@@ -2385,9 +2385,7 @@ func (e *Evaluator) extendMethodEnv(method *object.BoundMethod, args []object.Ob
 		lastParam := fn.Parameters.List[len(fn.Parameters.List)-1]
 		variadicArgs := args[len(fn.Parameters.List)-1:]
 		arr := &object.Array{Elements: make([]object.Object, len(variadicArgs))}
-		for i, arg := range variadicArgs {
-			arr.Elements[i] = arg
-		}
+		copy(arr.Elements, variadicArgs)
 		env.Set(lastParam.Names[0].Name, arr)
 	} else {
 		// Bind regular parameters
@@ -2447,9 +2445,7 @@ func (e *Evaluator) extendFunctionEnv(env *object.Environment, fn *object.Functi
 		lastParam := fn.Parameters.List[len(fn.Parameters.List)-1]
 		variadicArgs := args[len(fn.Parameters.List)-1:]
 		arr := &object.Array{Elements: make([]object.Object, len(variadicArgs))}
-		for i, arg := range variadicArgs {
-			arr.Elements[i] = arg
-		}
+		copy(arr.Elements, variadicArgs)
 		// The variadic parameter has only one name.
 		env.Set(lastParam.Names[0].Name, arr)
 

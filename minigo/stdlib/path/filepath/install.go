@@ -21,7 +21,6 @@ func Install(interp *minigo.Interpreter) {
 		"Ext":           filepath.Ext,
 		"FromSlash":     filepath.FromSlash,
 		"Glob":          filepath.Glob,
-		"HasPrefix":     filepath.HasPrefix,
 		"IsAbs":         filepath.IsAbs,
 		"IsLocal":       filepath.IsLocal,
 		"Join":          filepath.Join,

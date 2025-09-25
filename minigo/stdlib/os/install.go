@@ -3,6 +3,7 @@
 package os
 
 import (
+	"io"
 	"os"
 	"reflect"
 
@@ -100,9 +101,9 @@ func Install(interp *minigo.Interpreter) {
 		"Remove":              os.Remove,
 		"RemoveAll":           os.RemoveAll,
 		"Rename":              os.Rename,
-		"SEEK_CUR":            os.SEEK_CUR,
-		"SEEK_END":            os.SEEK_END,
-		"SEEK_SET":            os.SEEK_SET,
+		"SEEK_CUR":            io.SeekCurrent,
+		"SEEK_END":            io.SeekEnd,
+		"SEEK_SET":            io.SeekStart,
 		"SameFile":            os.SameFile,
 		"Setenv":              os.Setenv,
 		"StartProcess":        os.StartProcess,

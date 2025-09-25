@@ -1,6 +1,7 @@
 package minigo_test
 
 import (
+	"context"
 	"go/ast"
 	"go/token"
 	"testing"
@@ -32,7 +33,7 @@ func main() {
 		t.Fatalf("failed to load file: %v", err)
 	}
 
-	_, err = interp.Eval(nil)
+	_, err = interp.Eval(context.TODO())
 	if err != nil {
 		t.Fatalf("eval failed: %v", err)
 	}
@@ -87,7 +88,7 @@ func main() {
 		t.Fatalf("failed to load file: %v", err)
 	}
 
-	_, err = interp.Eval(nil)
+	_, err = interp.Eval(context.TODO())
 	if err != nil {
 		t.Fatalf("eval failed: %v", err)
 	}
@@ -123,7 +124,7 @@ func main() {
 		t.Fatalf("failed to load file: %v", err)
 	}
 
-	_, err = interp.Eval(nil)
+	_, err = interp.Eval(context.TODO())
 	if err == nil {
 		t.Fatal("expected error for undefined special form, but got nil")
 	}
@@ -157,7 +158,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("failed to load file: %v", err)
 	}
-	_, err = interp.Eval(nil)
+	_, err = interp.Eval(context.TODO())
 	if err != nil {
 		t.Fatalf("eval failed: %v", err)
 	}

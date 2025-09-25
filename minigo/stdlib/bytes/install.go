@@ -7,6 +7,8 @@ import (
 	"reflect"
 
 	"github.com/podhmo/go-scan/minigo"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // Install binds all exported symbols from the "bytes" package to the interpreter.
@@ -57,9 +59,11 @@ func Install(interp *minigo.Interpreter) {
 		"SplitAfterSeq":   bytes.SplitAfterSeq,
 		"SplitN":          bytes.SplitN,
 		"SplitSeq":        bytes.SplitSeq,
-		"Title":           bytes.Title,
-		"ToLower":         bytes.ToLower,
-		"ToLowerSpecial":  bytes.ToLowerSpecial,
+		"Title": func(b []byte) []byte {
+			return cases.Title(language.English).Bytes(b)
+		},
+		"ToLower":        bytes.ToLower,
+		"ToLowerSpecial": bytes.ToLowerSpecial,
 		"ToTitle":         bytes.ToTitle,
 		"ToTitleSpecial":  bytes.ToTitleSpecial,
 		"ToUpper":         bytes.ToUpper,

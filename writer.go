@@ -111,7 +111,7 @@ func (pd *PackageDirectory) SaveGoFile(ctx context.Context, gf GoFile, filename 
 			slog.Any("error", err),
 			slog.String("unformatted_code", finalOutput.String()), // Be cautious with large code strings
 		)
-		return fmt.Errorf("failed to format generated code for package %s (file: %s): %w. Unformatted code logged.", pkgName, filename, err)
+		return fmt.Errorf("failed to format generated code for package %s (file: %s): %w. Unformatted code logged", pkgName, filename, err)
 	}
 
 	// Ensure the directory exists
@@ -147,13 +147,6 @@ const (
 // FileWriter is an interface for writing files, allowing for interception during tests.
 type FileWriter interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
-}
-
-// defaultFileWriter is the default implementation of FileWriter that writes to the filesystem.
-type defaultFileWriter struct{}
-
-func (w *defaultFileWriter) WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error {
-	return os.WriteFile(path, data, perm)
 }
 
 // WriteFile is a context-aware file writing function.

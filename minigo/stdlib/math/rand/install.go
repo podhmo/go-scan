@@ -26,8 +26,6 @@ func Install(interp *minigo.Interpreter) {
 		"NewZipf":     rand.NewZipf,
 		"NormFloat64": rand.NormFloat64,
 		"Perm":        rand.Perm,
-		"Read":        rand.Read,
-		"Seed":        rand.Seed,
 		"Shuffle":     rand.Shuffle,
 		"Uint32":      rand.Uint32,
 		"Uint64":      rand.Uint64,

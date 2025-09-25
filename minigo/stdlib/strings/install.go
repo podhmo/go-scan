@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/podhmo/go-scan/minigo"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // Install binds all exported symbols from the "strings" package to the interpreter.
@@ -52,7 +54,9 @@ func Install(interp *minigo.Interpreter) {
 		"SplitAfterSeq":  strings.SplitAfterSeq,
 		"SplitN":         strings.SplitN,
 		"SplitSeq":       strings.SplitSeq,
-		"Title":          strings.Title,
+		"Title": func(s string) string {
+			return cases.Title(language.English).String(s)
+		},
 		"ToLower":        strings.ToLower,
 		"ToLowerSpecial": strings.ToLowerSpecial,
 		"ToTitle":        strings.ToTitle,

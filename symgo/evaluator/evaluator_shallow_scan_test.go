@@ -696,25 +696,6 @@ func findPackage(t *testing.T, pkgs []*goscan.Package, path string) *goscan.Pack
 	return nil
 }
 
-// findFunc is a test helper to find a function object by its name in a package.
-func findFunc(t *testing.T, pkg *goscan.Package, name string) *object.Function {
-	t.Helper()
-	for _, f := range pkg.Functions {
-		if f.Name == name {
-			return &object.Function{
-				Name:       f.AstDecl.Name,
-				Parameters: f.AstDecl.Type.Params,
-				Body:       f.AstDecl.Body,
-				Decl:       f.AstDecl,
-				Package:    pkg,
-				Def:        f,
-				// Env is intentionally nil, will be set by evaluator
-			}
-		}
-	}
-	t.Fatalf("function %q not found in package %q", name, pkg.ImportPath)
-	return nil
-}
 
 func TestShallowScan_FindMethodOnUnresolvedEmbeddedType(t *testing.T) {
 	code := `

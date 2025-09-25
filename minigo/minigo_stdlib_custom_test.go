@@ -642,8 +642,7 @@ var err = scanner.Err()
 	stdstrings.Install(interp)
 
 	// We expect this to fail during LoadFile
-	var err error
-	err = interp.LoadFile("test.mgo", []byte(script))
+	err := interp.LoadFile("test.mgo", []byte(script))
 	if err == nil {
 		t.Fatalf("expected script parsing to fail, but it succeeded")
 	}
@@ -769,14 +768,13 @@ var _ = slices.Sort(s)
 	interp := newTestInterpreter(t)
 
 	// The slices package is loaded from source, so no Install() call is needed.
-	var err error
-	err = interp.LoadFile("test.mgo", []byte(script))
+	err := interp.LoadFile("test.mgo", []byte(script))
 	if err != nil {
 		t.Fatalf("expected script loading to succeed, but it failed: %v", err)
 	}
 
 	// Now Eval the script
-	if _, err := interp.Eval(context.Background()); err != nil {
+	if _, err = interp.Eval(context.Background()); err != nil {
 		t.Fatalf("failed to evaluate script: %+v", err)
 	}
 
@@ -1053,8 +1051,7 @@ var err = json.Unmarshal(data, &p)
 	}
 
 	// We expect Eval to fail because our type checking should generate an error.
-	var err error
-	_, err = interp.Eval(context.Background())
+	_, err := interp.Eval(context.Background())
 	if err == nil {
 		t.Fatalf("expected evaluation to fail with a type error, but it succeeded")
 	}

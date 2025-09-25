@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
@@ -126,7 +125,12 @@ func New(startPath string, options ...Option) (*Locator, error) {
 	}
 
 	if l.UseGoModuleResolver {
-		l.goRoot = runtime.GOROOT()
+		goRoot, err := getGoRoot()
+		if err != nil {
+			return nil, fmt.Errorf("could not determine GOROOT: %w", err)
+		}
+		l.goRoot = goRoot
+
 		cache, err := getGoModCache()
 		if err != nil {
 			return nil, fmt.Errorf("could not determine go mod cache location: %w", err)
@@ -366,6 +370,15 @@ func getGoModCache() (string, error) {
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to run 'go env GOMODCACHE': %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func getGoRoot() (string, error) {
+	cmd := exec.Command("go", "env", "GOROOT")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to run 'go env GOROOT': %w", err)
 	}
 	return strings.TrimSpace(string(output)), nil
 }

@@ -482,7 +482,7 @@ func TestScanWithOverlay(t *testing.T) {
 	absTestDir, _ := filepath.Abs(testDir)
 	modulePath := "example.com/basic"
 
-	overlayContent := fmt.Sprintf("package basic\n\n// In-memory version of a struct\ntype User struct {\n\tID   int    `json:\"id\"`\n\tName string `json:\"name\"`\n}\n")
+	overlayContent := "package basic\n\n// In-memory version of a struct\ntype User struct {\n\tID   int    `json:\"id\"`\n\tName string `json:\"name\"`\n}\n"
 	overlay := Overlay{
 		"basic.go": []byte(overlayContent),
 	}

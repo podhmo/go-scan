@@ -1,9 +1,10 @@
 package minigo_test
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -13,7 +14,10 @@ import (
 // Test via loading original go source
 func TestStdlibSource(t *testing.T) {
 	// t.Skip("Skipping tests for source-loaded stdlib packages due to unresolved issues with environment handling for generics (see docs/trouble-type-list-interface.md)")
-	goroot := runtime.GOROOT()
+	goroot, err := getGoRoot()
+	if err != nil {
+		t.Fatalf("could not get GOROOT: %v", err)
+	}
 	if goroot == "" {
 		t.Skip("GOROOT not found, skipping test")
 	}
@@ -132,4 +136,13 @@ func main() {
 			}
 		})
 	}
+}
+
+func getGoRoot() (string, error) {
+	cmd := exec.Command("go", "env", "GOROOT")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to run 'go env GOROOT': %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }

@@ -103,9 +103,7 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string, pkgDirPath 
 		relPath = "."
 	}
 	importPath := filepath.ToSlash(filepath.Join(s.modulePath, relPath))
-	if strings.HasSuffix(importPath, "/.") {
-		importPath = importPath[:len(importPath)-2]
-	}
+	importPath = strings.TrimSuffix(importPath, "/.")
 
 	return s.scanGoFiles(ctx, filePaths, pkgDirPath, importPath)
 }
@@ -1142,7 +1140,7 @@ func (s *Scanner) resolveFieldType(ctx context.Context, expr ast.Expr, currentTy
 		if !ok {
 			return &FieldType{Name: fmt.Sprintf("unsupported_selector_expr.%s", t.Sel.Name)}
 		}
-		pkgImportPath, _ := importLookup[pkgIdent.Name]
+		pkgImportPath := importLookup[pkgIdent.Name]
 		qualifiedName := fmt.Sprintf("%s.%s", pkgImportPath, t.Sel.Name)
 
 		// Check for external type overrides first.

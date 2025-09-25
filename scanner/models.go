@@ -518,6 +518,7 @@ type VariableInfo struct {
 // FunctionInfo represents a single top-level function or method declaration.
 type FunctionInfo struct {
 	Name       string           `json:"name"`
+	PkgPath    string           `json:"pkgPath"`
 	FilePath   string           `json:"filePath"`
 	Doc        string           `json:"doc,omitempty"`
 	Receiver   *FieldInfo       `json:"receiver,omitempty"`

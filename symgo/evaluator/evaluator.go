@@ -36,7 +36,7 @@ type Evaluator struct {
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
-	callStack         []*callFrame
+	callStack         []*CallFrame
 	interfaceBindings map[string]interfaceBinding
 	resolver          *Resolver
 	defaultIntrinsic  intrinsics.IntrinsicFunc
@@ -79,7 +79,22 @@ type Evaluator struct {
 	memoizationCache map[token.Pos]object.Object
 }
 
-type callFrame struct {
+// contextKey is a private type to avoid collisions with other packages' context keys.
+type contextKey string
+
+const (
+	// callFrameKey is the context key for the current call frame.
+	callFrameKey contextKey = "callFrame"
+)
+
+// FrameFromContext returns the call frame from the context, if one exists.
+func FrameFromContext(ctx context.Context) (*CallFrame, bool) {
+	frame, ok := ctx.Value(callFrameKey).(*CallFrame)
+	return frame, ok
+}
+
+// CallFrame represents a single frame in the symbolic execution call stack.
+type CallFrame struct {
 	Function    string
 	Pos         token.Pos
 	Fn          *object.Function
@@ -93,7 +108,7 @@ type interfaceBinding struct {
 	IsPointer    bool
 }
 
-func (f *callFrame) String() string {
+func (f *CallFrame) String() string {
 	return f.Function
 }
 
@@ -3146,7 +3161,14 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		// The default intrinsic is a "catch-all" handler that can be used for logging,
 		// dependency tracking, etc. It receives the function object itself as the first
 		// argument, followed by the regular arguments.
-		e.defaultIntrinsic(ctx, append([]object.Object{function}, args...)...)
+
+		// Pass the current call frame in the context so the intrinsic can know the caller.
+		intrinsicCtx := ctx
+		if len(e.callStack) > 0 {
+			callerFrame := e.callStack[len(e.callStack)-1]
+			intrinsicCtx = context.WithValue(ctx, callFrameKey, callerFrame)
+		}
+		e.defaultIntrinsic(intrinsicCtx, append([]object.Object{function}, args...)...)
 	}
 
 	result := e.applyFunction(ctx, function, args, pkg, n.Pos())
@@ -3330,7 +3352,7 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		}
 	}
 
-	frame := &callFrame{Function: name, Pos: callPos, Args: args}
+	frame := &CallFrame{Function: name, Pos: callPos, Args: args}
 	if f, ok := fn.(*object.Function); ok {
 		frame.Fn = f
 		if f.Receiver != nil {

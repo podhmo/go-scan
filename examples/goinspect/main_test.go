@@ -94,7 +94,7 @@ func Recur(n int) {
 	flagVerbose = flag.Bool("v", false, "verbose output")
 
 
-	err := run(context.Background(), dir)
+	err = run(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

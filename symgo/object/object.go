@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/token"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ const (
 	INSTANCE_OBJ              ObjectType = "INSTANCE"
 	VARIABLE_OBJ              ObjectType = "VARIABLE"
 	POINTER_OBJ               ObjectType = "POINTER"
+	STRUCT_OBJ                ObjectType = "STRUCT"
 	NIL_OBJ                   ObjectType = "NIL"
 	SLICE_OBJ                 ObjectType = "SLICE"
 	MAP_OBJ                   ObjectType = "MAP"
@@ -470,6 +472,54 @@ func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
 // Inspect returns a string representation of the pointer.
 func (p *Pointer) Inspect() string {
 	return fmt.Sprintf("&%s", p.Value.Inspect())
+}
+
+// --- Struct Object ---
+
+// Struct represents a struct instance. Its type is represented by a TypeInfo.
+type Struct struct {
+	BaseObject
+	StructType *scanner.TypeInfo
+	Fields     map[string]Object
+}
+
+// Type returns the type of the Struct object.
+func (s *Struct) Type() ObjectType { return STRUCT_OBJ }
+
+// Inspect returns a string representation of the struct.
+func (s *Struct) Inspect() string {
+	var out bytes.Buffer
+	pairs := []string{}
+	// Sort keys for consistent output
+	keys := make([]string, 0, len(s.Fields))
+	for k := range s.Fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := s.Fields[k]
+		pairs = append(pairs, fmt.Sprintf("%s: %s", k, v.Inspect()))
+	}
+
+	out.WriteString("{")
+	out.WriteString(strings.Join(pairs, ", "))
+	out.WriteString("}")
+	return out.String()
+}
+
+// Get retrieves a field from the struct.
+func (s *Struct) Get(name string) (Object, bool) {
+	val, ok := s.Fields[name]
+	return val, ok
+}
+
+// Set sets a field in the struct.
+func (s *Struct) Set(name string, val Object) {
+	if s.Fields == nil {
+		s.Fields = make(map[string]Object)
+	}
+	s.Fields[name] = val
 }
 
 // --- Nil Object ---

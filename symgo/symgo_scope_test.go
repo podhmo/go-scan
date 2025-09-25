@@ -57,6 +57,73 @@ func DoSomething() {}
 	}
 }
 
+// TestIntraPackageScopeResolution checks if the evaluator can resolve types
+// defined in the same package as the function being evaluated. This was
+// identified as a problem when running `goinspect` and other tools that
+// analyze a package's own code.
+func TestIntraPackageScopeResolution(t *testing.T) {
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod": "module example.com/myapp\ngo 1.21",
+			"main.go": `
+package main
+
+// MyType is a simple struct.
+type MyType struct {
+	Name string
+}
+
+// NewMyType creates a new instance of MyType.
+// The evaluator should be able to find the 'MyType' identifier.
+func NewMyType() *MyType {
+	return &MyType{Name: "test"}
+}
+`,
+		},
+		EntryPoint: "example.com/myapp.NewMyType",
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
+		}
+
+		// The result should be a pointer to an Instance object.
+		ptr := symgotest.AssertAs[*object.Pointer](r, t, 0)
+		inst, ok := ptr.Value.(*object.Instance)
+		if !ok {
+			t.Fatalf("Expected pointer to an Instance, but got pointer to %T", ptr.Value)
+		}
+
+		// The underlying type of the instance should be correctly resolved.
+		if inst.TypeInfo() == nil || inst.TypeInfo().Name != "MyType" {
+			t.Errorf("Expected instance of MyType, but got %v", inst.TypeInfo())
+		}
+
+		// The underlying value should be a Struct object with the correct fields.
+		s, ok := inst.Underlying.(*object.Struct)
+		if !ok {
+			t.Fatalf("Expected Instance to have an underlying Struct, but got %T", inst.Underlying)
+		}
+		if s == nil {
+			t.Fatalf("Expected an underlying struct, but got nil")
+		}
+		nameProp, ok := s.Get("Name")
+		if !ok {
+			t.Fatal("Expected struct to have 'Name' property")
+		}
+		nameVal, ok := nameProp.(*object.String)
+		if !ok {
+			t.Fatalf("Expected 'Name' property to be a string, got %T", nameProp)
+		}
+		if nameVal.Value != "test" {
+			t.Errorf("want Name to be %q, got %q", "test", nameVal.Value)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
 func TestScopesAndUnexportedResolution(t *testing.T) {
 	baseFiles := map[string]string{
 		"myapp/go.mod": "module example.com/myapp\ngo 1.21\nreplace example.com/lib => ../lib",

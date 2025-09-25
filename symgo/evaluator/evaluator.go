@@ -764,8 +764,54 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return sliceObj
 	}
 
-	if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
-		resolvedType.Kind = scan.StructKind
+	if resolvedType != nil && resolvedType.Unresolved && resolvedType.Kind == scan.UnknownKind {
+		// This is an unresolved type used in a composite literal. We can infer its kind.
+		isStructLike := false
+		if len(node.Elts) > 0 {
+			if _, ok := node.Elts[0].(*ast.KeyValueExpr); ok {
+				isStructLike = true
+			}
+		} else {
+			// An empty literal {} is ambiguous, but often a struct.
+			isStructLike = true
+		}
+
+		if isStructLike {
+			e.logc(ctx, slog.LevelDebug, "inferred struct kind for unresolved type", "type", resolvedType.Name)
+			resolvedType.Kind = scan.StructKind
+		}
+	}
+
+	if resolvedType != nil && resolvedType.Kind == scan.StructKind && !resolvedType.Unresolved {
+		structObj := &object.Struct{
+			StructType: resolvedType,
+			Fields:     make(map[string]object.Object),
+		}
+		structObj.SetTypeInfo(resolvedType)
+		structObj.SetFieldType(fieldType)
+
+		for _, elt := range node.Elts {
+			if kv, ok := elt.(*ast.KeyValueExpr); ok {
+				if key, ok := kv.Key.(*ast.Ident); ok {
+					val := e.Eval(ctx, kv.Value, env, pkg)
+					if isError(val) {
+						return val
+					}
+					structObj.Set(key.Name, val)
+				}
+			}
+			// TODO: Handle positional struct fields.
+		}
+		// Return an Instance that wraps the Struct, for compatibility with method lookups.
+		instance := &object.Instance{
+			TypeName:   resolvedType.PkgPath + "." + resolvedType.Name,
+			Underlying: structObj,
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo: resolvedType,
+			},
+		}
+		instance.SetFieldType(fieldType)
+		return instance
 	}
 
 	if resolvedType == nil || resolvedType.Unresolved {
@@ -1448,6 +1494,20 @@ func (e *Evaluator) ensurePackageEnvPopulated(ctx context.Context, pkgObj *objec
 		env.SetLocal(c.Name, constObj)
 	}
 
+	// Populate types
+	e.logger.DebugContext(ctx, "populating package-level types", "package", pkgInfo.ImportPath)
+	for _, t := range pkgInfo.Types {
+		if !shouldScan && !ast.IsExported(t.Name) {
+			continue
+		}
+		typeObj := &object.Type{
+			TypeName:     t.Name,
+			ResolvedType: t,
+		}
+		typeObj.SetTypeInfo(t)
+		env.SetLocal(t.Name, typeObj)
+	}
+
 	// Populate variables (lazily)
 	for _, v := range pkgInfo.Variables {
 		if !shouldScan && !v.IsExported {
@@ -1909,6 +1969,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return unresolvedFn
 
 	case *object.Instance:
+		// First, check for direct field access on the underlying struct, if it exists.
+		if structVal, ok := val.Underlying.(*object.Struct); ok {
+			if field, ok := structVal.Get(n.Sel.Name); ok {
+				return field
+			}
+		}
+
+		// Next, check for intrinsics based on the instance's type name.
 		key := fmt.Sprintf("(%s).%s", val.TypeName, n.Sel.Name)
 		if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 			self := val
@@ -1926,7 +1994,9 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			return &object.Intrinsic{Fn: fn}
 		}
 
-		// Fallback to searching for the method on the instance's type.
+		// Fallback to searching for methods and fields via static type info.
+		// This handles method calls and access to fields (including embedded ones)
+		// that might not be present in the concrete Fields map of the object.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
 			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
 				return method
@@ -1934,6 +2004,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			// If not a method, check if it's a field on the struct (including embedded).
 			if typeInfo.Struct != nil {
 				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+					// We need to resolve the field against the instance `val`, not the underlying struct.
 					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
 			}

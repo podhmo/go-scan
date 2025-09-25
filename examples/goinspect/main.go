@@ -9,6 +9,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
@@ -151,33 +152,58 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexporte
 
 	// 5. Print the call graph.
 	p := &Printer{
-		Graph:    graph,
-		Short:    shortFormat,
-		Expand:   expandFormat,
-		Out:      out,
-		visited:  make(map[*scanner.FunctionInfo]bool),
-		assigned: make(map[*scanner.FunctionInfo]int),
+		Graph:  graph,
+		Short:  shortFormat,
+		Expand: expandFormat,
+		Out:    out,
+		// visited and assigned are initialized in Print()
 	}
 	p.Print(entryPoints)
 
 	return nil
 }
 
+// getFuncID generates a unique and stable identifier for a function.
+// It uses the package's unique ID and the function's syntax position.
+func getFuncID(f *scanner.FunctionInfo) string {
+	if f == nil {
+		return ""
+	}
+	pkgID := f.PkgPath
+	if f.Pkg != nil {
+		pkgID = f.Pkg.ID
+	}
+	var pos int
+	if f.AstDecl != nil {
+		pos = int(f.AstDecl.Pos())
+	}
+	return fmt.Sprintf("%s:%d", pkgID, pos)
+}
+
 // Printer handles the output of the call graph.
 type Printer struct {
-	Graph    callGraph
-	Short    bool
-	Expand   bool
-	Out      io.Writer
-	visited  map[*scanner.FunctionInfo]bool // For preventing infinite recursion in printing
-	assigned map[*scanner.FunctionInfo]int  // For assigning UIDs in expand mode
-	printed  map[*scanner.FunctionInfo]bool // For expand=false, to print each func only once
+	Graph  callGraph
+	Short  bool
+	Expand bool
+	Out    io.Writer
+
+	// State for printing
+	visited  map[string]bool // Key: func ID. For preventing infinite recursion in printing.
+	assigned map[string]int  // Key: func ID. For assigning numeric UIDs in expand mode.
 	nextID   int
 }
 
 // Print starts the printing process for the given entry points.
 func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
-	p.printed = make(map[*scanner.FunctionInfo]bool)
+	p.visited = make(map[string]bool)
+	p.assigned = make(map[string]int)
+	p.nextID = 0
+
+	// Create a stable sort order for the entry points to ensure deterministic output.
+	sort.Slice(entryPoints, func(i, j int) bool {
+		return getFuncID(entryPoints[i]) < getFuncID(entryPoints[j])
+	})
+
 	for _, f := range entryPoints {
 		// Only print functions that are actual entry points (not just called by other entry points).
 		// A simple heuristic: if a function is a key in the graph, it's a caller.
@@ -188,55 +214,85 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 }
 
 func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
-	// In non-expand mode, if we've already printed this function, stop.
-	if !p.Expand && p.printed[f] {
-		return
-	}
+	id := getFuncID(f)
 
-	// In any mode, if we are currently visiting this node in this path, it's a cycle.
-	if p.visited[f] {
-		if p.Expand {
-			fmt.Fprintf(p.Out, "%s%s #%d\n", strings.Repeat("  ", indent), formatFunc(f, p.Short), p.assigned[f])
-		}
-		return
-	}
-
-	// Assign UID if in expand mode and not yet assigned
-	formatted := formatFunc(f, p.Short)
+	accessorPrefix := ""
 	if isAccessor(f) {
-		formatted += " [accessor]"
+		accessorPrefix = "[accessor] "
 	}
+	formatted := formatFunc(f, p.Short)
 
-	if p.Expand {
-		if _, ok := p.assigned[f]; !ok {
-			p.nextID++
-			p.assigned[f] = p.nextID
+	// Default mode (expand=false): Use IDs to show a function's tree only once.
+	if !p.Expand {
+		if num, ok := p.assigned[id]; ok {
+			// This function has been printed before, just show its reference.
+			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, num)
+			return
 		}
-		fmt.Fprintf(p.Out, "%s%s #%d\n", strings.Repeat("  ", indent), formatted, p.assigned[f])
-	} else {
-		fmt.Fprintf(p.Out, "%s%s\n", strings.Repeat("  ", indent), formatted)
 	}
-	p.printed[f] = true
-	p.visited[f] = true
 
-	if callees, ok := p.Graph[f]; ok {
-		// Remove duplicates to prevent printing the same callee multiple times under one caller
-		uniqueCallees := make([]*scanner.FunctionInfo, 0, len(callees))
-		seen := make(map[*scanner.FunctionInfo]bool)
-		for _, callee := range callees {
-			if !seen[callee] {
-				uniqueCallees = append(uniqueCallees, callee)
-				seen[callee] = true
+	// Cycle detection (for both modes). If we are currently visiting this node in this path, it's a cycle.
+	if p.visited[id] {
+		cycleRef := ""
+		// In default mode, a cycle to a node that's already been fully printed
+		// would have been caught by the `p.assigned` check above. This `p.visited`
+		// check is for cycles within a *single* new call tree that we are in the
+		// process of printing for the first time.
+		if !p.Expand {
+			if num, ok := p.assigned[id]; ok {
+				cycleRef = fmt.Sprintf(" #%d", num)
 			}
 		}
+		fmt.Fprintf(p.Out, "%s%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), accessorPrefix, formatted, cycleRef)
+		return
+	}
+
+	// Mark as visited for the current path traversal.
+	p.visited[id] = true
+
+	// --- Printing Logic (Corrected) ---
+	// - expand=false (default): show ID on first appearance, reference on subsequent.
+	// - expand=true: show full tree every time, no IDs.
+	if !p.Expand {
+		// First time seeing this function in default mode. Assign an ID and print it.
+		p.nextID++
+		p.assigned[id] = p.nextID
+		fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, p.nextID)
+	} else {
+		// Expand mode: just print the formatted function, no ID.
+		fmt.Fprintf(p.Out, "%s%s%s\n", strings.Repeat("  ", indent), accessorPrefix, formatted)
+	}
+
+	// Recursively print callees.
+	if callees, ok := p.Graph[f]; ok {
+		uniqueCallees := make([]*scanner.FunctionInfo, 0, len(callees))
+		seen := make(map[string]bool)
+		for _, callee := range callees {
+			calleeID := getFuncID(callee)
+			if !seen[calleeID] {
+				uniqueCallees = append(uniqueCallees, callee)
+				seen[calleeID] = true
+			}
+		}
+
+		// Sort callees for deterministic output.
+		sort.Slice(uniqueCallees, func(i, j int) bool {
+			return getFuncID(uniqueCallees[i]) < getFuncID(uniqueCallees[j])
+		})
 
 		for _, callee := range uniqueCallees {
 			p.printRecursive(callee, indent+1)
 		}
 	}
 
-	// Reset visited flag for this path to allow it to be printed in other branches
-	p.visited[f] = false
+	// Reset visited flag for this path. This allows the function to be printed again
+	// if it appears in a different call branch. In expand mode, this won't happen
+	// because the `p.assigned` check at the top will catch it.
+	p.visited[id] = false
+
+	// In non-expand mode, we prevent a function from being printed more than once
+	// at the top level by a different mechanism (in the Print method), but this
+	// reset is crucial for correct cycle detection.
 }
 
 // isAccessor checks if a function is a simple getter or setter.

@@ -46,6 +46,11 @@ func TestGoInspect(t *testing.T) {
 			name:       "cross_package",
 			pkgPattern: "./testdata/src/features",
 		},
+		{
+			name:         "multi_package_expand",
+			pkgPattern:   "./testdata/src/...",
+			expandFormat: true,
+		},
 	}
 
 	for _, tc := range testCases {

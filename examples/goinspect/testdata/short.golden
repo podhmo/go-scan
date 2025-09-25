@@ -1,5 +1,6 @@
-func (*Person).Greet(...)
-  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.privateFunc(...)
-func (*Service).Do(...)
-  func .Greet(...)
-func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(...)
+func (*Person).Greet(...) #1
+  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.privateFunc(...) #2
+func (*Service).Do(...) #3
+  func .Greet(...) #4
+func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(...) #5
+  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(...) #5

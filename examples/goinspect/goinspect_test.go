@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"io"
 	"log/slog"
 	"os"
@@ -10,10 +11,14 @@ import (
 	"testing"
 )
 
+var update = flag.Bool("update", false, "update golden files")
+
 func TestGoInspect(t *testing.T) {
 	testCases := []struct {
 		name              string
 		pkgPattern        string
+		targets           []string
+		trimPrefix        bool
 		includeUnexported bool
 		shortFormat       bool
 		expandFormat      bool
@@ -51,6 +56,20 @@ func TestGoInspect(t *testing.T) {
 			pkgPattern:   "./testdata/src/...",
 			expandFormat: true,
 		},
+		{
+			name:       "toplevel",
+			pkgPattern: "./testdata/src/toplevel",
+		},
+		{
+			name:       "target_func_a",
+			pkgPattern: "./testdata/src/target",
+			targets:    []string{"github.com/podhmo/go-scan/examples/goinspect/testdata/src/target.FuncA"},
+		},
+		{
+			name:       "trim_prefix",
+			pkgPattern: "./testdata/src/myapp",
+			trimPrefix: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -58,13 +77,13 @@ func TestGoInspect(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-			err := run(&buf, logger, tc.pkgPattern, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
+			err := run(&buf, logger, tc.pkgPattern, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
 			if err != nil {
 				t.Fatalf("run() failed: %v", err)
 			}
 
 			goldenFile := filepath.Join("testdata", tc.name+".golden")
-			if os.Getenv("UPDATE_GOLDEN") != "" {
+			if *update {
 				err := os.WriteFile(goldenFile, buf.Bytes(), 0644)
 				if err != nil {
 					t.Fatalf("failed to update golden file %s: %v", goldenFile, err)

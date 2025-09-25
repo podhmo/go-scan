@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan/locator"
 	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/evaluator"
@@ -23,9 +24,24 @@ import (
 // The key is the caller function, and the value is a list of callee functions.
 type callGraph map[*scanner.FunctionInfo][]*scanner.FunctionInfo
 
+// stringSlice is a custom type to handle multiple string flags.
+type stringSlice []string
+
+func (s *stringSlice) String() string {
+	return strings.Join(*s, ", ")
+}
+
+func (s *stringSlice) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
 func main() {
 	// 1. Define and parse command-line flags.
+	var targets stringSlice
+	flag.Var(&targets, "target", "Target function or method to inspect (e.g., mypkg.MyFunc, (*mypkg.MyType).MyMethod). Can be specified multiple times.")
 	pkgPattern := flag.String("pkg", "", "Go package pattern to inspect (e.g., ./...)")
+	trimPrefix := flag.Bool("trim-prefix", false, "Trim module path prefix from output")
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
 	expandFormat := flag.Bool("expand", false, "Use expand format for output with UIDs")
@@ -53,12 +69,29 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(os.Stdout, logger, *pkgPattern, *includeUnexported, *shortFormat, *expandFormat); err != nil {
+	if err := run(os.Stdout, logger, *pkgPattern, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexported, shortFormat, expandFormat bool) error {
+// getFuncTargetName generates a canonical name for a function or method for matching against the -target flag.
+// For a function: "pkg/path.FuncName"
+// For a method: "(*pkg/path.TypeName).MethodName"
+func getFuncTargetName(f *scanner.FunctionInfo) string {
+	if f == nil {
+		return ""
+	}
+	if f.Receiver == nil {
+		// It's a function
+		return fmt.Sprintf("%s.%s", f.PkgPath, f.Name)
+	}
+	// It's a method
+	// f.Receiver.Type.String() should give us the type name, including the package path for cross-package types.
+	// e.g., "*github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Person"
+	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
+}
+
+func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 	ctx := context.Background()
 
 	// 2. Scan packages using goscan.
@@ -120,12 +153,36 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexporte
 		return nil
 	})
 
-	// 4. Build the call graph by evaluating entry point functions.
+	// 4. Determine entry point functions for analysis.
 	var entryPoints []*scanner.FunctionInfo
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Functions {
-			if includeUnexported || ast.IsExported(f.Name) {
-				entryPoints = append(entryPoints, f)
+	if len(targets) > 0 {
+		// If specific targets are provided, find them.
+		targetSet := make(map[string]bool)
+		for _, target := range targets {
+			targetSet[target] = true
+		}
+
+		for _, pkg := range pkgs {
+			for _, f := range pkg.Functions {
+				// Check for function: "pkg/path.FuncName"
+				// Check for method: "(*pkg/path.TypeName).MethodName"
+				targetName := getFuncTargetName(f)
+				if targetSet[targetName] {
+					entryPoints = append(entryPoints, f)
+				}
+			}
+		}
+		if len(entryPoints) != len(targets) {
+			logger.Warn("could not find all specified targets", "found", len(entryPoints), "wanted", len(targets))
+		}
+
+	} else {
+		// If no targets are specified, use all functions in the scanned packages as potential entry points.
+		for _, pkg := range pkgs {
+			for _, f := range pkg.Functions {
+				if includeUnexported || ast.IsExported(f.Name) {
+					entryPoints = append(entryPoints, f)
+				}
 			}
 		}
 	}
@@ -150,15 +207,41 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexporte
 		}
 	}
 
-	// 5. Print the call graph.
+	// 5. Filter for true top-level functions (not called by any other entry point).
+	callees := make(map[string]bool)
+	for _, calledFuncs := range graph {
+		for _, f := range calledFuncs {
+			callees[getFuncID(f)] = true
+		}
+	}
+
+	var topLevelFunctions []*scanner.FunctionInfo
+	for _, f := range entryPoints {
+		if !callees[getFuncID(f)] {
+			topLevelFunctions = append(topLevelFunctions, f)
+		}
+	}
+
+	// 6. Print the call graph starting from the true top-level functions.
+	var modulePrefix string
+	if trimPrefix {
+		l, err := locator.New(".")
+		if err != nil {
+			logger.Warn("could not find module root, --trim-prefix will be ignored", "error", err)
+		} else {
+			modulePrefix = l.ModulePath()
+		}
+	}
+
 	p := &Printer{
-		Graph:  graph,
-		Short:  shortFormat,
-		Expand: expandFormat,
-		Out:    out,
+		Graph:      graph,
+		Short:      shortFormat,
+		Expand:     expandFormat,
+		Out:        out,
+		TrimPrefix: modulePrefix,
 		// visited and assigned are initialized in Print()
 	}
-	p.Print(entryPoints)
+	p.Print(topLevelFunctions)
 
 	return nil
 }
@@ -182,10 +265,11 @@ func getFuncID(f *scanner.FunctionInfo) string {
 
 // Printer handles the output of the call graph.
 type Printer struct {
-	Graph  callGraph
-	Short  bool
-	Expand bool
-	Out    io.Writer
+	Graph      callGraph
+	Short      bool
+	Expand     bool
+	Out        io.Writer
+	TrimPrefix string
 
 	// State for printing
 	visited  map[string]bool // Key: func ID. For preventing infinite recursion in printing.
@@ -205,11 +289,7 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 	})
 
 	for _, f := range entryPoints {
-		// Only print functions that are actual entry points (not just called by other entry points).
-		// A simple heuristic: if a function is a key in the graph, it's a caller.
-		if _, isCaller := p.Graph[f]; isCaller {
-			p.printRecursive(f, 0)
-		}
+		p.printRecursive(f, 0)
 	}
 }
 
@@ -220,7 +300,7 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 	if isAccessor(f) {
 		accessorPrefix = "[accessor] "
 	}
-	formatted := formatFunc(f, p.Short)
+	formatted := p.formatFunc(f)
 
 	// Default mode (expand=false): Use IDs to show a function's tree only once.
 	if !p.Expand {
@@ -336,30 +416,41 @@ func isAccessor(f *scanner.FunctionInfo) bool {
 }
 
 // formatFunc formats the function info into a string.
-func formatFunc(f *scanner.FunctionInfo, short bool) string {
+func (p *Printer) formatFunc(f *scanner.FunctionInfo) string {
 	if f == nil {
 		return "<nil>"
 	}
+
+	// Helper function to trim the prefix from a qualified path.
+	trim := func(s string) string {
+		if p.TrimPrefix == "" {
+			return s
+		}
+		// Use strings.ReplaceAll to handle cases like "(*pkg.Type)"
+		// Add a "/" to avoid trimming "github.com/foo/bar" from "github.com/foo/bar-baz".
+		return strings.ReplaceAll(s, p.TrimPrefix+"/", "")
+	}
+
 	var b strings.Builder
 	b.WriteString("func ")
 	if f.Receiver != nil {
 		b.WriteString("(")
-		b.WriteString(f.Receiver.Type.String())
+		b.WriteString(trim(f.Receiver.Type.String()))
 		b.WriteString(")")
 		b.WriteString(".")
 	} else {
-		b.WriteString(f.PkgPath)
+		b.WriteString(trim(f.PkgPath))
 		b.WriteString(".")
 	}
 	b.WriteString(f.Name)
 
-	if short {
+	if p.Short {
 		b.WriteString("(...)")
 	} else {
 		b.WriteString("(")
 		params := []string{}
-		for _, p := range f.Parameters {
-			params = append(params, p.Type.String())
+		for _, param := range f.Parameters {
+			params = append(params, trim(param.Type.String()))
 		}
 		b.WriteString(strings.Join(params, ", "))
 		b.WriteString(")")

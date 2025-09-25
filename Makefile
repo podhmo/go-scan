@@ -1,10 +1,13 @@
-.PHONY: all test format clean
+.PHONY: all test format clean lint
 
 all:
 	go build ./...
 
 format:
 	go tool goimports -w $(shell find . -name '*.go')
+
+lint:
+	go tool staticcheck ./...
 
 STDLIB_PKGS= \
 	bufio \

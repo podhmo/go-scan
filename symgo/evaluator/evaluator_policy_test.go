@@ -76,16 +76,16 @@ func DoSomething() string {
 			t.Fatal("function call on foreign package was not captured")
 		}
 
-		unresolved, ok := capturedFunc.(*object.UnresolvedType)
+		unresolved, ok := capturedFunc.(*object.UnresolvedFunction)
 		if !ok {
-			t.Fatalf("expected captured function to be UnresolvedType, got %T", capturedFunc)
+			t.Fatalf("expected captured function to be UnresolvedFunction, got %T", capturedFunc)
 		}
 
 		if unresolved.PkgPath != "example.com/me/foreign" {
-			t.Errorf("expected unresolved type to have PkgPath 'example.com/me/foreign', got %q", unresolved.PkgPath)
+			t.Errorf("expected unresolved function to have PkgPath 'example.com/me/foreign', got %q", unresolved.PkgPath)
 		}
-		if unresolved.TypeName != "DoSomething" {
-			t.Errorf("expected unresolved type to have TypeName 'DoSomething', got %q", unresolved.TypeName)
+		if unresolved.FuncName != "DoSomething" {
+			t.Errorf("expected unresolved function to have FuncName 'DoSomething', got %q", unresolved.FuncName)
 		}
 
 		return nil

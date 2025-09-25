@@ -103,9 +103,9 @@ func GetExpr() any {
 		if r.Error != nil {
 			t.Fatalf("Execution failed: %v", r.Error)
 		}
-		_, ok := r.ReturnValue.(*object.UnresolvedType)
+		_, ok := r.ReturnValue.(*object.UnresolvedFunction)
 		if !ok {
-			t.Errorf("Expected an UnresolvedType for an external function, but got %T", r.ReturnValue)
+			t.Errorf("Expected an UnresolvedFunction for an external function, but got %T", r.ReturnValue)
 		}
 	}
 

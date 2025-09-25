@@ -4,7 +4,7 @@ all:
 	go build ./...
 
 format:
-	go run golang.org/x/tools/cmd/goimports@latest -w $(shell find . -name '*.go')
+	go tool goimports -w $(shell find . -name '*.go')
 
 STDLIB_PKGS= \
 	bufio \

@@ -9,3 +9,7 @@ require (
 	golang.org/x/mod v0.27.0
 	golang.org/x/sync v0.16.0
 )
+
+require golang.org/x/tools v0.35.0 // indirect
+
+tool golang.org/x/tools/cmd/goimports

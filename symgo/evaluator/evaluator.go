@@ -3915,28 +3915,22 @@ func (e *Evaluator) GetOrResolveFunctionForTest(ctx context.Context, pkg *object
 	return e.getOrResolveFunction(ctx, pkg, funcInfo)
 }
 
-// CurrentFrame returns the top-most call frame from the evaluator's stack.
-// This is intended for use within intrinsics to understand the call context.
-// It returns nil if the call stack is empty.
+// CurrentFrame returns the frame of the function that called the currently
+// executing intrinsic. It does this by looking at the second-to-last frame
+// on the call stack.
+// It returns nil if there is no calling function (e.g., the stack is too shallow).
 func (e *Evaluator) CurrentFrame() *object.CallFrame {
-	if len(e.callStack) > 1 {
-		// The top of the stack is the intrinsic itself, the one before it is the caller.
-		frame := e.callStack[len(e.callStack)-2]
-		return &object.CallFrame{
-			Pos:      frame.Pos,
-			Function: frame.Function,
-			Fn:       frame.Fn,
-		}
+	// The top of the stack is the intrinsic itself. The one before it is the caller.
+	// So we need at least 2 frames on the stack.
+	if len(e.callStack) < 2 {
+		return nil
 	}
-	if len(e.callStack) > 0 {
-		frame := e.callStack[len(e.callStack)-1]
-		return &object.CallFrame{
-			Pos:      frame.Pos,
-			Function: frame.Function,
-			Fn:       frame.Fn,
-		}
+	frame := e.callStack[len(e.callStack)-2]
+	return &object.CallFrame{
+		Pos:      frame.Pos,
+		Function: frame.Function,
+		Fn:       frame.Fn,
 	}
-	return nil
 }
 
 // createSymbolicResultForFunc creates a symbolic result for a function call

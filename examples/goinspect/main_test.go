@@ -85,12 +85,6 @@ func Recur(n int) {
 		t.Fatalf("failed to get wd: %v", err)
 	}
 
-	// Change working directory to the temp dir for the scanner to work correctly.
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("failed to change wd: %v", err)
-	}
-	defer os.Chdir(originalWd)
-
 	// Set command-line flags for the run
 	flag.CommandLine = flag.NewFlagSet("goinspect", flag.ExitOnError)
 	flagPkg = flag.String("pkg", "./...", "package pattern (required)")
@@ -100,7 +94,7 @@ func Recur(n int) {
 	flagVerbose = flag.Bool("v", false, "verbose output")
 
 
-	err = run(context.Background())
+	err := run(context.Background(), dir)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

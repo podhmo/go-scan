@@ -10,16 +10,13 @@ package example.com/a
       func Hfunc()
     func Hfunc()
     func logfunc() func()
-
   func F0func()
     func F1func()
       func Hfunc()
     func Hfunc()
     func logfunc() func()
-
   func F1func()
     func Hfunc()
-
   func (S).Mfunc()
     func Ffunc(s S)
       func F0func()

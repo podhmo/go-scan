@@ -37,36 +37,34 @@ func main() {
 		log.Fatal("--pkg flag is required")
 	}
 
-	if err := run(context.Background()); err != nil {
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("failed to get working directory: %+v", err)
+	}
+	if err := run(context.Background(), wd); err != nil {
 		log.Fatalf("toplevel: %+v", err)
 	}
 }
 
-func run(ctx context.Context) error {
+func run(ctx context.Context, workDir string) error {
 	patterns := []string{*flagPkg}
 	if flag.NArg() > 0 {
 		patterns = flag.Args()
 	}
 
-	wd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
-	}
-
 	s, err := goscan.New(
-		goscan.WithWorkDir(wd),
+		goscan.WithWorkDir(workDir),
 		goscan.WithGoModuleResolver(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	// Resolve patterns to a list of import paths for the analysis scope.
-	loc, err := locator.New(wd, locator.WithGoModuleResolver())
+	loc, err := locator.New(workDir, locator.WithGoModuleResolver())
 	if err != nil {
 		return fmt.Errorf("failed to create locator: %w", err)
 	}
-	analysisPkgs, err := resolveTargetPackages(ctx, []*locator.Locator{loc}, patterns, nil, wd)
+	analysisPkgs, err := resolveTargetPackages(ctx, []*locator.Locator{loc}, patterns, nil, workDir)
 	if err != nil {
 		return fmt.Errorf("failed to resolve target packages: %w", err)
 	}
@@ -104,7 +102,6 @@ func run(ctx context.Context) error {
 		return nil
 	})
 
-	// Scan using the raw patterns provided by the user.
 	pkgs, err := s.Scan(ctx, patterns...)
 	if err != nil {
 		return fmt.Errorf("failed to scan packages for entry points: %w", err)
@@ -124,23 +121,19 @@ func run(ctx context.Context) error {
 
 			obj, ok := interp.FindObjectInPackage(ctx, pkg.ImportPath, fnInfo.Name)
 			if !ok {
-				log.Printf("WARN: could not find function object %s in package %s", fnInfo.Name, pkg.ImportPath)
 				continue
 			}
 			fn, ok := obj.(*object.Function)
 			if !ok {
-				log.Printf("WARN: object %s in package %s is not a function", fnInfo.Name, pkg.ImportPath)
 				continue
 			}
 			entryPoints = append(entryPoints, fn)
 		}
 	}
 
-	// logger.Info("starting analysis", "entrypoints", len(entryPoints))
-
 	for _, ep := range entryPoints {
 		if _, err := interp.Apply(ctx, ep, nil, ep.Package); err != nil {
-			// logger.Warn("symbolic execution failed for entry point", "function", ep.Def.Name, "error", err)
+			// ignore error
 		}
 	}
 
@@ -155,7 +148,6 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-// resolveTargetPackages (from find-orphans)
 func resolveTargetPackages(ctx context.Context, locators []*locator.Locator, patterns []string, excludeDirs []string, rootDir string) (map[string]bool, error) {
 	targetPackages := make(map[string]bool)
 	excludeMap := make(map[string]bool)
@@ -284,7 +276,6 @@ func (p *Printer) Fprint() {
 				printedPackages[pkgPath] = true
 			}
 			p.printNode(ep, "", make(map[*scanner.FunctionInfo]bool))
-			fmt.Fprintln(p.Output)
 		}
 	}
 }
@@ -324,7 +315,15 @@ func formatFunction(fset *token.FileSet, fn *scanner.FunctionInfo) string {
 		b.WriteString(".")
 	}
 	b.WriteString(fn.Name)
-	printer.Fprint(&b, fset, fn.AstDecl.Type)
+	if fn.AstDecl.Type.Params != nil {
+		printer.Fprint(&b, fset, fn.AstDecl.Type.Params)
+	} else {
+		b.WriteString("()")
+	}
+	if fn.AstDecl.Type.Results != nil {
+		b.WriteString(" ")
+		printer.Fprint(&b, fset, fn.AstDecl.Type.Results)
+	}
 
 	return strings.ReplaceAll(b.String(), "\n", " ")
 }

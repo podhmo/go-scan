@@ -17,6 +17,7 @@ func TestGoInspect(t *testing.T) {
 	testCases := []struct {
 		name              string
 		pkgPattern        string
+		targets           []string
 		includeUnexported bool
 		shortFormat       bool
 		expandFormat      bool
@@ -58,6 +59,11 @@ func TestGoInspect(t *testing.T) {
 			name:       "toplevel",
 			pkgPattern: "./testdata/src/toplevel",
 		},
+		{
+			name:       "target_func_a",
+			pkgPattern: "./testdata/src/target",
+			targets:    []string{"github.com/podhmo/go-scan/examples/goinspect/testdata/src/target.FuncA"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -65,7 +71,7 @@ func TestGoInspect(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-			err := run(&buf, logger, tc.pkgPattern, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
+			err := run(&buf, logger, tc.pkgPattern, tc.targets, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
 			if err != nil {
 				t.Fatalf("run() failed: %v", err)
 			}

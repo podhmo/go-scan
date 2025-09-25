@@ -23,8 +23,22 @@ import (
 // The key is the caller function, and the value is a list of callee functions.
 type callGraph map[*scanner.FunctionInfo][]*scanner.FunctionInfo
 
+// stringSlice is a custom type to handle multiple string flags.
+type stringSlice []string
+
+func (s *stringSlice) String() string {
+	return strings.Join(*s, ", ")
+}
+
+func (s *stringSlice) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
 func main() {
 	// 1. Define and parse command-line flags.
+	var targets stringSlice
+	flag.Var(&targets, "target", "Target function or method to inspect (e.g., mypkg.MyFunc, (*mypkg.MyType).MyMethod). Can be specified multiple times.")
 	pkgPattern := flag.String("pkg", "", "Go package pattern to inspect (e.g., ./...)")
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
@@ -53,12 +67,29 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(os.Stdout, logger, *pkgPattern, *includeUnexported, *shortFormat, *expandFormat); err != nil {
+	if err := run(os.Stdout, logger, *pkgPattern, targets, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
 
-func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexported, shortFormat, expandFormat bool) error {
+// getFuncTargetName generates a canonical name for a function or method for matching against the -target flag.
+// For a function: "pkg/path.FuncName"
+// For a method: "(*pkg/path.TypeName).MethodName"
+func getFuncTargetName(f *scanner.FunctionInfo) string {
+	if f == nil {
+		return ""
+	}
+	if f.Receiver == nil {
+		// It's a function
+		return fmt.Sprintf("%s.%s", f.PkgPath, f.Name)
+	}
+	// It's a method
+	// f.Receiver.Type.String() should give us the type name, including the package path for cross-package types.
+	// e.g., "*github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Person"
+	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
+}
+
+func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string, includeUnexported, shortFormat, expandFormat bool) error {
 	ctx := context.Background()
 
 	// 2. Scan packages using goscan.
@@ -120,12 +151,36 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, includeUnexporte
 		return nil
 	})
 
-	// 4. Build the call graph by evaluating entry point functions.
+	// 4. Determine entry point functions for analysis.
 	var entryPoints []*scanner.FunctionInfo
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Functions {
-			if includeUnexported || ast.IsExported(f.Name) {
-				entryPoints = append(entryPoints, f)
+	if len(targets) > 0 {
+		// If specific targets are provided, find them.
+		targetSet := make(map[string]bool)
+		for _, target := range targets {
+			targetSet[target] = true
+		}
+
+		for _, pkg := range pkgs {
+			for _, f := range pkg.Functions {
+				// Check for function: "pkg/path.FuncName"
+				// Check for method: "(*pkg/path.TypeName).MethodName"
+				targetName := getFuncTargetName(f)
+				if targetSet[targetName] {
+					entryPoints = append(entryPoints, f)
+				}
+			}
+		}
+		if len(entryPoints) != len(targets) {
+			logger.Warn("could not find all specified targets", "found", len(entryPoints), "wanted", len(targets))
+		}
+
+	} else {
+		// If no targets are specified, use all functions in the scanned packages as potential entry points.
+		for _, pkg := range pkgs {
+			for _, f := range pkg.Functions {
+				if includeUnexported || ast.IsExported(f.Name) {
+					entryPoints = append(entryPoints, f)
+				}
 			}
 		}
 	}

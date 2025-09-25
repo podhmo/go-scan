@@ -44,10 +44,10 @@ The implementation will be broken down into four main parts.
 - Use the standard `flag` package to create the command-line interface.
 - Define flags to control the tool's behavior:
     - `--pkg <pattern>`: (Required) A glob pattern for the target packages that form the primary analysis scope.
-    - `--include-unexported`: (Optional) A boolean flag to include unexported functions as analysis entry points. Defaults to `false`.
+    - `--target <name>`: (Optional) The fully qualified name of a function or method to use as an entry point (e.g., `mypkg.MyFunc`, `(*mypkg.MyType).MyMethod`). Can be specified multiple times. If omitted, all exported functions in the scanned packages are used as entry points.
+    - `--include-unexported`: (Optional) A boolean flag to include unexported functions as analysis entry points. Defaults to `false`. This is ignored if `--target` is used.
     - `--short`: (Optional) A boolean flag to enable the short output format.
     - `--expand`: (Optional) A boolean flag to enable the expanded, UID-based output format.
-    - `// TODO`: Consider adding a flag to specify a single function name as the entry point.
 
 ### b. Package Scanning
 
@@ -59,7 +59,9 @@ The implementation will be broken down into four main parts.
 This is the core of the tool and will rely heavily on `symgo`.
 
 1.  **Initialize `symgo`**: Create a new `symgo.Evaluator` instance. The `Resolver` will be configured to strictly enforce the primary analysis scope defined by the `--pkg` patterns.
-2.  **Define Entry Points**: Iterate through the functions in the scanned packages. Based on the `--include-unexported` flag, create a list of `scanner.FunctionInfo` objects to serve as the starting points for the analysis.
+2.  **Define Entry Points**:
+    - If the `--target` flag is provided, the tool will search through all scanned packages to find the specific functions or methods that match the provided names. These matches will be the sole entry points for the analysis.
+    - If `--target` is omitted, the tool will iterate through all functions in the scanned packages and use the exported ones (or all functions if `--include-unexported` is set) as the entry points.
 3.  **Trace Execution**: For each entry point function, start symbolic execution using the `symgo` evaluator to build a complete call graph (e.g., a map `map[FunctionInfo][]FunctionInfo`).
 4.  **Filter for Top-Level Functions**: After the full call graph is constructed:
     - Create a set of all functions that have been *called* at least once by iterating through the values of the call graph map.

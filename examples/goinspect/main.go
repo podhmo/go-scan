@@ -40,7 +40,8 @@ func main() {
 	// 1. Define and parse command-line flags.
 	var targets stringSlice
 	flag.Var(&targets, "target", "Target function or method to inspect (e.g., mypkg.MyFunc, (*mypkg.MyType).MyMethod). Can be specified multiple times.")
-	pkgPattern := flag.String("pkg", "", "Go package pattern to inspect (e.g., ./...)")
+	var pkgPatterns stringSlice
+	flag.Var(&pkgPatterns, "pkg", "Go package pattern to inspect (e.g., ./...). Can be specified multiple times.")
 	trimPrefix := flag.Bool("trim-prefix", false, "Trim module path prefix from output")
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
@@ -49,7 +50,7 @@ func main() {
 
 	flag.Parse()
 
-	if *pkgPattern == "" {
+	if len(pkgPatterns) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -69,7 +70,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(os.Stdout, logger, *pkgPattern, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
+	if err := run(os.Stdout, logger, pkgPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
@@ -91,7 +92,7 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
 }
 
-func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
+func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 	ctx := context.Background()
 
 	// 2. Scan packages using goscan.
@@ -103,9 +104,13 @@ func run(out io.Writer, logger *slog.Logger, pkgPattern string, targets []string
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	pkgs, err := s.Scan(ctx, pkgPattern)
-	if err != nil {
-		return fmt.Errorf("failed to scan package pattern %q: %w", pkgPattern, err)
+	var pkgs []*scanner.PackageInfo
+	for _, pkgPattern := range pkgPatterns {
+		scannedPkgs, err := s.Scan(ctx, pkgPattern)
+		if err != nil {
+			return fmt.Errorf("failed to scan package pattern %q: %w", pkgPattern, err)
+		}
+		pkgs = append(pkgs, scannedPkgs...)
 	}
 
 	// Define the analysis scope.

@@ -28,13 +28,13 @@ func TestGoInspect(t *testing.T) {
 			pkgPattern: "./testdata/src/myapp",
 		},
 		{
-			name:       "short",
-			pkgPattern: "./testdata/src/myapp",
+			name:        "short",
+			pkgPattern:  "./testdata/src/myapp",
 			shortFormat: true,
 		},
 		{
-			name:       "expand",
-			pkgPattern: "./testdata/src/myapp",
+			name:         "expand",
+			pkgPattern:   "./testdata/src/myapp",
 			expandFormat: true,
 		},
 		{

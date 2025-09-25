@@ -9,6 +9,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 
 	goscan "github.com/podhmo/go-scan"
@@ -198,15 +199,12 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 	p.assigned = make(map[string]int)
 	p.nextID = 0
 
-	// We create a stable sort order for the entry points to ensure deterministic output.
-	// This is important for golden file testing.
-	sortedEntries := make([]*scanner.FunctionInfo, len(entryPoints))
-	copy(sortedEntries, entryPoints)
-	// Note: This sort might not be perfectly stable across different architectures
-	// if function pointers are not consistent, but it's good enough for testing.
-	// A more robust solution might involve sorting by function name and package path.
+	// Create a stable sort order for the entry points to ensure deterministic output.
+	sort.Slice(entryPoints, func(i, j int) bool {
+		return getFuncID(entryPoints[i]) < getFuncID(entryPoints[j])
+	})
 
-	for _, f := range sortedEntries {
+	for _, f := range entryPoints {
 		// Only print functions that are actual entry points (not just called by other entry points).
 		// A simple heuristic: if a function is a key in the graph, it's a caller.
 		if _, isCaller := p.Graph[f]; isCaller {
@@ -276,6 +274,11 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 				seen[calleeID] = true
 			}
 		}
+
+		// Sort callees for deterministic output.
+		sort.Slice(uniqueCallees, func(i, j int) bool {
+			return getFuncID(uniqueCallees[i]) < getFuncID(uniqueCallees[j])
+		})
 
 		for _, callee := range uniqueCallees {
 			p.printRecursive(callee, indent+1)

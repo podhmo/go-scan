@@ -218,11 +218,17 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 	id := getFuncID(f)
 
+	accessorPrefix := ""
+	if isAccessor(f) {
+		accessorPrefix = "[accessor] "
+	}
+	formatted := formatFunc(f, p.Short)
+
 	// Default mode (expand=false): Use IDs to show a function's tree only once.
 	if !p.Expand {
 		if num, ok := p.assigned[id]; ok {
 			// This function has been printed before, just show its reference.
-			fmt.Fprintf(p.Out, "%s%s #%d\n", strings.Repeat("  ", indent), formatFunc(f, p.Short), num)
+			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, num)
 			return
 		}
 	}
@@ -239,18 +245,12 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 				cycleRef = fmt.Sprintf(" #%d", num)
 			}
 		}
-		fmt.Fprintf(p.Out, "%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), formatFunc(f, p.Short), cycleRef)
+		fmt.Fprintf(p.Out, "%s%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), accessorPrefix, formatted, cycleRef)
 		return
 	}
 
 	// Mark as visited for the current path traversal.
 	p.visited[id] = true
-
-	// Format the function signature.
-	formatted := formatFunc(f, p.Short)
-	if isAccessor(f) {
-		formatted += " [accessor]"
-	}
 
 	// --- Printing Logic (Corrected) ---
 	// - expand=false (default): show ID on first appearance, reference on subsequent.
@@ -259,10 +259,10 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 		// First time seeing this function in default mode. Assign an ID and print it.
 		p.nextID++
 		p.assigned[id] = p.nextID
-		fmt.Fprintf(p.Out, "%s%s #%d\n", strings.Repeat("  ", indent), formatted, p.nextID)
+		fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, p.nextID)
 	} else {
 		// Expand mode: just print the formatted function, no ID.
-		fmt.Fprintf(p.Out, "%s%s\n", strings.Repeat("  ", indent), formatted)
+		fmt.Fprintf(p.Out, "%s%s%s\n", strings.Repeat("  ", indent), accessorPrefix, formatted)
 	}
 
 	// Recursively print callees.

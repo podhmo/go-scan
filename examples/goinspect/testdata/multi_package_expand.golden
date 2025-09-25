@@ -1,10 +1,10 @@
 func (*Data).ComplexLogic()
-  func (*Data).GetID() [accessor]
+  [accessor] func (*Data).GetID()
   func github.com/podhmo/go-scan/examples/goinspect/testdata/src/another.Helper()
 func github.com/podhmo/go-scan/examples/goinspect/testdata/src/features.Main()
-  func (*Data).SetName(string) [accessor]
+  [accessor] func (*Data).SetName(string)
   func (*Data).ComplexLogic()
-    func (*Data).GetID() [accessor]
+    [accessor] func (*Data).GetID()
     func github.com/podhmo/go-scan/examples/goinspect/testdata/src/another.Helper()
   func github.com/podhmo/go-scan/examples/goinspect/testdata/src/features.Execute(unhandled_type_*ast.FuncType)
 func (*Person).Greet()

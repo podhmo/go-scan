@@ -51,13 +51,11 @@ func TestGoInspect(t *testing.T) {
 			name:        "cross_package",
 			pkgPatterns: []string{"./testdata/src/features"},
 		},
-		// TODO: Re-enable this test once the symgo engine can handle indirect recursion
-		// via higher-order functions without a stack overflow.
-		// {
-		// 	name:         "multi_package_expand",
-		// 	pkgPatterns:  []string{"./testdata/src/..."},
-		// 	expandFormat: true,
-		// },
+		{
+			name:         "multi_package_expand",
+			pkgPatterns:  []string{"./testdata/src/..."},
+			expandFormat: true,
+		},
 		{
 			name:        "toplevel",
 			pkgPatterns: []string{"./testdata/src/toplevel"},
@@ -80,12 +78,10 @@ func TestGoInspect(t *testing.T) {
 			name:        "mutual",
 			pkgPatterns: []string{"./testdata/src/mutual"},
 		},
-		// TODO: Re-enable this test once the symgo engine can handle indirect recursion
-		// via higher-order functions without a stack overflow.
-		// {
-		// 	name:        "indirect",
-		// 	pkgPatterns: []string{"./testdata/known_failures/indirect"},
-		// },
+		{
+			name:        "indirect",
+			pkgPatterns: []string{"./testdata/src/indirect"},
+		},
 	}
 
 	for _, tc := range testCases {

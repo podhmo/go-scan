@@ -76,7 +76,7 @@ type Evaluator struct {
 
 	// memoization
 	memoize          bool
-	memoizationCache map[token.Pos]object.Object
+memoizationCache map[string]object.Object
 }
 
 // contextKey is a private type to avoid collisions with other packages' context keys.
@@ -100,6 +100,7 @@ type CallFrame struct {
 	Fn          *object.Function
 	Args        []object.Object
 	ReceiverPos token.Pos // The source position of the receiver expression for a method call.
+	Signature   string    // A unique signature for the call, including function arguments.
 }
 
 // interfaceBinding stores the information needed to map an interface to a concrete type.
@@ -126,7 +127,7 @@ func WithMaxSteps(n int) Option {
 func WithMemoization() Option {
 	return func(e *Evaluator) {
 		e.memoize = true
-		e.memoizationCache = make(map[token.Pos]object.Object)
+		e.memoizationCache = make(map[string]object.Object)
 	}
 }
 
@@ -2513,29 +2514,27 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
 	thenResult := e.Eval(ctx, n.Body, thenEnv, pkg)
 
+	// If the 'then' branch returned a critical error, propagate it.
+	// But do NOT propagate ReturnValue, as that just terminates one possible path.
+	// The analysis should continue to explore the "else" path.
+	if err, ok := thenResult.(*object.Error); ok {
+		return err
+	}
+
 	var elseResult object.Object
 	if n.Else != nil {
 		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
 		elseResult = e.Eval(ctx, n.Else, elseEnv, pkg)
 	}
 
-	// If the 'then' branch returned a control flow object, propagate it.
-	// This is a heuristic; a more complex analysis might merge states.
-	// We prioritize the 'then' branch's signal.
-	// We do NOT propagate ReturnValue, as that would prematurely terminate
-	// the analysis of the current function just because one symbolic path returned.
-	switch thenResult.(type) {
-	case *object.Error, *object.Break, *object.Continue:
-		return thenResult
-	}
-	// Otherwise, check the 'else' branch.
-	switch elseResult.(type) {
-	case *object.Error, *object.Break, *object.Continue:
-		return elseResult
+	// Similarly, only propagate critical errors from the else branch.
+	if err, ok := elseResult.(*object.Error); ok {
+		return err
 	}
 
-	// A more sophisticated, path-sensitive analysis would require a different
-	// approach. For now, if no control flow signal was returned, we continue.
+	// The if statement itself doesn't produce a value. By returning nil,
+	// we allow the parent block to continue evaluating subsequent statements.
+	// This simulates the exploration of the "else" path (the code after the if).
 	return nil
 }
 
@@ -2970,10 +2969,22 @@ func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Ob
 // forceEval recursively evaluates an object until it is no longer a variable.
 // This is crucial for handling variables whose initializers are other variables.
 func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scan.PackageInfo) object.Object {
+	originalVar, isVar := obj.(*object.Variable)
+
 	for i := 0; i < 100; i++ { // Add a loop limit to prevent infinite loops in weird cases
 		v, ok := obj.(*object.Variable)
 		if !ok {
-			return obj // Not a variable, return as is.
+			// Not a variable, we have the final value.
+			// If we started with a variable, ensure the final value inherits its static type info.
+			if isVar {
+				if obj.TypeInfo() == nil && originalVar.TypeInfo() != nil {
+					obj.SetTypeInfo(originalVar.TypeInfo())
+				}
+				if obj.FieldType() == nil && originalVar.FieldType() != nil {
+					obj.SetFieldType(originalVar.FieldType())
+				}
+			}
+			return obj
 		}
 		obj = e.evalVariable(ctx, v, pkg)
 		if isError(obj) {
@@ -3037,13 +3048,9 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 	if val, ok := env.Get(n.Name); ok {
 		e.logger.Debug("evalIdent: found in env", "name", n.Name, "type", val.Type(), "val", inspectValuer{val})
-		if _, ok := val.(*object.Variable); ok {
-			e.logger.Debug("evalIdent: identifier is a variable, evaluating it", "name", n.Name)
-			// When an identifier is accessed, we must force its full evaluation.
-			evaluatedValue := e.forceEval(ctx, val, pkg)
-			e.logger.Debug("evalIdent: evaluated variable", "name", n.Name, "type", evaluatedValue.Type(), "value", inspectValuer{evaluatedValue})
-			return evaluatedValue
-		}
+		// Return the variable object itself, do not evaluate it here.
+		// The caller is responsible for calling forceEval if it needs the concrete value.
+		// This preserves the static type information held by the Variable wrapper.
 		return val
 	}
 
@@ -3257,23 +3264,27 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 	// before the default intrinsic is called, so the usage map is populated
 	// before the parent function call is even registered.
 	for _, arg := range args {
-		if fn, ok := arg.(*object.Function); ok {
+		// Only scan *actual* function literals (which have no name), not named functions passed as values.
+		if fn, ok := arg.(*object.Function); ok && fn.Name == nil {
 			e.scanFunctionLiteral(ctx, fn)
 		}
 	}
 
 	if e.defaultIntrinsic != nil {
-		// The default intrinsic is a "catch-all" handler that can be used for logging,
-		// dependency tracking, etc. It receives the function object itself as the first
-		// argument, followed by the regular arguments.
-
 		// Pass the current call frame in the context so the intrinsic can know the caller.
 		intrinsicCtx := ctx
 		if len(e.callStack) > 0 {
 			callerFrame := e.callStack[len(e.callStack)-1]
 			intrinsicCtx = context.WithValue(ctx, callFrameKey, callerFrame)
 		}
-		e.defaultIntrinsic(intrinsicCtx, append([]object.Object{function}, args...)...)
+
+		// Force-evaluate the function object before passing it to the intrinsic
+		// to ensure that variables holding functions are resolved.
+		resolvedFunction := e.forceEval(ctx, function, pkg)
+		if isError(resolvedFunction) {
+			return resolvedFunction
+		}
+		e.defaultIntrinsic(intrinsicCtx, append([]object.Object{resolvedFunction}, args...)...)
 	}
 
 	result := e.applyFunction(ctx, function, args, pkg, n.Pos())
@@ -3383,10 +3394,11 @@ func (v inspectValuer) LogValue() slog.Value {
 }
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
-	if f, ok := fn.(*object.Function); ok {
-		if e.memoize && f.Decl != nil {
-			if cachedResult, found := e.memoizationCache[f.Decl.Pos()]; found {
-				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "function", f.Name)
+	if _, ok := fn.(*object.Function); ok {
+		if e.memoize {
+			signature := e.generateCallSignature(fn, args)
+			if cachedResult, found := e.memoizationCache[signature]; found {
+				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "signature", signature)
 				return cachedResult
 			}
 		}
@@ -3394,14 +3406,65 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 
 	result := e.applyFunctionImpl(ctx, fn, args, pkg, callPos)
 
-	if f, ok := fn.(*object.Function); ok {
-		if e.memoize && !isError(result) && f.Decl != nil {
-			e.logc(ctx, slog.LevelDebug, "caching result for function", "function", f.Name)
-			e.memoizationCache[f.Decl.Pos()] = result
+	if _, ok := fn.(*object.Function); ok {
+		if e.memoize && !isError(result) {
+			signature := e.generateCallSignature(fn, args)
+			e.logc(ctx, slog.LevelDebug, "caching result for function", "signature", signature)
+			e.memoizationCache[signature] = result
 		}
 	}
 
 	return result
+}
+
+func (e *Evaluator) generateCallSignature(fn object.Object, args []object.Object) string {
+	var b strings.Builder
+	// Start with the function's unique identifier.
+	// For functions from source, this is the position of their declaration.
+	// For other types, it's their inspected value.
+	switch f := fn.(type) {
+	case *object.Function:
+		if f.Def != nil && f.Def.AstDecl != nil {
+			// Use the address of the AST declaration node as a unique ID for the function definition.
+			b.WriteString(fmt.Sprintf("%p", f.Def.AstDecl))
+		} else {
+			b.WriteString(f.Inspect()) // Fallback for functions without AST nodes
+		}
+		// For methods, include a unique identifier for the receiver instance.
+		if f.Receiver != nil {
+			b.WriteString(fmt.Sprintf("-receiver:%p", f.Receiver))
+		}
+	default:
+		b.WriteString(fn.Inspect())
+	}
+
+	// Add arguments to the signature to distinguish different calls to the same function.
+	b.WriteString("(")
+	for i, arg := range args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		// For function arguments (higher-order functions), use a stable identifier.
+		// The declaration position is a good candidate.
+		if farg, ok := arg.(*object.Function); ok {
+			if farg.Def != nil && farg.Def.AstDecl != nil {
+				// Use a format that clearly indicates a function at a specific position.
+				pos := e.scanner.Fset().Position(farg.Def.AstDecl.Pos())
+				b.WriteString(fmt.Sprintf("func@%s", pos.String()))
+			} else {
+				b.WriteString("func-literal") // Anonymous function without a specific source location
+			}
+		} else if prim, ok := arg.(object.Primitive); ok {
+			// For primitive types, include their value in the signature to differentiate
+			// calls like `myFunc(1)` from `myFunc(2)`.
+			b.WriteString(prim.Inspect())
+		} else {
+			// For other types (structs, pointers, etc.), use their type name as a stable identifier.
+			b.WriteString(string(arg.Type()))
+		}
+	}
+	b.WriteString(")")
+	return b.String()
 }
 
 func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
@@ -3424,40 +3487,47 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
-	// New recursion check based on function definition and receiver position.
-	if f, ok := fn.(*object.Function); ok && f.Def != nil {
-		recursionCount := 0
-		for _, frame := range e.callStack {
-			// The most robust way to detect recursion on a definition is to compare the
-			// source position of the function's declaration AST node. This correctly
-			// identifies recursion on a specific function/method definition, which is
-			// the goal of symgo's analysis, rather than tracking object instances.
-			if frame.Fn != nil && frame.Fn.Def != nil && frame.Fn.Def.AstDecl != nil &&
-				f.Def.AstDecl != nil && frame.Fn.Def.AstDecl.Pos() == f.Def.AstDecl.Pos() {
-				recursionCount++
-			}
-		}
+	// New recursion check based on the function definition object.
+	// This is more robust than signature matching for handling mutual recursion,
+	// especially through higher-order functions.
+	var funcDef *scan.FunctionInfo
+	switch f := fn.(type) {
+	case *object.Function:
+		funcDef = f.Def
+	case *object.InstantiatedFunction:
+		funcDef = f.Function.Def
+	}
 
-		// Allow one level of recursion, but stop at the second call.
-		if recursionCount > 0 { // Changed from > 1 to > 0 to be more strict.
-			e.logc(ctx, slog.LevelDebug, "bounded recursion depth exceeded, halting analysis for this path", "function", name)
-			// Return a symbolic placeholder that matches the function's return signature.
-			if f.Def != nil && f.Def.AstDecl.Type.Results != nil {
-				numResults := len(f.Def.AstDecl.Type.Results.List)
-				if numResults > 1 {
-					results := make([]object.Object, numResults)
-					for i := 0; i < numResults; i++ {
-						results[i] = &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
+	// Only perform recursion check if we can identify the function definition.
+	if funcDef != nil {
+		for _, frame := range e.callStack {
+			if frame.Fn != nil && frame.Fn.Def == funcDef {
+				e.logc(ctx, slog.LevelDebug, "recursion detected, halting analysis for this path", "function", name)
+				if f, ok := fn.(*object.Function); ok && f.Def != nil && f.Def.AstDecl.Type.Results != nil {
+					numResults := len(f.Def.AstDecl.Type.Results.List)
+					if numResults > 1 {
+						results := make([]object.Object, numResults)
+						for i := 0; i < numResults; i++ {
+							results[i] = &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
+						}
+						return &object.MultiReturn{Values: results}
 					}
-					return &object.MultiReturn{Values: results}
 				}
+				return &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
 			}
-			// Default to a single placeholder if signature is not available or has <= 1 return values.
-			return &object.SymbolicPlaceholder{Reason: "bounded recursion halt"}
 		}
 	}
 
-	frame := &CallFrame{Function: name, Pos: callPos, Args: args}
+	// Generate a unique signature for this specific call, including arguments.
+	// This is now only used for memoization.
+	signature := e.generateCallSignature(fn, args)
+
+	frame := &CallFrame{
+		Function:  name,
+		Pos:       callPos,
+		Args:      args,
+		Signature: signature,
+	}
 	if f, ok := fn.(*object.Function); ok {
 		frame.Fn = f
 		if f.Receiver != nil {

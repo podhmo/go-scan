@@ -186,6 +186,58 @@ func main() { _ = V }
 	})
 }
 
+func TestRecursion_HigherOrder(t *testing.T) {
+	// This test case reproduces a stack overflow that occurs when two functions
+	// recursively call each other indirectly through a higher-order function.
+	// The evaluator's recursion detection must be smart enough to distinguish
+	// between `cont(Ping)` and `cont(Pong)` and not just see two calls to `cont`.
+	source := `
+package myapp
+
+// cont is a helper function to create an indirect call.
+func cont(f func(int), n int) {
+	f(n)
+}
+
+// Ping is an indirectly mutually recursive function with Pong.
+func Ping(n int) {
+	if n > 1 {
+		return
+	}
+	// Calls Pong via the cont helper
+	cont(Pong, n+1)
+}
+
+// Pong is an indirectly mutually recursive function with Ping.
+func Pong(n int) {
+	if n > 1 {
+		return
+	}
+	// Calls Ping via the cont helper
+	cont(Ping, n+1)
+}
+
+func main() {
+	Ping(0)
+}
+`
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module myapp",
+			"main.go": source,
+		},
+		EntryPoint: "myapp.main",
+	}
+
+	symgotest.Run(t, tc, func(t *testing.T, r *symgotest.Result) {
+		// The key is that the run should complete without error, relying on the
+		// interpreter's recursion detection to prevent a stack overflow.
+		if r.Error != nil {
+			t.Fatalf("expected no error, but got: %+v", r.Error)
+		}
+	})
+}
+
 func TestRecursionWithMultiReturn(t *testing.T) {
 	// This test case reproduces a hang that occurred when a recursive function
 	// had multiple return values. The test passes if it completes without error.

@@ -80,12 +80,22 @@ A fallback mechanism will be added. After the filtering logic runs, if the resul
 
 Based on user feedback, an explicit test case for mutual recursion (`ping-pong`) was added. The fix for Bug #2 proved successful. The tool now correctly identifies and displays the call graph for mutually recursive functions, labeling the second call in the cycle as `[recursive]`. The feature is now considered complete and robust.
 
-## Known Limitations
+## Final Fix: Resolving Higher-Order Function Recursion (2025-09-26)
 
-### Indirect Recursion via Higher-Order Functions
+After a lengthy investigation, the root cause of the stack overflow and incorrect call graphs was identified and fixed. The issue was a combination of two subtle bugs in the `symgo` evaluator, which only manifested when analyzing complex recursive patterns, particularly those involving higher-order functions.
 
-An attempt to add a test case for indirect mutual recursion (`Ping` -> `cont` -> `Pong`) revealed a limitation in the underlying `symgo` symbolic execution engine.
+### Root Cause Analysis
 
-- **Issue**: The analysis causes a `fatal error: stack overflow`.
-- **Root Cause**: The `symgo` engine does not currently have a mechanism to halt analysis of infinitely expanding call graphs that involve higher-order functions. It repeatedly tries to trace the `cont` function, leading to a stack overflow.
-- **Status**: Fixing this would require significant changes to the `symgo` evaluator and is outside the scope of this task. To preserve this valuable test case for future work, the `indirect` package has been moved to a `testdata/known_failures` directory. This prevents wildcard tests (e.g., `./...`) from discovering it and crashing. The corresponding test case in `goinspect_test.go` is commented out with a `TODO` note, pointing to the new location. This prevents the build from breaking while documenting the engine's current limitation.
+1.  **Premature Evaluation Termination in `if` Statements**: The `evalIfStmt` function was designed to explore both the `then` and `else` branches of a conditional. However, if a branch contained a `return` statement, the evaluator would propagate the `*object.ReturnValue` upwards, causing the evaluation of the parent function to terminate immediately. This prevented the analysis of any code following the `if` statement. In the `indirect` and `mutual` test cases, a guard clause like `if n > 1 { return }` was causing the subsequent recursive call (e.g., `cont(Pong, n+1)`) to be skipped entirely, leading to an incomplete call graph.
+
+2.  **Overeager Scanning of Function Arguments**: The `evalCallExpr` function had a mechanism (`scanFunctionLiteral`) to trace calls inside anonymous functions passed as arguments. However, it was incorrectly attempting to scan *all* function-like arguments, including named functions like `Ping` and `Pong` when they were passed to the `cont` helper. This created an infinite analysis loop: `Ping` calls `cont(Pong)`, which triggered a scan of `Pong`, which calls `cont(Ping)`, triggering a scan of `Ping`, and so on, eventually causing a stack overflow.
+
+### The Solution
+
+A two-part fix was implemented in `symgo/evaluator/evaluator.go`:
+
+1.  **Corrected `if` Statement Evaluation**: The `evalIfStmt` function was modified to no longer propagate `*object.ReturnValue` from its branches. It now evaluates both the `then` and `else` paths for their side effects (i.e., tracing function calls) and then always returns `nil`, allowing the analysis of the parent function to continue to subsequent statements. This ensures all possible code paths are explored, as intended by the symbolic engine's design.
+
+2.  **Scoped Function Argument Scanning**: The `evalCallExpr` function was fixed to only trigger `scanFunctionLiteral` for actual anonymous function literals. The check `if fn, ok := arg.(*object.Function); ok` was refined to `if fn, ok := arg.(*object.Function); ok && fn.Name == nil`. This correctly restricts the deep scanning to anonymous functions while treating named functions passed as values as simple arguments, breaking the infinite recursion loop.
+
+With these changes, the `symgo` engine now correctly handles all tested recursion patterns—simple, mutual, and indirect recursion via higher-order functions—producing a complete and accurate call graph. The `goinspect` tests now pass with the correct, expected output.

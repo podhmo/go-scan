@@ -68,6 +68,12 @@ type Object interface {
 	SetFieldType(*scanner.FieldType)
 }
 
+// Primitive is a marker interface for primitive types (Integer, String, etc.).
+type Primitive interface {
+	Object
+	isPrimitive()
+}
+
 // BaseObject provides a default implementation for the TypeInfo and FieldType methods.
 type BaseObject struct {
 	ResolvedTypeInfo  *scanner.TypeInfo
@@ -107,6 +113,7 @@ func (s *String) Type() ObjectType { return STRING_OBJ }
 
 // Inspect returns a string representation of the String's value.
 func (s *String) Inspect() string { return fmt.Sprintf("%q", s.Value) }
+func (s *String) isPrimitive()    {}
 
 // Release returns the String object to the pool.
 func (s *String) Release() {
@@ -127,6 +134,7 @@ func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 
 // Inspect returns a string representation of the Integer's value.
 func (i *Integer) Inspect() string { return strconv.FormatInt(i.Value, 10) }
+func (i *Integer) isPrimitive()    {}
 
 // Release returns the Integer object to the pool.
 func (i *Integer) Release() {
@@ -147,6 +155,7 @@ func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 
 // Inspect returns a string representation of the Float's value.
 func (f *Float) Inspect() string { return strconv.FormatFloat(f.Value, 'f', -1, 64) }
+func (f *Float) isPrimitive()    {}
 
 // Release returns the Float object to the pool.
 func (f *Float) Release() {
@@ -167,6 +176,7 @@ func (c *Complex) Type() ObjectType { return COMPLEX_OBJ }
 
 // Inspect returns a string representation of the Complex's value.
 func (c *Complex) Inspect() string { return fmt.Sprintf("%v", c.Value) }
+func (c *Complex) isPrimitive()    {}
 
 // --- Boolean Object ---
 
@@ -181,6 +191,7 @@ func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 
 // Inspect returns a string representation of the Boolean's value.
 func (b *Boolean) Inspect() string { return strconv.FormatBool(b.Value) }
+func (b *Boolean) isPrimitive()    {}
 
 // NewInteger creates a new Integer object from the pool.
 func NewInteger(value int64) *Integer {
@@ -550,7 +561,7 @@ type Slice struct {
 // Type returns the type of the Slice object.
 func (s *Slice) Type() ObjectType { return SLICE_OBJ }
 
-// Inspect returns a string representation of the slice type.
+// Inspect returns a string representation of the slice.
 func (s *Slice) Inspect() string {
 	var out bytes.Buffer
 	elements := []string{}

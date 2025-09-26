@@ -142,12 +142,27 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		calleeObj := args[0]
 		var calleeFunc *scanner.FunctionInfo
 
-		switch f := calleeObj.(type) {
-		case *object.Function:
-			calleeFunc = f.Def
-		case *object.SymbolicPlaceholder:
-			calleeFunc = f.UnderlyingFunc
+		// Define a recursive function to find the underlying FunctionInfo
+		// from various object types.
+		var findFuncInfo func(obj object.Object) *scanner.FunctionInfo
+		findFuncInfo = func(obj object.Object) *scanner.FunctionInfo {
+			if obj == nil {
+				return nil
+			}
+			switch f := obj.(type) {
+			case *object.Function:
+				return f.Def
+			case *object.SymbolicPlaceholder:
+				return f.UnderlyingFunc
+			case *object.Variable:
+				// Recursively look inside the variable's value.
+				return findFuncInfo(f.Value)
+			default:
+				return nil
+			}
 		}
+
+		calleeFunc = findFuncInfo(calleeObj)
 
 		if callerFrame.Fn != nil && callerFrame.Fn.Def != nil && calleeFunc != nil {
 			callerFunc := callerFrame.Fn.Def
@@ -194,23 +209,23 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	}
 
 	logger.Info("starting analysis", "entrypoints", len(entryPoints))
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Functions {
-			if !includeUnexported && !ast.IsExported(f.Name) {
-				continue
-			}
-			if _, ok := graph[f]; ok {
-				continue // Already visited as part of another call
-			}
-			eval := interp.EvaluatorForTest()
-			pkgObj, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
-			if err != nil {
-				logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", pkg.ImportPath, "error", err)
-				continue
-			}
-			fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
-			interp.Apply(ctx, fnObj, nil, pkg)
+	for _, f := range entryPoints {
+		if _, ok := graph[f]; ok {
+			continue // Already visited as part of another call
 		}
+		eval := interp.EvaluatorForTest()
+		// f.Pkg can be nil for synthetic methods, but entry points should be from scanned source.
+		if f.Pkg == nil {
+			logger.Warn("entrypoint has no package info, skipping", "func", f.Name)
+			continue
+		}
+		pkgObj, err := eval.GetOrLoadPackageForTest(ctx, f.Pkg.ImportPath)
+		if err != nil {
+			logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", f.Pkg.ImportPath, "error", err)
+			continue
+		}
+		fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
+		interp.Apply(ctx, fnObj, nil, f.Pkg)
 	}
 
 	// 5. Filter for true top-level functions (not called by any other entry point).

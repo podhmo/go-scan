@@ -98,6 +98,7 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	// 2. Scan packages using goscan.
 	s, err := goscan.New(
 		goscan.WithLogger(logger),
+		goscan.WithGoModuleResolver(),
 		// goscan.WithLoadMode(goscan.LoadModeNeedsAll), // TODO: find the correct option
 	)
 	if err != nil {

@@ -251,26 +251,29 @@ func (s *Scanner) Scan(ctx context.Context, patterns ...string) ([]*Package, err
 				return nil, fmt.Errorf("error walking directory for pattern %q: %w", pattern, walkErr)
 			}
 		} else {
-			// Handle single file or directory pattern (legacy behavior)
+			// Handle single file, directory, or import path pattern
+			var pkg *Package
+			var err error
+
+			// Attempt to resolve as a file/directory path first.
 			absPath := pattern
 			if !filepath.IsAbs(pattern) {
 				absPath = filepath.Join(s.workDir, pattern)
 			}
 
-			info, err := os.Stat(absPath)
-			if err != nil {
-				return nil, fmt.Errorf("could not stat pattern %q (resolved to %q): %w", pattern, absPath, err)
+			info, statErr := os.Stat(absPath)
+			if statErr == nil { // Path exists on filesystem
+				if info.IsDir() {
+					pkg, err = s.ScanPackageFromFilePath(ctx, absPath)
+				} else {
+					pkg, err = s.ScanFiles(ctx, []string{absPath})
+				}
+			} else { // Path does not exist, assume it's an import path
+				pkg, err = s.ScanPackageFromImportPath(ctx, pattern)
 			}
 
-			var pkg *Package
-			if info.IsDir() {
-				pkg, err = s.ScanPackageFromFilePath(ctx, absPath)
-			} else {
-				pkg, err = s.ScanFiles(ctx, []string{absPath})
-			}
-
 			if err != nil {
-				return nil, fmt.Errorf("failed to scan path %q: %w", absPath, err)
+				return nil, fmt.Errorf("failed to scan pattern %q: %w", pattern, err)
 			}
 			if pkg != nil && pkg.ImportPath != "" {
 				pkgsMap[pkg.ImportPath] = pkg

@@ -81,6 +81,10 @@ func TestGoInspect(t *testing.T) {
 		{
 			name:        "indirect",
 			pkgPatterns: []string{"./testdata/src/indirect"},
+    },
+    {
+			name:        "stdlib_errors",
+			pkgPatterns: []string{"errors"},
 		},
 	}
 

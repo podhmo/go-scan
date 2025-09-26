@@ -29,6 +29,7 @@ type fileParseResult struct {
 // Scanner parses Go source files within a package.
 type Scanner struct {
 	fset                     *token.FileSet
+	identityMap              *IdentityMap
 	resolver                 PackageResolver
 	ExternalTypeOverrides    ExternalTypeOverride
 	Overlay                  Overlay
@@ -46,9 +47,12 @@ func (s *Scanner) FileSet() *token.FileSet {
 }
 
 // New creates a new Scanner.
-func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver, inspect bool, logger *slog.Logger) (*Scanner, error) {
+func New(fset *token.FileSet, identityMap *IdentityMap, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver, inspect bool, logger *slog.Logger) (*Scanner, error) {
 	if fset == nil {
 		return nil, fmt.Errorf("fset cannot be nil")
+	}
+	if identityMap == nil {
+		return nil, fmt.Errorf("identityMap cannot be nil")
 	}
 	if overrides == nil {
 		overrides = make(ExternalTypeOverride)
@@ -65,6 +69,7 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 
 	return &Scanner{
 		fset:                     fset,
+		identityMap:              identityMap,
 		ExternalTypeOverrides:    overrides,
 		Overlay:                  overlay,
 		DeclarationsOnlyPackages: make([]string, 0), // Initialize as slice
@@ -351,6 +356,12 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if d, ok := decl.(*ast.GenDecl); ok && d.Tok == token.TYPE {
 				for _, spec := range d.Specs {
 					if ts, ok := spec.(*ast.TypeSpec); ok {
+						pos := ts.Pos()
+						if typeInfo, ok := s.identityMap.GetType(pos); ok {
+							info.Types = append(info.Types, typeInfo)
+							continue
+						}
+
 						typeInfo := &TypeInfo{
 							Name:     ts.Name.Name,
 							PkgPath:  info.ImportPath,
@@ -364,6 +375,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 						if typeInfo.Doc == "" && d.Doc != nil {
 							typeInfo.Doc = commentText(d.Doc)
 						}
+						s.identityMap.SetType(pos, typeInfo)
 						info.Types = append(info.Types, typeInfo)
 					}
 				}
@@ -694,6 +706,11 @@ func (s *Scanner) evalConstExpr(cctx *constContext, currentConst *ConstantInfo, 
 }
 
 func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *PackageInfo, absFilePath string, importLookup map[string]string) *TypeInfo {
+	pos := sp.Pos()
+	if typeInfo, ok := s.identityMap.GetType(pos); ok {
+		return typeInfo
+	}
+
 	typeInfo := &TypeInfo{
 		Name:     sp.Name.Name,
 		PkgPath:  info.ImportPath,
@@ -704,6 +721,10 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 		Logger:   s.logger,
 		Fset:     info.Fset,
 	}
+
+	// Register the new type info *before* filling it out to handle recursive types.
+	s.identityMap.SetType(pos, typeInfo)
+
 	s.fillTypeInfoFromSpec(ctx, typeInfo, sp, info, importLookup)
 	return typeInfo
 }
@@ -827,6 +848,11 @@ func (s *Scanner) parseStructType(ctx context.Context, st *ast.StructType, curre
 }
 
 func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePath string, pkgInfo *PackageInfo, importLookup map[string]string) *FunctionInfo {
+	pos := f.Pos()
+	if funcInfo, ok := s.identityMap.GetFunction(pos); ok {
+		return funcInfo
+	}
+
 	var funcOwnTypeParams []*TypeParamInfo
 	if f.Type.TypeParams != nil {
 		funcOwnTypeParams = s.parseTypeParamList(ctx, f.Type.TypeParams.List, pkgInfo, importLookup)
@@ -840,6 +866,10 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 	funcInfo.AstDecl = f
 	funcInfo.TypeParams = funcOwnTypeParams
 	funcInfo.Pkg = pkgInfo // Set the back-reference to the package
+
+	// Register the new function info *before* parsing its body or receiver
+	// to handle recursive calls correctly.
+	s.identityMap.SetFunction(pos, funcInfo)
 
 	// After parsing the function signature, walk its body to find and resolve local type declarations.
 	if f.Body != nil {

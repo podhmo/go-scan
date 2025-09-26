@@ -32,7 +32,7 @@ type FileScope struct {
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
-	funcCache         map[string]object.Object
+	funcCache         map[token.Pos]object.Object
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
@@ -76,7 +76,7 @@ type Evaluator struct {
 
 	// memoization
 	memoize          bool
-	memoizationCache map[token.Pos]object.Object
+	memoizationCache map[*object.Function]object.Object
 }
 
 // contextKey is a private type to avoid collisions with other packages' context keys.
@@ -126,7 +126,7 @@ func WithMaxSteps(n int) Option {
 func WithMemoization() Option {
 	return func(e *Evaluator) {
 		e.memoize = true
-		e.memoizationCache = make(map[token.Pos]object.Object)
+		e.memoizationCache = make(map[*object.Function]object.Object)
 	}
 }
 
@@ -182,7 +182,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 
 	e := &Evaluator{
 		scanner:                scanner,
-		funcCache:              make(map[string]object.Object),
+		funcCache:              make(map[token.Pos]object.Object),
 		intrinsics:             intrinsics.New(),
 		logger:                 logger,
 		tracer:                 tracer,
@@ -3384,8 +3384,8 @@ func (v inspectValuer) LogValue() slog.Value {
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
 	if f, ok := fn.(*object.Function); ok {
-		if e.memoize && f.Decl != nil {
-			if cachedResult, found := e.memoizationCache[f.Decl.Pos()]; found {
+		if e.memoize {
+			if cachedResult, found := e.memoizationCache[f]; found {
 				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "function", f.Name)
 				return cachedResult
 			}
@@ -3395,9 +3395,9 @@ func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []
 	result := e.applyFunctionImpl(ctx, fn, args, pkg, callPos)
 
 	if f, ok := fn.(*object.Function); ok {
-		if e.memoize && !isError(result) && f.Decl != nil {
+		if e.memoize && !isError(result) {
 			e.logc(ctx, slog.LevelDebug, "caching result for function", "function", f.Name)
-			e.memoizationCache[f.Decl.Pos()] = result
+			e.memoizationCache[f] = result
 		}
 	}
 
@@ -4062,15 +4062,14 @@ func (e *Evaluator) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn ob
 }
 
 func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
-	// Generate a unique key for the function. For methods, the receiver type is crucial.
-	key := ""
-	if funcInfo.Receiver != nil && funcInfo.Receiver.Type != nil {
-		// e.g., "example.com/me/impl.(*Dog).Speak"
-		key = fmt.Sprintf("%s.(%s).%s", pkg.Path, funcInfo.Receiver.Type.String(), funcInfo.Name)
-	} else {
-		// e.g., "example.com/me.MyFunction"
-		key = fmt.Sprintf("%s.%s", pkg.Path, funcInfo.Name)
+	// The AST declaration is guaranteed to exist for functions from source.
+	if funcInfo.AstDecl == nil {
+		// Handle functions without an AST node (e.g., synthetic from interfaces).
+		// These cannot be cached by position, so we resolve them directly.
+		return e.resolver.ResolveFunction(ctx, pkg, funcInfo)
 	}
+
+	key := funcInfo.AstDecl.Pos()
 
 	// Check cache first.
 	if fn, ok := e.funcCache[key]; ok {

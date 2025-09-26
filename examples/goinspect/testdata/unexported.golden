@@ -5,4 +5,4 @@ func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.main() #4
   func (*Service).Do(Greeter) #5
     func .Greet() #6
   func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #7
-    func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #7
+    [recursive] func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #7

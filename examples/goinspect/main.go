@@ -177,6 +177,10 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 			if callerFunc == nil {
 				return nil
 			}
+			// Also check for direct recursion (caller is the same as callee).
+			if !isRecursive && callerFunc == calleeFunc {
+				isRecursive = true
+			}
 			graph[callerFunc] = append(graph[callerFunc], &CallInfo{
 				Callee:      calleeFunc,
 				IsRecursive: isRecursive,

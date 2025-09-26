@@ -1,7 +1,7 @@
 func errors.Is(error, error) #1
   func errors.is(error, error, bool) #2
     func .Is(error) #3
-    func errors.is(error, error, bool) #2
+    [recursive] func errors.is(error, error, bool) #2
 func errors.As(error, any) #4
   func errors.as(error, any, reflectlite.Value, reflectlite.Type) #5
     func .As(any) #3

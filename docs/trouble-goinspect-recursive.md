@@ -48,3 +48,14 @@ The path to a stable test suite was iterative and involved fixing several fundam
     -   **Build Errors**: Several build errors occurred due to using the wrong package aliases (`scan` vs. `scanner` vs. `goscan`) for `Kind` constants. The final correct alias is `scan`.
 
 After this extensive series of fixes, the test suite is significantly more stable. The remaining failures will be addressed next.
+
+## Current Status (2025-09-26)
+
+After a full test run, the vast majority of tests are now passing, including the most complex ones that motivated this refactoring effort (`TestEval_LocalTypeDefinition`, `TestNestedBlockVariableScoping`, etc.). However, a few regressions and previously hidden failures remain:
+
+-   `TestAnonymousTypes_Interface`: Fails to capture a method call on an anonymous interface.
+-   `TestEvalCallExpr_IntraPackageCall`: A simple intra-package function call is not being resolved correctly.
+-   `TestRecursiveMethodCallNotCached`: Memoization is too aggressive and incorrectly caches a recursive method call across different instances.
+-   `TestShallowScan_FindMethodOnUnresolvedEmbeddedType`: A method lookup on a struct with an unresolved embedded type is still throwing an error instead of returning a symbolic placeholder.
+
+The next steps will be to address these remaining, more isolated failures.

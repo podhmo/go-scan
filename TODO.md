@@ -1,3 +1,3 @@
-- [x] `symgo` のテストが失敗する問題を修正する
-- [x] `docs/trouble-goinspect-recursive.md` に作業記録を追記する
-- [ ] `TODO.md` を更新する (このタスク)
+- [x] `symgo` のテストが失敗する問題を修正する (完了)
+- [x] `docs/trouble-goinspect-recursive.md` に作業記録を追記する (完了)
+- [x] `TODO.md` を更新する (完了)

@@ -93,6 +93,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgo`: Improve Analysis Capabilities
 - [x] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.
 - [ ] **Higher-Order & Anonymous Functions**: Improve symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. This includes resolving the function signature correctly instead of `unhandled_type_*ast.FuncType`.
+- [ ] **Indirect Recursion via Higher-Order Functions**: The `symgo` engine currently enters an infinite loop and causes a stack overflow when analyzing indirect recursion that goes through a higher-order function (e.g., `A -> HOF -> B`, `B -> HOF -> A`). The evaluator needs a mechanism to detect and halt this specific type of infinitely expanding call graph. ([docs/trouble-goinspect-recursive.md](./docs/trouble-goinspect-recursive.md))
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
 - [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.

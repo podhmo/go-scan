@@ -78,6 +78,12 @@ func TestGoInspect(t *testing.T) {
 			name:        "mutual",
 			pkgPatterns: []string{"./testdata/src/mutual"},
 		},
+		// TODO: Re-enable this test once the symgo engine can handle indirect recursion
+		// via higher-order functions without a stack overflow.
+		// {
+		// 	name:        "indirect",
+		// 	pkgPatterns: []string{"./testdata/src/indirect"},
+		// },
 	}
 
 	for _, tc := range testCases {

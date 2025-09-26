@@ -40,71 +40,81 @@ With object identity guaranteed for `scanner.FunctionInfo`, we can now extend th
 
 ### 2.1. The Problem in `symgo`
 
-The `symgo.Evaluator` has its own cache, `funcCache`, to store `*object.Function` instances that it resolves. However, this cache uses a string-based key, generated from the package path and function name.
+The `symgo.Evaluator` has its own cache, `funcCache`, to store `*object.Function` instances that it resolves. This cache originally used a string-based key, which did not guarantee identity.
 
+### 2.2. Solution for `symgo.funcCache`
+
+By leveraging the fact that every `scanner.FunctionInfo` is now a unique instance, we changed the `funcCache` key to `token.Pos` (derived from `funcInfo.AstDecl.Pos()`). This ensures that `symgo` will only ever create **one** `*object.Function` for each `scanner.FunctionInfo`.
+
+## Part 3: Simplification of Memoization Cache
+
+The `symgo.Evaluator` also contains a `memoizationCache` to store the results of function evaluations, preventing re-evaluation of the same function.
+
+### 3.1. Current State
+
+The `memoizationCache` currently uses `token.Pos` as its key:
 ```go
-// In symgo/evaluator/evaluator.go (before change)
-key := fmt.Sprintf("%s.(%s).%s", pkg.Path, funcInfo.Receiver.Type.String(), funcInfo.Name)
-// ... or ...
-key := fmt.Sprintf("%s.%s", pkg.Path, funcInfo.Name)
+// In symgo/evaluator/evaluator.go (current)
+type Evaluator struct {
+    // ...
+    memoizationCache map[token.Pos]object.Object
+}
+
+// In applyFunction()
+if f, ok := fn.(*object.Function); ok {
+    if e.memoize && f.Decl != nil {
+        if cachedResult, found := e.memoizationCache[f.Decl.Pos()]; found {
+            return cachedResult
+        }
+        // ... after evaluation ...
+        e.memoizationCache[f.Decl.Pos()] = result
+    }
+}
 ```
+This works correctly but relies on accessing the `*ast.FuncDecl` through the `object.Function` to get its position.
 
-While this reduces work, it does not guarantee identity. If different analysis paths resolve the same function at different times, they might use slightly different (but semantically identical) `scanner.FunctionInfo` objects, potentially leading to different cache keys or cache misses, resulting in duplicate `*object.Function` instances.
+### 3.2. Proposed Simplification
 
-### 2.2. Proposed Solution for `symgo`
+Now that we have a strong identity guarantee on `*object.Function` itself (thanks to the `funcCache` modifications in Part 2), we no longer need to rely on `token.Pos` as an indirect key. We can use the `*object.Function` pointer directly as the key for the memoization cache.
 
-We can now leverage the fact that every `scanner.FunctionInfo` passed to `symgo` is a unique, canonical instance for that declaration. Therefore, we can use its unique `token.Pos` as the key for `symgo`'s `funcCache`.
+This is a cleaner, more object-oriented approach.
 
-This change ensures that `symgo` will only ever create **one** `*object.Function` for each `scanner.FunctionInfo`.
+### Implementation Plan for Memoization
 
-### Implementation Plan for `symgo`
-
-The change is localized to `symgo/evaluator/evaluator.go`:
-
-1.  **Update `funcCache` Type**:
-    The `funcCache` field in the `symgo.Evaluator` struct will be changed from `map[string]object.Object` to `map[token.Pos]object.Object`.
+1.  **Update `memoizationCache` Type**:
+    The `memoizationCache` field in the `symgo.Evaluator` struct will be changed from `map[token.Pos]object.Object` to `map[*object.Function]object.Object`.
 
     ```go
     // In symgo/evaluator/evaluator.go
     type Evaluator struct {
         // ...
-        funcCache map[token.Pos]object.Object
-        // ...
+        memoizationCache map[*object.Function]object.Object
     }
 
-    // In New()
-    funcCache: make(map[token.Pos]object.Object),
+    // In WithMemoization() option
+    e.memoizationCache = make(map[*object.Function]object.Object)
     ```
 
-2.  **Modify `getOrResolveFunction` Logic**:
-    This method is the central point for creating `*object.Function` instances. The key generation logic will be updated to use the position of the function's AST declaration.
+2.  **Modify `applyFunction` Logic**:
+    The logic will be simplified to use the function object pointer as the key.
 
     ```go
-    // In symgo.Evaluator.getOrResolveFunction
-    func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
-        // The AST declaration is guaranteed to exist for functions from source.
-        if funcInfo.AstDecl == nil {
-            // Handle functions without an AST node (e.g., synthetic) separately if needed.
-            // For now, these won't be cached.
-            return e.resolver.ResolveFunction(ctx, pkg, funcInfo)
+    // In symgo.Evaluator.applyFunction
+    if f, ok := fn.(*object.Function); ok {
+        if e.memoize { // The f.Decl != nil check is no longer needed
+            if cachedResult, found := e.memoizationCache[f]; found {
+                return cachedResult
+            }
+            // ... after evaluation ...
+            if !isError(result) {
+                e.memoizationCache[f] = result
+            }
         }
-
-        key := funcInfo.AstDecl.Pos()
-
-        // Check cache first.
-        if fn, ok := e.funcCache[key]; ok {
-            return fn
-        }
-
-        // Not in cache, resolve it.
-        fn := e.resolver.ResolveFunction(ctx, pkg, funcInfo)
-
-        // Store in cache for next time.
-        e.funcCache[key] = fn
-        return fn
     }
     ```
 
-### Overall Benefits
+### Benefits of this Final Change
 
-By implementing these changes in both `go-scan` and `symgo`, we establish a strong guarantee of object identity from the lowest level of scanning up to the highest level of symbolic execution. This simplifies the entire system, eliminates a class of potential bugs related to state management, and makes consumers like `symgo` more robust and easier to reason about.
+- **Simplicity**: The code becomes more direct and easier to understand by using the object itself as the key.
+- **Robustness**: It removes the dependency on the `*ast.FuncDecl` node within the memoization logic. This makes the system more robust and could potentially allow for memoizing functions that do not have a direct AST declaration (e.g., dynamically generated or function literals), although that is not an immediate goal.
+- **Consistency**: It aligns the caching strategy with the newly established object identity principle.

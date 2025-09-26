@@ -74,6 +74,10 @@ func TestGoInspect(t *testing.T) {
 			name:        "multi_pkg_target",
 			pkgPatterns: []string{"./testdata/src/myapp", "./testdata/src/another"},
 		},
+		{
+			name:        "mutual",
+			pkgPatterns: []string{"./testdata/src/mutual"},
+		},
 	}
 
 	for _, tc := range testCases {

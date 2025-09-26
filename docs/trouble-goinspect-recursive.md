@@ -63,3 +63,19 @@ A recursive function calls itself, so it is present in its own list of callees i
 The fix is to adjust the filtering logic. When populating the `callees` map, we must ignore cases where a function calls itself. A function should only be considered a "callee" (and therefore not a top-level entry point) if it is called by a *different* function.
 
 The logic will be changed to compare the caller's ID with the callee's ID and skip the entry if they match. This ensures self-recursive functions can still be considered top-level entry points.
+
+## Bug Fix 2: Mutual Recursion Causes Empty Output
+
+After adding a test case for mutual recursion (`Ping` calls `Pong`, `Pong` calls `Ping`), the resulting `mutual.golden` file was empty.
+
+### Root Cause
+
+The "orphan-style" filtering, which is intended to only show true entry points, fails for a codebase that consists entirely of a cycle. The logic marks any function that is called by another as a "callee". In the mutual recursion case, `Ping` marks `Pong` as a callee, and `Pong` marks `Ping` as a callee. Consequently, both are removed from the list of top-level functions to print, resulting in an empty list and no output.
+
+### Solution
+
+A fallback mechanism will be added. After the filtering logic runs, if the resulting list of top-level functions is empty (and the initial list of entry points was not), we will assume we've encountered a cyclical library and revert to using the original, unfiltered list of entry points. This correctly handles the mutual recursion case while preserving the orphan-style filtering for other cases.
+
+## Final Verification: Mutual Recursion
+
+Based on user feedback, an explicit test case for mutual recursion (`ping-pong`) was added. The fix for Bug #2 proved successful. The tool now correctly identifies and displays the call graph for mutually recursive functions, labeling the second call in the cycle as `[recursive]`. The feature is now considered complete and robust.

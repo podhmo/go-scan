@@ -234,6 +234,13 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		}
 	}
 
+	// If filtering results in an empty list, it's likely a library composed
+	// entirely of a call cycle (e.g., mutual recursion). In this case,
+	// fall back to showing all original entry points.
+	if len(topLevelFunctions) == 0 && len(entryPoints) > 0 {
+		topLevelFunctions = entryPoints
+	}
+
 	// 6. Print the call graph starting from the true top-level functions.
 	var modulePrefix string
 	if trimPrefix {

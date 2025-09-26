@@ -98,6 +98,7 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	// 2. Scan packages using goscan.
 	s, err := goscan.New(
 		goscan.WithLogger(logger),
+		goscan.WithGoModuleResolver(), // Enable resolving stdlib and external modules
 		// goscan.WithLoadMode(goscan.LoadModeNeedsAll), // TODO: find the correct option
 	)
 	if err != nil {
@@ -111,6 +112,18 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 			return fmt.Errorf("failed to scan package pattern %q: %w", pkgPattern, err)
 		}
 		pkgs = append(pkgs, scannedPkgs...)
+	}
+
+	// DEBUG: Check if function bodies are loaded for the scanned packages.
+	for _, pkg := range pkgs {
+		logger.Debug("checking package", "pkg", pkg.ID, "importPath", pkg.ImportPath)
+		for _, f := range pkg.Functions {
+			hasBody := f.AstDecl != nil && f.AstDecl.Body != nil
+			isExported := ast.IsExported(f.Name)
+			if isExported { // Log only exported functions for brevity
+				logger.Debug("  - func", "name", f.Name, "hasBody", hasBody, "exported", isExported)
+			}
+		}
 	}
 
 	// Define the analysis scope.
@@ -193,23 +206,43 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	}
 
 	logger.Info("starting analysis", "entrypoints", len(entryPoints))
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Functions {
-			if !includeUnexported && !ast.IsExported(f.Name) {
-				continue
-			}
-			if _, ok := graph[f]; ok {
-				continue // Already visited as part of another call
-			}
-			eval := interp.EvaluatorForTest()
-			pkgObj, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
-			if err != nil {
-				logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", pkg.ImportPath, "error", err)
-				continue
-			}
-			fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
-			interp.Apply(ctx, fnObj, nil, pkg)
+	for _, f := range entryPoints {
+		if _, ok := graph[f]; ok {
+			continue // Already visited as part of another call
 		}
+
+		// The package for the entry point function should be in the scanner's cache.
+		pkg, ok := interp.Scanner().AllSeenPackages()[f.Pkg.ID]
+		if !ok {
+			logger.Warn("package not found in cache for entrypoint, this is unexpected", "func", f.Name, "pkgID", f.Pkg.ID)
+			continue
+		}
+
+		eval := interp.EvaluatorForTest()
+		pkgObj, err := eval.GetOrLoadPackageForTest(ctx, f.Pkg.ImportPath)
+		if err != nil {
+			logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", f.Pkg.ImportPath, "error", err)
+			continue
+		}
+
+		fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
+		if fnObj == nil {
+			logger.Warn("could not resolve function object for entrypoint", "func", f.Name, "pkg", f.Pkg.ImportPath)
+			continue
+		}
+
+		// Prepare symbolic arguments for the function/method call.
+		var args []object.Object
+		if f.Receiver != nil {
+			// Create a symbolic placeholder for the receiver.
+			args = append(args, &object.SymbolicPlaceholder{Reason: f.Receiver.Type.String()})
+		}
+		for _, p := range f.Parameters {
+			// Create a symbolic placeholder for each parameter.
+			args = append(args, &object.SymbolicPlaceholder{Reason: p.Type.String()})
+		}
+
+		interp.Apply(ctx, fnObj, args, pkg)
 	}
 
 	// 5. Filter for true top-level functions (not called by any other entry point).

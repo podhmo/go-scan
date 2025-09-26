@@ -214,10 +214,16 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	}
 
 	// 5. Filter for true top-level functions (not called by any other entry point).
+	// A function is a "callee" if it's called by another function. A self-recursive
+	// call does not disqualify a function from being a top-level entry point.
 	callees := make(map[string]bool)
-	for _, calledFuncs := range graph {
-		for _, f := range calledFuncs {
-			callees[getFuncID(f)] = true
+	for caller, calledFuncs := range graph {
+		callerID := getFuncID(caller)
+		for _, callee := range calledFuncs {
+			calleeID := getFuncID(callee)
+			if callerID != calleeID {
+				callees[calleeID] = true
+			}
 		}
 	}
 

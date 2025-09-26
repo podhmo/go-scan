@@ -47,3 +47,19 @@ The goal is to enhance the `goinspect` tool to identify and label recursive func
       return
   }
   ```
+
+## Bug Fix: Recursive Functions Filtered from Top-Level Output
+
+After the initial implementation, user feedback highlighted a critical bug: the `Recursive` function, which is exported, was not appearing in the `default.golden` output as expected.
+
+### Root Cause
+
+The issue was in the logic that filters for "true" top-level functions. The code builds a map of all `callees` and then iterates through the potential `entryPoints`, excluding any function that appears in the `callees` map.
+
+A recursive function calls itself, so it is present in its own list of callees in the `callGraph`. This caused the recursive function to be added to the `callees` map, which in turn caused it to be filtered out from the final list of `topLevelFunctions` to be printed.
+
+### Solution
+
+The fix is to adjust the filtering logic. When populating the `callees` map, we must ignore cases where a function calls itself. A function should only be considered a "callee" (and therefore not a top-level entry point) if it is called by a *different* function.
+
+The logic will be changed to compare the caller's ID with the callee's ID and skip the entry if they match. This ensures self-recursive functions can still be considered top-level entry points.

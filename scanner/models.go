@@ -537,6 +537,24 @@ func (ft *FieldType) SetResolver(r PackageResolver) {
 
 // var _ = strings.Builder{} // This helper is no longer needed as "strings" is directly imported.
 
+// IdentityCache ensures that for a given ast.Node, the same scanner object instance is always returned.
+// This allows consumers to rely on pointer equality for objects derived from the same source declaration.
+type IdentityCache struct {
+	mu        sync.RWMutex
+	Functions map[ast.Node]*FunctionInfo
+	Types     map[ast.Node]*TypeInfo
+	Constants map[ast.Node]*ConstantInfo
+}
+
+// NewIdentityCache creates a new, empty IdentityCache.
+func NewIdentityCache() *IdentityCache {
+	return &IdentityCache{
+		Functions: make(map[ast.Node]*FunctionInfo),
+		Types:     make(map[ast.Node]*TypeInfo),
+		Constants: make(map[ast.Node]*ConstantInfo),
+	}
+}
+
 // PackageImports holds the minimal information about a package's direct imports.
 type PackageImports struct {
 	Name        string

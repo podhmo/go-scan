@@ -33,8 +33,8 @@ func TestGoInspect(t *testing.T) {
 			shortFormat: true,
 		},
 		{
-			name:        "expand",
-			pkgPatterns: []string{"./testdata/src/myapp"},
+			name:         "expand",
+			pkgPatterns:  []string{"./testdata/src/myapp"},
 			expandFormat: true,
 		},
 		{

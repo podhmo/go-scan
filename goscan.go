@@ -50,6 +50,7 @@ const (
 type Scanner struct {
 	*Config
 	packageCache          map[string]*Package // Cache for PackageInfo from ScanPackageFromFilePath/ScanPackageFromImportPath, key is import path
+	identityCache         *scanner.IdentityCache
 	visitedFiles          map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu                    sync.RWMutex
 	CachePath             string
@@ -407,6 +408,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	s := &Scanner{
 		Config:                cfg,
 		packageCache:          make(map[string]*Package),
+		identityCache:         scanner.NewIdentityCache(),
 		visitedFiles:          make(map[string]struct{}),
 		ExternalTypeOverrides: make(scanner.ExternalTypeOverride),
 		Walker: &ModuleWalker{
@@ -460,7 +462,7 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	// In workspace mode, we use the primary (first) locator's info.
 	// This is a slight simplification, but the internal scanner's primary role
 	// is parsing, and type resolution logic will use the full workspace-aware Scanner.
-	initialScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.Inspect, s.Logger)
+	initialScanner, err := scanner.New(s.fset, s.identityCache, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.Inspect, s.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create internal scanner: %w", err)
 	}
@@ -490,7 +492,7 @@ func (s *Scanner) SetExternalTypeOverrides(ctx context.Context, overrides scanne
 		overrides = make(scanner.ExternalTypeOverride)
 	}
 	s.ExternalTypeOverrides = overrides
-	newInternalScanner, err := scanner.New(s.fset, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.Inspect, s.Logger)
+	newInternalScanner, err := scanner.New(s.fset, s.identityCache, s.ExternalTypeOverrides, s.overlay, s.locator.ModulePath(), s.locator.RootDir(), s, s.Inspect, s.Logger)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to re-initialize internal scanner with new overrides. Continuing with previous scanner settings.", slog.Any("error", err))
 		return

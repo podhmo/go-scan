@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -30,6 +31,7 @@ type fileParseResult struct {
 type Scanner struct {
 	fset                     *token.FileSet
 	resolver                 PackageResolver
+	identityCache            *IdentityCache
 	ExternalTypeOverrides    ExternalTypeOverride
 	Overlay                  Overlay
 	DeclarationsOnlyPackages []string // Changed from map[string]bool
@@ -46,7 +48,7 @@ func (s *Scanner) FileSet() *token.FileSet {
 }
 
 // New creates a new Scanner.
-func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver, inspect bool, logger *slog.Logger) (*Scanner, error) {
+func New(fset *token.FileSet, identityCache *IdentityCache, overrides ExternalTypeOverride, overlay Overlay, modulePath string, moduleRootDir string, resolver PackageResolver, inspect bool, logger *slog.Logger) (*Scanner, error) {
 	if fset == nil {
 		return nil, fmt.Errorf("fset cannot be nil")
 	}
@@ -65,12 +67,13 @@ func New(fset *token.FileSet, overrides ExternalTypeOverride, overlay Overlay, m
 
 	return &Scanner{
 		fset:                     fset,
+		identityCache:            identityCache,
+		resolver:                 resolver,
 		ExternalTypeOverrides:    overrides,
 		Overlay:                  overlay,
 		DeclarationsOnlyPackages: make([]string, 0), // Initialize as slice
 		modulePath:               modulePath,
 		moduleRootDir:            moduleRootDir,
-		resolver:                 resolver,
 		inspect:                  inspect,
 		logger:                   logger,
 	}, nil
@@ -344,6 +347,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	info.Files = filePathsForDominantPkg
 
 	// Pass 1: Create placeholders for all type declarations from the filtered files.
+	typesInPkg := make(map[*TypeInfo]struct{}) // Use map to handle cached types and avoid duplicates
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
 		info.AstFiles[filePath] = fileAst
@@ -351,28 +355,68 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if d, ok := decl.(*ast.GenDecl); ok && d.Tok == token.TYPE {
 				for _, spec := range d.Specs {
 					if ts, ok := spec.(*ast.TypeSpec); ok {
-						typeInfo := &TypeInfo{
-							Name:     ts.Name.Name,
-							PkgPath:  info.ImportPath,
-							FilePath: filePath,
-							Doc:      commentText(ts.Doc),
-							Node:     ts,
-							Inspect:  s.inspect,
-							Logger:   s.logger,
-							Fset:     info.Fset,
+						var typeInfo *TypeInfo
+
+						// Check cache
+						if s.identityCache != nil {
+							s.identityCache.mu.RLock()
+							cached, found := s.identityCache.Types[ts]
+							s.identityCache.mu.RUnlock()
+							if found {
+								typeInfo = cached
+							}
 						}
-						if typeInfo.Doc == "" && d.Doc != nil {
-							typeInfo.Doc = commentText(d.Doc)
+
+						if typeInfo == nil {
+							// Not in cache, create new one
+							typeInfo = &TypeInfo{
+								Name:     ts.Name.Name,
+								PkgPath:  info.ImportPath,
+								FilePath: filePath,
+								Doc:      commentText(ts.Doc),
+								Node:     ts,
+								Inspect:  s.inspect,
+								Logger:   s.logger,
+								Fset:     info.Fset,
+							}
+							if typeInfo.Doc == "" && d.Doc != nil {
+								typeInfo.Doc = commentText(d.Doc)
+							}
+							// Add to cache
+							if s.identityCache != nil {
+								s.identityCache.mu.Lock()
+								// Double check for race condition
+								if cached, found := s.identityCache.Types[ts]; found {
+									typeInfo = cached
+								} else {
+									s.identityCache.Types[ts] = typeInfo
+								}
+								s.identityCache.mu.Unlock()
+							}
 						}
-						info.Types = append(info.Types, typeInfo)
+						typesInPkg[typeInfo] = struct{}{}
 					}
 				}
 			}
 		}
 	}
+	// Convert map to slice.
+	info.Types = make([]*TypeInfo, 0, len(typesInPkg))
+	for typeInfo := range typesInPkg {
+		info.Types = append(info.Types, typeInfo)
+	}
+	sort.Slice(info.Types, func(i, j int) bool {
+		// Node can be nil for synthetic types, handle this gracefully.
+		if info.Types[i].Node == nil || info.Types[j].Node == nil {
+			return info.Types[i].Name < info.Types[j].Name // Fallback to name sort
+		}
+		return info.Types[i].Node.Pos() < info.Types[j].Node.Pos()
+	})
 
 	// Pass 2: Fill in the details for all collected types.
 	for _, typeInfo := range info.Types {
+		// It's safe to call fillTypeInfoFromSpec multiple times if a type is
+		// cached and re-processed in another scan. The operation is idempotent.
 		if ts, ok := typeInfo.Node.(*ast.TypeSpec); ok {
 			importLookup := s.BuildImportLookup(info.AstFiles[typeInfo.FilePath])
 			s.fillTypeInfoFromSpec(ctx, typeInfo, ts, info, importLookup)
@@ -388,6 +432,8 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		}
 	}
 
+	constantsInPkg := make(map[*ConstantInfo]struct{})
+	functionsInPkg := make(map[*FunctionInfo]struct{})
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
 		if isDeclarationsOnly {
@@ -402,13 +448,39 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			switch d := decl.(type) {
 			case *ast.GenDecl:
 				if d.Tok != token.TYPE { // Types are already detailed, just do const/var
-					s.parseGenDecl(ctx, d, info, filePath, importLookup)
+					s.parseGenDecl(ctx, d, info, filePath, importLookup, constantsInPkg)
 				}
 			case *ast.FuncDecl:
-				info.Functions = append(info.Functions, s.parseFuncDecl(ctx, d, filePath, info, importLookup))
+				funcInfo := s.parseFuncDecl(ctx, d, filePath, info, importLookup)
+				if funcInfo != nil {
+					functionsInPkg[funcInfo] = struct{}{}
+				}
 			}
 		}
 	}
+
+	// Convert maps to slices for final package info
+	info.Constants = make([]*ConstantInfo, 0, len(constantsInPkg))
+	for constInfo := range constantsInPkg {
+		info.Constants = append(info.Constants, constInfo)
+	}
+	sort.Slice(info.Constants, func(i, j int) bool {
+		if info.Constants[i].Node == nil || info.Constants[j].Node == nil {
+			return info.Constants[i].Name < info.Constants[j].Name
+		}
+		return info.Constants[i].Node.Pos() < info.Constants[j].Node.Pos()
+	})
+
+	info.Functions = make([]*FunctionInfo, 0, len(functionsInPkg))
+	for funcInfo := range functionsInPkg {
+		info.Functions = append(info.Functions, funcInfo)
+	}
+	sort.Slice(info.Functions, func(i, j int) bool {
+		if info.Functions[i].AstDecl == nil || info.Functions[j].AstDecl == nil {
+			return info.Functions[i].Name < info.Functions[j].Name
+		}
+		return info.Functions[i].AstDecl.Pos() < info.Functions[j].AstDecl.Pos()
+	})
 
 	if info.Name == "" && len(filePaths) > 0 {
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
@@ -421,6 +493,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 
 // resolveEnums performs a linking pass to connect constants with their enum types.
 func (s *Scanner) resolveEnums(pkgInfo *PackageInfo) {
+	// Pass 1: Collect all enum members for each type.
 	for _, c := range pkgInfo.Constants {
 		// A constant must have an explicit type to be considered an enum member.
 		if c.Type == nil || c.Type.TypeName == "" {
@@ -442,6 +515,19 @@ func (s *Scanner) resolveEnums(pkgInfo *PackageInfo) {
 		// Link the constant to the type.
 		typeInfo.EnumMembers = append(typeInfo.EnumMembers, c)
 		typeInfo.IsEnum = true
+	}
+
+	// Pass 2: Sort the members of each enum type for deterministic order.
+	for _, t := range pkgInfo.Types {
+		if t.IsEnum && len(t.EnumMembers) > 0 {
+			sort.Slice(t.EnumMembers, func(i, j int) bool {
+				// Sort by the position of the constant's AST node.
+				if t.EnumMembers[i].Node == nil || t.EnumMembers[j].Node == nil {
+					return t.EnumMembers[i].Name < t.EnumMembers[j].Name
+				}
+				return t.EnumMembers[i].Node.Pos() < t.EnumMembers[j].Node.Pos()
+			})
+		}
 	}
 }
 
@@ -468,7 +554,7 @@ type constContext struct {
 }
 
 // Pass 1: Just collect constant declarations without evaluating them.
-func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string) {
+func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *PackageInfo, absFilePath string, importLookup map[string]string, constantsInPkg map[*ConstantInfo]struct{}) {
 	if decl.Tok == token.CONST {
 		var lastConstType *FieldType
 		var lastConstValues []ast.Expr
@@ -492,17 +578,40 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 						valExpr = lastConstValues[i]
 					}
 
-					constInfo := &ConstantInfo{
-						Name:       name.Name,
-						FilePath:   absFilePath,
-						Doc:        commentText(vs.Doc),
-						Type:       currentSpecType,
-						IsExported: name.IsExported(),
-						Node:       name,
-						IotaValue:  iota,
-						ValExpr:    valExpr,
+					var constInfo *ConstantInfo
+					if s.identityCache != nil {
+						s.identityCache.mu.RLock()
+						cached, found := s.identityCache.Constants[name]
+						s.identityCache.mu.RUnlock()
+						if found {
+							constInfo = cached
+						}
 					}
-					info.Constants = append(info.Constants, constInfo)
+
+					if constInfo == nil {
+						constInfo = &ConstantInfo{
+							Name:       name.Name,
+							FilePath:   absFilePath,
+							Doc:        commentText(vs.Doc),
+							Type:       currentSpecType,
+							IsExported: name.IsExported(),
+							Node:       name,
+							IotaValue:  iota,
+							ValExpr:    valExpr,
+						}
+						if s.identityCache != nil {
+							s.identityCache.mu.Lock()
+							if cached, found := s.identityCache.Constants[name]; found {
+								constInfo = cached
+							} else {
+								s.identityCache.Constants[name] = constInfo
+							}
+							s.identityCache.mu.Unlock()
+						}
+					}
+					if constantsInPkg != nil {
+						constantsInPkg[constInfo] = struct{}{}
+					}
 				}
 			}
 		}
@@ -827,6 +936,15 @@ func (s *Scanner) parseStructType(ctx context.Context, st *ast.StructType, curre
 }
 
 func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePath string, pkgInfo *PackageInfo, importLookup map[string]string) *FunctionInfo {
+	if s.identityCache != nil {
+		s.identityCache.mu.RLock()
+		if cached, ok := s.identityCache.Functions[f]; ok {
+			s.identityCache.mu.RUnlock()
+			return cached
+		}
+		s.identityCache.mu.RUnlock()
+	}
+
 	var funcOwnTypeParams []*TypeParamInfo
 	if f.Type.TypeParams != nil {
 		funcOwnTypeParams = s.parseTypeParamList(ctx, f.Type.TypeParams.List, pkgInfo, importLookup)
@@ -840,6 +958,18 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 	funcInfo.AstDecl = f
 	funcInfo.TypeParams = funcOwnTypeParams
 	funcInfo.Pkg = pkgInfo // Set the back-reference to the package
+
+	// Add to cache before processing the body to handle recursion.
+	if s.identityCache != nil {
+		s.identityCache.mu.Lock()
+		// Double-check in case of a race.
+		if cached, ok := s.identityCache.Functions[f]; ok {
+			s.identityCache.mu.Unlock()
+			return cached
+		}
+		s.identityCache.Functions[f] = funcInfo
+		s.identityCache.mu.Unlock()
+	}
 
 	// After parsing the function signature, walk its body to find and resolve local type declarations.
 	if f.Body != nil {

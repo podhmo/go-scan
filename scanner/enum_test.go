@@ -75,7 +75,7 @@ func TestEnumScanning_LazyLoaded(t *testing.T) {
 	}
 
 	// This scanner will be used by the MockResolver to perform the actual scanning.
-	s, err := New(token.NewFileSet(), nil, nil, "example.com/enums", absRootDir, &MockResolver{}, false, nil)
+	s, err := New(token.NewFileSet(), NewIdentityCache(), nil, nil, "example.com/enums", absRootDir, &MockResolver{}, false, nil)
 	if err != nil {
 		t.Fatalf("scanner.New failed: %v", err)
 	}

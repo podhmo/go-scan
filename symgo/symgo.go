@@ -428,6 +428,16 @@ func (i *Interpreter) FindObjectInPackage(ctx context.Context, pkgPath string, n
 	return pkgObj.Env.Get(name)
 }
 
+// FindPackage looks up a package by its path.
+// This is primarily a test helper.
+func (i *Interpreter) FindPackage(ctx context.Context, pkgPath string) (*object.Package, bool) {
+	pkgObj, err := i.eval.GetOrLoadPackageForTest(ctx, pkgPath)
+	if err != nil {
+		return nil, false
+	}
+	return pkgObj, true
+}
+
 // Apply is a wrapper around the internal evaluator's applyFunction.
 // It is intended for advanced use cases like docgen where direct function invocation is needed.
 func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *scanner.PackageInfo) (Object, error) {

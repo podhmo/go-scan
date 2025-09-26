@@ -763,6 +763,19 @@ func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast
 	return params
 }
 
+// collectUnionTypes recursively traverses a binary expression representing a type union
+// (e.g., *Foo | *Bar) and collects all constituent types.
+func (s *Scanner) collectUnionTypes(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) []*FieldType {
+	if binExpr, ok := expr.(*ast.BinaryExpr); ok && binExpr.Op == token.OR {
+		// This is a union type, e.g., `A | B`. Recursively collect from both sides.
+		leftTypes := s.collectUnionTypes(ctx, binExpr.X, currentTypeParams, info, importLookup)
+		rightTypes := s.collectUnionTypes(ctx, binExpr.Y, currentTypeParams, info, importLookup)
+		return append(leftTypes, rightTypes...)
+	}
+	// This is a single type (a leaf in the union expression tree).
+	return []*FieldType{s.TypeInfoFromExpr(ctx, expr, currentTypeParams, info, importLookup)}
+}
+
 func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *InterfaceInfo {
 	if it.Methods == nil {
 		return &InterfaceInfo{}
@@ -783,9 +796,9 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 			methodInfo.Parameters = parsedFuncDetails.Parameters
 			methodInfo.Results = parsedFuncDetails.Results
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
-		} else { // This is an embedded type
-			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
-			interfaceInfo.Embedded = append(interfaceInfo.Embedded, embeddedType)
+		} else { // This is an embedded type (could be a single type or a union)
+			embeddedTypes := s.collectUnionTypes(ctx, field.Type, currentTypeParams, info, importLookup)
+			interfaceInfo.Embedded = append(interfaceInfo.Embedded, embeddedTypes...)
 		}
 	}
 	return interfaceInfo

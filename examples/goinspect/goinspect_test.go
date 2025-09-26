@@ -78,10 +78,6 @@ func TestGoInspect(t *testing.T) {
 			name:        "stdlib_errors",
 			pkgPatterns: []string{"errors"},
 		},
-		{
-			name:        "recursion",
-			pkgPatterns: []string{"./testdata/src/recursion"},
-		},
 	}
 
 	for _, tc := range testCases {

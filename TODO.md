@@ -86,13 +86,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md)
 - **`examples/goinspect`: Call-Graph Explorer**: A tool to analyze Go source code and display the call graph for specified functions. It supports multiple output formats (`--short`, `--expand`) and uses stable, position-based UIDs to correctly handle duplicate functions and recursion in expanded view. The test suite is comprehensive, using golden files to validate output for various scenarios including cross-package calls. ([docs/plan-goinspect.md](./docs/plan-goinspect.md))
     - **Orphan-Style Output**: The tool now filters the call graph to only show true entry points (functions not called by any other scanned function) at the top level. This provides a cleaner, more focused view of a library's public API or an application's main execution flows.
-    - **[x]** **Standard Library Analysis**: Fixed a performance bug where the tool would time out on large standard library packages (e.g., `net/http`). The analysis loop now correctly uses the filtered list of entry points, and symbolic arguments are explicitly created, preventing crashes and enabling analysis of packages outside the main module.
  
 ## To Be Implemented
 
 ### `symgo`: Improve Analysis Capabilities
 - [x] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.
 - [ ] **Higher-Order & Anonymous Functions**: Improve symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. This includes resolving the function signature correctly instead of `unhandled_type_*ast.FuncType`.
+- [ ] **Recursive Functions**: Improve analysis to correctly detect and represent recursive function calls in the call graph.
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
 - [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.

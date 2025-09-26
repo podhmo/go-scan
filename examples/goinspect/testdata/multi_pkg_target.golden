@@ -1,5 +1,6 @@
 func github.com/podhmo/go-scan/examples/goinspect/testdata/src/another.Helper() #1
 func (*Person).Greet() #2
-[accessor] func (*Person).String() #3
-func (*Service).Do(Greeter) #4
-func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #5
+  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.privateFunc() #3
+[accessor] func (*Person).String() #4
+func (*Service).Do(Greeter) #5
+  func .Greet() #6

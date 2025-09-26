@@ -1,4 +1,5 @@
 func (*Person).Greet() #1
-[accessor] func (*Person).String() #2
-func (*Service).Do(Greeter) #3
-func testdata/src/myapp.Recursive(int) #4
+  func testdata/src/myapp.privateFunc() #2
+[accessor] func (*Person).String() #3
+func (*Service).Do(Greeter) #4
+  func .Greet() #5

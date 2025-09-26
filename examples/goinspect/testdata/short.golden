@@ -1,4 +1,5 @@
 func (*Person).Greet(...) #1
-[accessor] func (*Person).String(...) #2
-func (*Service).Do(...) #3
-func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(...) #4
+  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.privateFunc(...) #2
+[accessor] func (*Person).String(...) #3
+func (*Service).Do(...) #4
+  func .Greet(...) #5

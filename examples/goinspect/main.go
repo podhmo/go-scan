@@ -20,15 +20,9 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-// CallInfo stores information about a single function call.
-type CallInfo struct {
-	Callee      *scanner.FunctionInfo
-	IsRecursive bool
-}
-
 // callGraph is a data structure to store the call graph.
-// The key is the caller function, and the value is a list of CallInfo structs.
-type callGraph map[*scanner.FunctionInfo][]*CallInfo
+// The key is the caller function, and the value is a list of callee functions.
+type callGraph map[*scanner.FunctionInfo][]*scanner.FunctionInfo
 
 // stringSlice is a custom type to handle multiple string flags.
 type stringSlice []string
@@ -104,7 +98,7 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	// 2. Scan packages using goscan.
 	s, err := goscan.New(
 		goscan.WithLogger(logger),
-		goscan.WithGoModuleResolver(), // Enable resolving stdlib and external modules
+		goscan.WithGoModuleResolver(),
 		// goscan.WithLoadMode(goscan.LoadModeNeedsAll), // TODO: find the correct option
 	)
 	if err != nil {
@@ -118,18 +112,6 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 			return fmt.Errorf("failed to scan package pattern %q: %w", pkgPattern, err)
 		}
 		pkgs = append(pkgs, scannedPkgs...)
-	}
-
-	// DEBUG: Check if function bodies are loaded for the scanned packages.
-	for _, pkg := range pkgs {
-		logger.Debug("checking package", "pkg", pkg.ID, "importPath", pkg.ImportPath)
-		for _, f := range pkg.Functions {
-			hasBody := f.AstDecl != nil && f.AstDecl.Body != nil
-			isExported := ast.IsExported(f.Name)
-			if isExported { // Log only exported functions for brevity
-				logger.Debug("  - func", "name", f.Name, "hasBody", hasBody, "exported", isExported)
-			}
-		}
 	}
 
 	// Define the analysis scope.
@@ -159,17 +141,12 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 
 		calleeObj := args[0]
 		var calleeFunc *scanner.FunctionInfo
-		isRecursive := false
 
 		switch f := calleeObj.(type) {
 		case *object.Function:
 			calleeFunc = f.Def
 		case *object.SymbolicPlaceholder:
 			calleeFunc = f.UnderlyingFunc
-			// Check if the placeholder reason indicates a recursive call.
-			if strings.HasPrefix(f.Reason, "bounded recursion depth exceeded") {
-				isRecursive = true
-			}
 		}
 
 		if callerFrame.Fn != nil && callerFrame.Fn.Def != nil && calleeFunc != nil {
@@ -177,14 +154,7 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 			if callerFunc == nil {
 				return nil
 			}
-			// Also check for direct recursion (caller is the same as callee).
-			if !isRecursive && callerFunc == calleeFunc {
-				isRecursive = true
-			}
-			graph[callerFunc] = append(graph[callerFunc], &CallInfo{
-				Callee:      calleeFunc,
-				IsRecursive: isRecursive,
-			})
+			graph[callerFunc] = append(graph[callerFunc], calleeFunc)
 		}
 		return nil
 	})
@@ -224,50 +194,30 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	}
 
 	logger.Info("starting analysis", "entrypoints", len(entryPoints))
-	for _, f := range entryPoints {
-		if _, ok := graph[f]; ok {
-			continue // Already visited as part of another call
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Functions {
+			if !includeUnexported && !ast.IsExported(f.Name) {
+				continue
+			}
+			if _, ok := graph[f]; ok {
+				continue // Already visited as part of another call
+			}
+			eval := interp.EvaluatorForTest()
+			pkgObj, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+			if err != nil {
+				logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", pkg.ImportPath, "error", err)
+				continue
+			}
+			fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
+			interp.Apply(ctx, fnObj, nil, pkg)
 		}
-
-		// The package for the entry point function should be in the scanner's cache.
-		pkg, ok := interp.Scanner().AllSeenPackages()[f.Pkg.ID]
-		if !ok {
-			logger.Warn("package not found in cache for entrypoint, this is unexpected", "func", f.Name, "pkgID", f.Pkg.ID)
-			continue
-		}
-
-		eval := interp.EvaluatorForTest()
-		pkgObj, err := eval.GetOrLoadPackageForTest(ctx, f.Pkg.ImportPath)
-		if err != nil {
-			logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", f.Pkg.ImportPath, "error", err)
-			continue
-		}
-
-		fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
-		if fnObj == nil {
-			logger.Warn("could not resolve function object for entrypoint", "func", f.Name, "pkg", f.Pkg.ImportPath)
-			continue
-		}
-
-		// Prepare symbolic arguments for the function/method call.
-		var args []object.Object
-		if f.Receiver != nil {
-			// Create a symbolic placeholder for the receiver.
-			args = append(args, &object.SymbolicPlaceholder{Reason: f.Receiver.Type.String()})
-		}
-		for _, p := range f.Parameters {
-			// Create a symbolic placeholder for each parameter.
-			args = append(args, &object.SymbolicPlaceholder{Reason: p.Type.String()})
-		}
-
-		interp.Apply(ctx, fnObj, args, pkg)
 	}
 
 	// 5. Filter for true top-level functions (not called by any other entry point).
 	callees := make(map[string]bool)
-	for _, calledInfos := range graph {
-		for _, info := range calledInfos {
-			callees[getFuncID(info.Callee)] = true
+	for _, calledFuncs := range graph {
+		for _, f := range calledFuncs {
+			callees[getFuncID(f)] = true
 		}
 	}
 
@@ -345,79 +295,90 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 	})
 
 	for _, f := range entryPoints {
-		p.printRecursive(f, 0, false)
+		p.printRecursive(f, 0)
 	}
 }
 
-func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int, isRecursive bool) {
+func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 	id := getFuncID(f)
 
-	var prefixes []string
+	accessorPrefix := ""
 	if isAccessor(f) {
-		prefixes = append(prefixes, "[accessor]")
+		accessorPrefix = "[accessor] "
 	}
-	if isRecursive {
-		prefixes = append(prefixes, "[recursive]")
-	}
-
-	prefixStr := ""
-	if len(prefixes) > 0 {
-		prefixStr = strings.Join(prefixes, " ") + " "
-	}
-
 	formatted := p.formatFunc(f)
 
 	// Default mode (expand=false): Use IDs to show a function's tree only once.
 	if !p.Expand {
 		if num, ok := p.assigned[id]; ok {
 			// This function has been printed before, just show its reference.
-			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), prefixStr, formatted, num)
+			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, num)
 			return
 		}
 	}
 
-	// Cycle detection (for both modes).
+	// Cycle detection (for both modes). If we are currently visiting this node in this path, it's a cycle.
 	if p.visited[id] {
 		cycleRef := ""
+		// In default mode, a cycle to a node that's already been fully printed
+		// would have been caught by the `p.assigned` check above. This `p.visited`
+		// check is for cycles within a *single* new call tree that we are in the
+		// process of printing for the first time.
 		if !p.Expand {
 			if num, ok := p.assigned[id]; ok {
 				cycleRef = fmt.Sprintf(" #%d", num)
 			}
 		}
-		fmt.Fprintf(p.Out, "%s%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), prefixStr, formatted, cycleRef)
+		fmt.Fprintf(p.Out, "%s%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), accessorPrefix, formatted, cycleRef)
 		return
 	}
 
+	// Mark as visited for the current path traversal.
 	p.visited[id] = true
-	defer func() { p.visited[id] = false }()
 
+	// --- Printing Logic (Corrected) ---
+	// - expand=false (default): show ID on first appearance, reference on subsequent.
+	// - expand=true: show full tree every time, no IDs.
 	if !p.Expand {
+		// First time seeing this function in default mode. Assign an ID and print it.
 		p.nextID++
 		p.assigned[id] = p.nextID
-		fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), prefixStr, formatted, p.nextID)
+		fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, p.nextID)
 	} else {
-		fmt.Fprintf(p.Out, "%s%s%s\n", strings.Repeat("  ", indent), prefixStr, formatted)
+		// Expand mode: just print the formatted function, no ID.
+		fmt.Fprintf(p.Out, "%s%s%s\n", strings.Repeat("  ", indent), accessorPrefix, formatted)
 	}
 
-	if callInfos, ok := p.Graph[f]; ok {
-		uniqueCallees := make([]*CallInfo, 0, len(callInfos))
+	// Recursively print callees.
+	if callees, ok := p.Graph[f]; ok {
+		uniqueCallees := make([]*scanner.FunctionInfo, 0, len(callees))
 		seen := make(map[string]bool)
-		for _, info := range callInfos {
-			calleeID := getFuncID(info.Callee)
+		for _, callee := range callees {
+			calleeID := getFuncID(callee)
 			if !seen[calleeID] {
-				uniqueCallees = append(uniqueCallees, info)
+				uniqueCallees = append(uniqueCallees, callee)
 				seen[calleeID] = true
 			}
 		}
 
+		// Sort callees for deterministic output.
 		sort.Slice(uniqueCallees, func(i, j int) bool {
-			return getFuncID(uniqueCallees[i].Callee) < getFuncID(uniqueCallees[j].Callee)
+			return getFuncID(uniqueCallees[i]) < getFuncID(uniqueCallees[j])
 		})
 
-		for _, info := range uniqueCallees {
-			p.printRecursive(info.Callee, indent+1, info.IsRecursive)
+		for _, callee := range uniqueCallees {
+			p.printRecursive(callee, indent+1)
 		}
 	}
+
+	// Reset visited flag for this path. This allows the function to be printed again
+	// if it appears in a different call branch. In expand mode, this won't happen
+	// because the `p.assigned` check at the top will catch it.
+	p.visited[id] = false
+
+	// In non-expand mode, we prevent a function from being printed more than once
+	// at the top level by a different mechanism (in the Print method), but this
+	// reset is crucial for correct cycle detection.
 }
 
 // isAccessor checks if a function is a simple getter or setter.

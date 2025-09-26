@@ -88,7 +88,7 @@ func main() {
 			t.Fatalf("Execution failed unexpectedly: %+v", r.Error)
 		}
 
-		pkgObj, ok := r.Interpreter.FindPackage(t.Context(), "mymodule")
+		pkgObj, ok := r.Interpreter.FindPackageForTest(t.Context(), "mymodule")
 		if !ok {
 			t.Fatal("could not find package mymodule")
 		}

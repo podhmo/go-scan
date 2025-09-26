@@ -428,9 +428,9 @@ func (i *Interpreter) FindObjectInPackage(ctx context.Context, pkgPath string, n
 	return pkgObj.Env.Get(name)
 }
 
-// FindPackage looks up a package by its path.
+// FindPackageForTest looks up a package by its path.
 // This is primarily a test helper.
-func (i *Interpreter) FindPackage(ctx context.Context, pkgPath string) (*object.Package, bool) {
+func (i *Interpreter) FindPackageForTest(ctx context.Context, pkgPath string) (*object.Package, bool) {
 	pkgObj, err := i.eval.GetOrLoadPackageForTest(ctx, pkgPath)
 	if err != nil {
 		return nil, false

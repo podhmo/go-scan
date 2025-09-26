@@ -50,6 +50,11 @@ const (
 	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
 	UNRESOLVED_TYPE_OBJ       ObjectType = "UNRESOLVED_TYPE"
 	PANIC_OBJ                 ObjectType = "PANIC"
+
+	// Internal types for evaluation flow
+	UNRESOLVED_IDENTIFIER_OBJ ObjectType = "UNRESOLVED_IDENTIFIER"
+	FIELD_LHS_OBJ             ObjectType = "FIELD_LHS"
+	INDEX_LHS_OBJ             ObjectType = "INDEX_LHS"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -272,6 +277,7 @@ func (i *Intrinsic) Inspect() string { return "intrinsic function" }
 // so that method calls on them can be resolved.
 type Instance struct {
 	BaseObject
+	UID        int64             // A unique ID for this instance
 	TypeName   string            // e.g., "net/http.ServeMux"
 	State      map[string]Object // for mock or intrinsic state
 	Underlying Object            // To hold the object that this instance wraps (e.g., for interface implementations)
@@ -677,6 +683,12 @@ func (e *Environment) Get(name string) (Object, bool) {
 	return obj, ok
 }
 
+// GetLocal retrieves an object by name from the local environment only.
+func (e *Environment) GetLocal(name string) (Object, bool) {
+	obj, ok := e.store[name]
+	return obj, ok
+}
+
 // Set stores an object by name in the environment, walking up to outer scopes
 // to find where the variable is defined.
 func (e *Environment) Set(name string, val Object) Object {
@@ -991,6 +1003,59 @@ func (ut *UnresolvedType) Type() ObjectType { return UNRESOLVED_TYPE_OBJ }
 // Inspect returns a string representation of the unresolved type.
 func (ut *UnresolvedType) Inspect() string {
 	return fmt.Sprintf("<Unresolved Type: %s.%s>", ut.PkgPath, ut.TypeName)
+}
+
+// --- UnresolvedIdentifier Object ---
+
+// UnresolvedIdentifier represents an identifier that could not be resolved in the current scope.
+// This is an internal object used during LHS evaluation.
+type UnresolvedIdentifier struct {
+	BaseObject
+	Name string
+}
+
+// Type returns the type of the UnresolvedIdentifier object.
+func (ui *UnresolvedIdentifier) Type() ObjectType { return UNRESOLVED_IDENTIFIER_OBJ }
+
+// Inspect returns a string representation of the unresolved identifier.
+func (ui *UnresolvedIdentifier) Inspect() string {
+	return fmt.Sprintf("<Unresolved Identifier: %s>", ui.Name)
+}
+
+// --- FieldLHS Object ---
+
+// FieldLHS is a special internal object representing the left-hand side of a field assignment (e.g., `x.y` in `x.y = 1`).
+// It holds the container (the struct or instance) and the name of the field to be assigned.
+type FieldLHS struct {
+	BaseObject
+	Container Object // The struct or instance object
+	Name      string // The name of the field
+}
+
+// Type returns the type of the FieldLHS object.
+func (flhs *FieldLHS) Type() ObjectType { return FIELD_LHS_OBJ }
+
+// Inspect returns a string representation of the field LHS.
+func (flhs *FieldLHS) Inspect() string {
+	return fmt.Sprintf("<LHS: %s.%s>", flhs.Container.Inspect(), flhs.Name)
+}
+
+// --- IndexLHS Object ---
+
+// IndexLHS is a special internal object representing the left-hand side of an index assignment (e.g., `m[k]` in `m[k] = v`).
+// It holds the collection (map or slice) and the index object.
+type IndexLHS struct {
+	BaseObject
+	Collection Object // The map or slice object
+	Index      Object // The index object
+}
+
+// Type returns the type of the IndexLHS object.
+func (ilhs *IndexLHS) Type() ObjectType { return INDEX_LHS_OBJ }
+
+// Inspect returns a string representation of the index LHS.
+func (ilhs *IndexLHS) Inspect() string {
+	return fmt.Sprintf("<LHS: %s[%s]>", ilhs.Collection.Inspect(), ilhs.Index.Inspect())
 }
 
 // --- Global Instances ---

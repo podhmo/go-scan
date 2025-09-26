@@ -76,7 +76,9 @@ type Evaluator struct {
 
 	// memoization
 	memoize          bool
-memoizationCache map[string]object.Object
+	memoizationCache map[string]object.Object
+
+	instanceCounter int64
 }
 
 // contextKey is a private type to avoid collisions with other packages' context keys.
@@ -804,7 +806,9 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 			// TODO: Handle positional struct fields.
 		}
 		// Return an Instance that wraps the Struct, for compatibility with method lookups.
+		e.instanceCounter++
 		instance := &object.Instance{
+			UID:        e.instanceCounter,
 			TypeName:   resolvedType.PkgPath + "." + resolvedType.Name,
 			Underlying: structObj,
 			BaseObject: object.BaseObject{
@@ -1012,13 +1016,22 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 	case token.SUB, token.ADD, token.XOR:
 		return e.evalNumericUnaryExpression(ctx, node.Op, right)
 	case token.AND:
-		// This is the address-of operator, not a typical unary op on a value.
-		// It needs to be handled specially as it operates on identifiers/expressions, not resolved objects.
-		// Re-evaluating node.X might be redundant but safer.
+		// The address-of operator (&) needs special handling.
+		// We evaluate the expression `node.X` to get the object we're taking the address of.
 		val := e.Eval(ctx, node.X, env, pkg)
 		if isError(val) {
 			return val
 		}
+
+		// If we are taking the address of a variable, we want a pointer to its value,
+		// not a pointer to the variable wrapper itself.
+		if v, ok := val.(*object.Variable); ok {
+			val = e.forceEval(ctx, v, pkg)
+			if isError(val) {
+				return val
+			}
+		}
+
 		ptr := &object.Pointer{Value: val}
 		if originalFieldType := val.FieldType(); originalFieldType != nil {
 			pointerFieldType := &scan.FieldType{
@@ -1118,34 +1131,17 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		val = ret.Value
 	}
 
-	// First, unwrap any variable to get to the underlying value.
-	if v, ok := val.(*object.Variable); ok {
-		val = v.Value
+	// Fully evaluate the expression to get the pointer object itself.
+	val = e.forceEval(ctx, val, pkg)
+	if isError(val) {
+		return val
 	}
 
 	if ptr, ok := val.(*object.Pointer); ok {
-		// If we are dereferencing a pointer to an unresolved type, the result is
-		// a symbolic placeholder representing an instance of that type.
-		if ut, ok := ptr.Value.(*object.UnresolvedType); ok {
-			placeholder := &object.SymbolicPlaceholder{
-				Reason: fmt.Sprintf("instance of unresolved type %s.%s", ut.PkgPath, ut.TypeName),
-			}
-			// Attempt to resolve the type to attach its info to the placeholder
-			if resolvedType, err := e.resolver.ResolvePackage(ctx, ut.PkgPath); err == nil {
-				for _, t := range resolvedType.Types {
-					if t.Name == ut.TypeName {
-						placeholder.SetTypeInfo(t)
-						break
-					}
-				}
-			}
-			return placeholder
-		}
-
 		// The value of a pointer is the object it points to.
-		// By returning the pointee directly, a selector expression like `(*p).MyMethod`
-		// will operate on the instance, which is the correct behavior.
-		return ptr.Value
+		// We must force evaluation here to handle pointers to variables correctly.
+		// This ensures that dereferencing a pointer gives the actual value, not a variable wrapper.
+		return e.forceEval(ctx, ptr.Value, pkg)
 	}
 
 	// If we have a symbolic placeholder that represents a pointer type,
@@ -1190,6 +1186,12 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 	// of incorrect but plausible code paths to continue.
 	if _, ok := val.(*object.SymbolicPlaceholder); ok {
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("dereference of non-pointer symbolic value %s", val.Inspect())}
+	}
+
+	// Final check: if the result of a dereference is a variable, we need to evaluate it
+	// to get the actual underlying value (e.g., an instance).
+	if v, ok := val.(*object.Variable); ok {
+		return e.forceEval(ctx, v, pkg)
 	}
 
 	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
@@ -1238,12 +1240,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 						val = ret.Value
 					}
 				} else {
-					placeholder := &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
-					if staticFieldType != nil {
-						placeholder.SetFieldType(staticFieldType)
-						placeholder.SetTypeInfo(resolvedTypeInfo)
-					}
-					val = placeholder
+					val = e.createZeroValue(ctx, resolvedTypeInfo, staticFieldType)
 				}
 
 				v := &object.Variable{
@@ -1377,7 +1374,7 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 				Package:    pkg,
 				Def:        funcInfo,
 			}
-			targetEnv.Set(d.Name.Name, fn) // Set in the package's own environment
+			targetEnv.SetLocal(d.Name.Name, fn) // Set in the package's own environment
 		}
 	}
 	return nil
@@ -1659,6 +1656,8 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					resolved, err := ft.Resolve(ctx)
 					if err == nil && resolved != nil {
 						staticType = resolved
+					} else if ft.Definition != nil {
+						staticType = ft.Definition
 					}
 				} else if ti := v.TypeInfo(); ti != nil {
 					staticType = ti
@@ -2011,11 +2010,29 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 		}
 
+		// If we failed to find a method or field, it might be because it's on an
+		// unresolved embedded type. In shallow scan mode, this should not be a hard error.
+		if typeInfo := val.TypeInfo(); typeInfo != nil && typeInfo.Struct != nil {
+			for _, field := range typeInfo.Struct.Fields {
+				if field.Embedded && field.Type != nil {
+					// The definition might not be resolved yet. Attempt to resolve it.
+					def, _ := field.Type.Resolve(ctx)
+					if def != nil && def.Unresolved {
+						e.logc(ctx, slog.LevelDebug, "gracefully handling method/field lookup on unresolved embedded type", "struct", typeInfo.Name, "method", n.Sel.Name, "unresolved_field", field.Name)
+						return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("method/field lookup on struct with unresolved embedded type: %s", n.Sel.Name)}
+					}
+				}
+			}
+		}
 		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
 	case *object.Pointer:
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.
-		pointee := val.Value
+		pointee := e.forceEval(ctx, val.Value, pkg)
+		if isError(pointee) {
+			return pointee
+		}
+
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
@@ -2490,6 +2507,17 @@ func (e *Evaluator) evalLabeledStmt(ctx context.Context, n *ast.LabeledStmt, env
 
 	// If it's a break/continue for another label, or any other kind of object,
 	// just propagate it up.
+	if result != nil {
+		switch result.(type) {
+		case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue:
+			// These should be propagated as-is.
+			return result
+		default:
+			// For any other result, force evaluation to get the underlying value.
+			return e.forceEval(ctx, result, pkg)
+		}
+	}
+
 	return result
 }
 
@@ -2514,27 +2542,31 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
 	thenResult := e.Eval(ctx, n.Body, thenEnv, pkg)
 
-	// If the 'then' branch returned a critical error, propagate it.
-	// But do NOT propagate ReturnValue, as that just terminates one possible path.
-	// The analysis should continue to explore the "else" path.
-	if err, ok := thenResult.(*object.Error); ok {
-		return err
+	// If the 'then' branch returned a control flow object, we prioritize it.
+	// A more advanced implementation might explore both paths and merge results.
+	if thenResult != nil {
+		switch thenResult.(type) {
+		case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue:
+			return thenResult
+		}
 	}
 
 	var elseResult object.Object
 	if n.Else != nil {
 		elseEnv := object.NewEnclosedEnvironment(ifStmtEnv)
 		elseResult = e.Eval(ctx, n.Else, elseEnv, pkg)
+
+		// If the 'else' branch returned a control flow object, propagate it.
+		if elseResult != nil {
+			switch elseResult.(type) {
+			case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue:
+				return elseResult
+			}
+		}
 	}
 
-	// Similarly, only propagate critical errors from the else branch.
-	if err, ok := elseResult.(*object.Error); ok {
-		return err
-	}
-
-	// The if statement itself doesn't produce a value. By returning nil,
-	// we allow the parent block to continue evaluating subsequent statements.
-	// This simulates the exploration of the "else" path (the code after the if).
+	// If neither branch returned a control flow object, the execution continues.
+	// The if statement itself doesn't produce a value.
 	return nil
 }
 
@@ -2560,10 +2592,18 @@ func (e *Evaluator) evalBlockStatement(ctx context.Context, block *ast.BlockStmt
 			continue
 		}
 
+		// Check for control flow objects that should terminate the block immediately.
 		switch result.(type) {
 		case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue:
 			return result
 		}
+	}
+
+	// The result of a block is the result of its last statement. If it's not a control-flow
+	// object (which would have returned already), we force-evaluate it to get the
+	// underlying value, not just a variable wrapper.
+	if result != nil {
+		return e.forceEval(ctx, result, pkg)
 	}
 
 	return result
@@ -2601,205 +2641,276 @@ func (e *Evaluator) evalReturnStmt(ctx context.Context, n *ast.ReturnStmt, env *
 }
 
 func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
-	// Handle multi-value assignment, e.g., x, y := f() or x, y = f()
+	// Handle multi-value assignment from a single function call, e.g., x, y := f()
 	if len(n.Rhs) == 1 && len(n.Lhs) > 1 {
-		// Special case for two-value type assertions: v, ok := x.(T)
-		if typeAssert, ok := n.Rhs[0].(*ast.TypeAssertExpr); ok {
-			if len(n.Lhs) != 2 {
-				return e.newError(ctx, n.Pos(), "type assertion with 2 values on RHS must have 2 variables on LHS, got %d", len(n.Lhs))
-			}
+		return e.evalMultiValueAssign(ctx, n, env, pkg)
+	}
 
-			// Evaluate the source expression to trace calls
-			e.Eval(ctx, typeAssert.X, env, pkg)
+	// Handle parallel assignment, e.g., x, y = 1, 2 or x, y = y, x
+	if len(n.Lhs) == len(n.Rhs) {
+		return e.evalParallelAssign(ctx, n, env, pkg)
+	}
 
-			// Resolve the asserted type (T).
-			if pkg == nil || pkg.Fset == nil {
-				return e.newError(ctx, n.Pos(), "package info or fset is missing, cannot resolve types for type assertion")
-			}
-			file := pkg.Fset.File(n.Pos())
-			if file == nil {
-				return e.newError(ctx, n.Pos(), "could not find file for node position")
-			}
-			astFile, ok := pkg.AstFiles[file.Name()]
-			if !ok {
-				return e.newError(ctx, n.Pos(), "could not find ast.File for path: %s", file.Name())
-			}
-			importLookup := e.scanner.BuildImportLookup(astFile)
+	return e.newError(ctx, n.Pos(), "unsupported assignment: %d LHS vs %d RHS", len(n.Lhs), len(n.Rhs))
+}
 
-			fieldType := e.scanner.TypeInfoFromExpr(ctx, typeAssert.Type, nil, pkg, importLookup)
-			if fieldType == nil {
-				var typeNameBuf bytes.Buffer
-				printer.Fprint(&typeNameBuf, pkg.Fset, typeAssert.Type)
-				return e.newError(ctx, typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
-			}
-			resolvedType := e.resolver.ResolveType(ctx, fieldType)
-
-			// If the type was unresolved, we can now infer its kind to be an interface.
-			if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
-				resolvedType.Kind = scan.InterfaceKind
-			}
-
-			// Create placeholders for the two return values.
-			valuePlaceholder := &object.SymbolicPlaceholder{
-				Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
-				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
-			}
-
-			okPlaceholder := &object.SymbolicPlaceholder{
-				Reason: "ok from type assertion",
-				BaseObject: object.BaseObject{
-					ResolvedTypeInfo: nil, // Built-in types do not have a TypeInfo struct.
-					ResolvedFieldType: &scan.FieldType{
-						Name:      "bool",
-						IsBuiltin: true,
-					},
-				},
-			}
-
-			// Assign the placeholders to the LHS variables.
-			if ident, ok := n.Lhs[0].(*ast.Ident); ok {
-				if ident.Name != "_" {
-					e.assignIdentifier(ctx, ident, valuePlaceholder, n.Tok, env)
-				}
-			}
-			if ident, ok := n.Lhs[1].(*ast.Ident); ok {
-				if ident.Name != "_" {
-					e.assignIdentifier(ctx, ident, okPlaceholder, n.Tok, env)
-				}
-			}
-			return nil
+func (e *Evaluator) evalParallelAssign(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+	// Step 1: Evaluate all right-hand side expressions first. This is crucial for
+	// correctness in cases like `x, y = y, x`.
+	rhsValues := make([]object.Object, len(n.Rhs))
+	for i, rhsExpr := range n.Rhs {
+		val := e.Eval(ctx, rhsExpr, env, pkg)
+		if isError(val) {
+			return val
 		}
-
-		rhsValue := e.Eval(ctx, n.Rhs[0], env, pkg)
-		if isError(rhsValue) {
-			return rhsValue
-		}
-
 		// The result of a function call might be wrapped in a ReturnValue.
-		if ret, ok := rhsValue.(*object.ReturnValue); ok {
-			rhsValue = ret.Value
+		if ret, ok := val.(*object.ReturnValue); ok {
+			val = ret.Value
+		}
+		// Fully evaluate the RHS before assignment.
+		val = e.forceEval(ctx, val, pkg)
+		if isError(val) {
+			return val
+		}
+		rhsValues[i] = val
+	}
+
+	// Step 2: Evaluate all left-hand side expressions to get their "locations".
+	lhsLocations := make([]object.Object, len(n.Lhs))
+	for i, lhsExpr := range n.Lhs {
+		// The blank identifier `_` doesn't represent a location.
+		if ident, ok := lhsExpr.(*ast.Ident); ok && ident.Name == "_" {
+			lhsLocations[i] = nil
+			continue
+		}
+		loc := e.evalLHS(ctx, lhsExpr, env, pkg, n.Tok)
+		if isError(loc) {
+			return loc
+		}
+		lhsLocations[i] = loc
+	}
+
+	// Step 3: Perform the assignments.
+	for i, loc := range lhsLocations {
+		if loc == nil { // Skip assignments to `_`
+			continue
+		}
+		e.performAssignment(ctx, loc, rhsValues[i], n.Tok, env)
+	}
+
+	return nil // Successful assignment does not produce a value.
+}
+
+func (e *Evaluator) evalMultiValueAssign(ctx context.Context, n *ast.AssignStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+	// Special case for two-value type assertions: v, ok := x.(T)
+	if typeAssert, ok := n.Rhs[0].(*ast.TypeAssertExpr); ok {
+		return e.evalTypeAssertAssign(ctx, n, typeAssert, env, pkg)
+	}
+
+	// Default case: multi-value return from a function call
+	rhsValue := e.Eval(ctx, n.Rhs[0], env, pkg)
+	if isError(rhsValue) {
+		return rhsValue
+	}
+
+	// The result of a function call might be wrapped in a ReturnValue.
+	if ret, ok := rhsValue.(*object.ReturnValue); ok {
+		rhsValue = ret.Value
+	}
+
+	// If the result is a single symbolic placeholder, but we expect multiple return values,
+	// we can expand it into a MultiReturn object. This handles calls to unscannable functions.
+	if _, isPlaceholder := rhsValue.(*object.SymbolicPlaceholder); isPlaceholder {
+		placeholders := make([]object.Object, len(n.Lhs))
+		for i := 0; i < len(n.Lhs); i++ {
+			placeholders[i] = &object.SymbolicPlaceholder{
+				Reason: fmt.Sprintf("inferred result %d from multi-value assignment to %s", i, rhsValue.Inspect()),
+			}
+		}
+		rhsValue = &object.MultiReturn{Values: placeholders}
+	}
+
+	multiRet, ok := rhsValue.(*object.MultiReturn)
+	if !ok {
+		return e.newError(ctx, n.Rhs[0].Pos(), "expected multi-return value on RHS of assignment, but got %s", rhsValue.Type())
+	}
+
+	if len(multiRet.Values) != len(n.Lhs) {
+		return e.newError(ctx, n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
+	}
+
+	// Evaluate LHS locations and perform assignments
+	valueIndex := 0
+	for _, lhsExpr := range n.Lhs {
+		// Skip assignment to blank identifier
+		if ident, ok := lhsExpr.(*ast.Ident); ok && ident.Name == "_" {
+			valueIndex++
+			continue
+		}
+		loc := e.evalLHS(ctx, lhsExpr, env, pkg, n.Tok)
+		if isError(loc) {
+			return loc
+		}
+		if valueIndex >= len(multiRet.Values) {
+			return e.newError(ctx, n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
+		}
+		e.performAssignment(ctx, loc, multiRet.Values[valueIndex], n.Tok, env)
+		valueIndex++
+	}
+	return nil
+}
+
+func (e *Evaluator) evalTypeAssertAssign(ctx context.Context, n *ast.AssignStmt, typeAssert *ast.TypeAssertExpr, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+	if len(n.Lhs) != 2 {
+		return e.newError(ctx, n.Pos(), "type assertion with 2 values on RHS must have 2 variables on LHS, got %d", len(n.Lhs))
+	}
+
+	// Evaluate the source expression to trace calls
+	e.Eval(ctx, typeAssert.X, env, pkg)
+
+	// Resolve the asserted type (T).
+	fieldType, resolvedType := e.resolveTypeFromExpr(ctx, typeAssert.Type, pkg)
+	if fieldType == nil {
+		var typeNameBuf bytes.Buffer
+		printer.Fprint(&typeNameBuf, pkg.Fset, typeAssert.Type)
+		return e.newError(ctx, typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
+	}
+
+	// Create placeholders for the two return values.
+	valuePlaceholder := &object.SymbolicPlaceholder{
+		Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
+		BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+	}
+	okPlaceholder := &object.SymbolicPlaceholder{
+		Reason: "ok from type assertion",
+		BaseObject: object.BaseObject{
+			ResolvedFieldType: &scan.FieldType{Name: "bool", IsBuiltin: true},
+		},
+	}
+
+	// Assign the placeholders to the LHS variables.
+	if ident, ok := n.Lhs[0].(*ast.Ident); !ok || ident.Name != "_" {
+		loc1 := e.evalLHS(ctx, n.Lhs[0], env, pkg, n.Tok)
+		if isError(loc1) {
+			return loc1
+		}
+		e.performAssignment(ctx, loc1, valuePlaceholder, n.Tok, env)
+	}
+
+	if ident, ok := n.Lhs[1].(*ast.Ident); !ok || ident.Name != "_" {
+		loc2 := e.evalLHS(ctx, n.Lhs[1], env, pkg, n.Tok)
+		if isError(loc2) {
+			return loc2
+		}
+		e.performAssignment(ctx, loc2, okPlaceholder, n.Tok, env)
+	}
+
+	return nil
+}
+
+// performAssignment takes a "location" object (from evalLHS) and a value,
+// and performs the actual state change in the environment.
+func (e *Evaluator) performAssignment(ctx context.Context, loc, val object.Object, tok token.Token, env *object.Environment) object.Object {
+	switch l := loc.(type) {
+	case *object.Variable:
+		// Assignment to an existing variable (`x = ...`)
+		l.Value = val
+		l.IsEvaluated = true
+		// Update type info, but be careful not to overwrite a static interface type
+		// with a concrete implementation type on the variable itself.
+		isInterface := false
+		if ft := l.FieldType(); ft != nil {
+			if resolved := e.resolver.ResolveType(ctx, ft); resolved != nil && resolved.Kind == scan.InterfaceKind {
+				isInterface = true
+			}
 		}
 
-		// If the result is a single symbolic placeholder, but we expect multiple return values,
-		// we can expand it into a MultiReturn object with the correct number of placeholders.
-		// This handles calls to unscannable functions that are expected to return multiple values.
-		if sp, isPlaceholder := rhsValue.(*object.SymbolicPlaceholder); isPlaceholder {
-			if len(n.Lhs) > 1 {
-				placeholders := make([]object.Object, len(n.Lhs))
-				for i := 0; i < len(n.Lhs); i++ {
-					// The first placeholder inherits the reason from the original.
-					if i == 0 {
-						placeholders[i] = sp
-					} else {
-						placeholders[i] = &object.SymbolicPlaceholder{
-							Reason: fmt.Sprintf("inferred result %d from multi-value assignment to %s", i, sp.Reason),
+		if !isInterface {
+			if val != nil {
+				l.SetFieldType(val.FieldType())
+				l.SetTypeInfo(val.TypeInfo())
+			} else {
+				l.SetFieldType(nil)
+				l.SetTypeInfo(nil)
+			}
+		}
+		// Always track the concrete type for flow-sensitive analysis.
+		if l.PossibleTypes == nil {
+			l.PossibleTypes = make(map[string]struct{})
+		}
+		if val != nil {
+			if ft := val.FieldType(); ft != nil {
+				key := ft.String()
+				// Workaround: If the default string representation of a pointer type is just "*",
+				// it's likely because the underlying element's FieldType has an empty name.
+				// In this case, we construct a more robust key using the TypeInfo from the
+				// object the pointer points to. This makes the analysis resilient to
+				// incomplete FieldType information from the scanner.
+				if key == "*" {
+					if ptr, ok := val.(*object.Pointer); ok {
+						if pointeeTypeInfo := ptr.Value.TypeInfo(); pointeeTypeInfo != nil {
+							key = fmt.Sprintf("%s.*%s", pointeeTypeInfo.PkgPath, pointeeTypeInfo.Name)
 						}
 					}
 				}
-				rhsValue = &object.MultiReturn{Values: placeholders}
+				l.PossibleTypes[key] = struct{}{}
 			}
 		}
 
-		multiRet, ok := rhsValue.(*object.MultiReturn)
-		if !ok {
-			// This can happen if a function that is supposed to return multiple values
-			// is not correctly modeled. We fall back to assigning placeholders.
-			e.logc(ctx, slog.LevelWarn, "expected multi-return value on RHS of assignment", "got_type", rhsValue.Type(), "value", inspectValuer{rhsValue})
-			for _, lhsExpr := range n.Lhs {
-				if ident, ok := lhsExpr.(*ast.Ident); ok && ident.Name != "_" {
-					v := &object.Variable{
-						Name:  ident.Name,
-						Value: &object.SymbolicPlaceholder{Reason: "unhandled multi-value assignment"},
-					}
-					env.Set(ident.Name, v)
-				}
-			}
-			return nil
+	case *object.UnresolvedIdentifier:
+		// This is a new variable declaration (`x := ...`)
+		v := &object.Variable{
+			Name:        l.Name,
+			Value:       val,
+			IsEvaluated: true,
+		}
+		if val != nil {
+			v.SetFieldType(val.FieldType())
+			v.SetTypeInfo(val.TypeInfo())
+		}
+		// Always define in the local scope for `:=`. This correctly handles shadowing.
+		env.SetLocal(l.Name, v)
+
+	case *object.FieldLHS:
+		// Assignment to a struct field (e.g., `s.Field = ...` or `p.Field = ...`)
+		container := e.forceEval(ctx, l.Container, nil) // pkg not needed here
+		if isError(container) {
+			return container
 		}
 
-		if len(multiRet.Values) != len(n.Lhs) {
-			return e.newError(ctx, n.Pos(), "assignment mismatch: %d variables but %d values", len(n.Lhs), len(multiRet.Values))
-		}
-
-		for i, lhsExpr := range n.Lhs {
-			if ident, ok := lhsExpr.(*ast.Ident); ok {
-				if ident.Name == "_" {
-					continue
-				}
-				val := multiRet.Values[i]
-				e.assignIdentifier(ctx, ident, val, n.Tok, env) // Use the statement's token (:= or =)
+		// The container could be a pointer to a struct instance.
+		if ptr, ok := container.(*object.Pointer); ok {
+			container = e.forceEval(ctx, ptr.Value, nil)
+			if isError(container) {
+				return container
 			}
 		}
-		return nil
-	}
 
-	// Handle single assignment: x = y or x := y
-	if len(n.Lhs) == 1 && len(n.Rhs) == 1 {
-		switch lhs := n.Lhs[0].(type) {
-		case *ast.Ident:
-			if lhs.Name == "_" {
-				// Evaluate RHS for side-effects even if assigned to blank identifier.
-				return e.Eval(ctx, n.Rhs[0], env, pkg)
-			}
-			return e.evalIdentAssignment(ctx, lhs, n.Rhs[0], n.Tok, env, pkg)
-		case *ast.SelectorExpr:
-			// This is an assignment to a field, like `foo.Bar = 1`.
-			// We need to evaluate the `foo` part (lhs.X) to trace any calls within it.
-			e.Eval(ctx, lhs.X, env, pkg)
-			// Then evaluate the RHS.
-			e.Eval(ctx, n.Rhs[0], env, pkg)
-			return nil
-		case *ast.IndexExpr:
-			// This is an assignment to a map or slice index, like `m[k] = v`.
-			// We need to evaluate all parts to trace calls.
-			// 1. Evaluate the map/slice expression (e.g., `m`).
-			e.Eval(ctx, lhs.X, env, pkg)
-			// 2. Evaluate the index expression (e.g., `k`).
-			e.Eval(ctx, lhs.Index, env, pkg)
-			// 3. Evaluate the RHS value (e.g., `v`).
-			e.Eval(ctx, n.Rhs[0], env, pkg)
-			return nil
-		case *ast.StarExpr:
-			// This is an assignment to a pointer dereference, like `*p = v`.
-			// Evaluate the pointer expression (e.g., `p`).
-			e.Eval(ctx, lhs.X, env, pkg)
-			// Evaluate the RHS value (e.g., `v`).
-			e.Eval(ctx, n.Rhs[0], env, pkg)
-			return nil
-		default:
-			return e.newError(ctx, n.Pos(), "unsupported assignment target: expected an identifier, selector or index expression, but got %T", lhs)
-		}
-	}
-
-	// Handle parallel assignment: x, y = y, x
-	if len(n.Lhs) == len(n.Rhs) {
-		// First, evaluate all RHS expressions before any assignments are made.
-		// This is crucial for correctness in cases like `x, y = y, x`.
-		rhsValues := make([]object.Object, len(n.Rhs))
-		for i, rhsExpr := range n.Rhs {
-			val := e.Eval(ctx, rhsExpr, env, pkg)
-			if isError(val) {
-				return val
-			}
-			rhsValues[i] = val
-		}
-
-		// Now, perform the assignments.
-		for i, lhsExpr := range n.Lhs {
-			if ident, ok := lhsExpr.(*ast.Ident); ok {
-				if ident.Name == "_" {
-					continue
-				}
-				e.assignIdentifier(ctx, ident, rhsValues[i], n.Tok, env)
+		if inst, ok := container.(*object.Instance); ok {
+			if s, ok := inst.Underlying.(*object.Struct); ok {
+				s.Set(l.Name, val)
 			} else {
-				// Handle other LHS types like selectors if needed in the future.
-				e.logc(ctx, slog.LevelWarn, "unsupported LHS in parallel assignment", "type", fmt.Sprintf("%T", lhsExpr))
+				return e.newError(ctx, token.NoPos, "cannot assign to field on non-struct instance")
 			}
+		} else {
+			// This could be a symbolic placeholder. For now, we don't do anything,
+			// but a more advanced implementation could track symbolic field states.
+			e.logc(ctx, slog.LevelDebug, "assignment to field on non-instance", "type", container.Type())
 		}
-		return nil
-	}
+	case *object.IndexLHS:
+		// Evaluate the components to trace any function calls within them.
+		e.forceEval(ctx, l.Collection, nil)
+		e.forceEval(ctx, l.Index, nil)
+		// For symbolic execution, we don't modify the state of the collection itself,
+		// but we've now traced the calls that produce the collection, index, and value.
+		// This is sufficient for call graph analysis.
+		e.logc(ctx, slog.LevelDebug, "symbolic assignment to index", "collection", l.Collection.Inspect(), "index", l.Index.Inspect())
+		return nil // Assignment itself produces no value.
 
-	return e.newError(ctx, n.Pos(), "unsupported assignment statement")
+	default:
+		return e.newError(ctx, token.NoPos, "cannot assign to LHS of type %s", loc.Type())
+	}
+	return nil
 }
 
 func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, rhs ast.Expr, tok token.Token, env *object.Environment, pkg *scan.PackageInfo) object.Object {
@@ -2981,7 +3092,10 @@ func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scan.
 					obj.SetTypeInfo(originalVar.TypeInfo())
 				}
 				if obj.FieldType() == nil && originalVar.FieldType() != nil {
-					obj.SetFieldType(originalVar.FieldType())
+					// Do not propagate a generic type parameter's FieldType onto a concrete value.
+					if !originalVar.FieldType().IsTypeParam {
+						obj.SetFieldType(originalVar.FieldType())
+					}
 				}
 			}
 			return obj
@@ -3030,6 +3144,10 @@ func (e *Evaluator) evalVariable(ctx context.Context, v *object.Variable, pkg *s
 	val := e.Eval(ctx, v.Initializer, v.DeclEnv, v.DeclPkg)
 	if isError(val) {
 		return val
+	}
+	// If the initializer was a function call, unwrap the return value.
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
 	}
 	v.Value = val
 	v.IsEvaluated = true
@@ -3432,7 +3550,13 @@ func (e *Evaluator) generateCallSignature(fn object.Object, args []object.Object
 		}
 		// For methods, include a unique identifier for the receiver instance.
 		if f.Receiver != nil {
-			b.WriteString(fmt.Sprintf("-receiver:%p", f.Receiver))
+			receiverID := fmt.Sprintf("%p", f.Receiver) // Default to pointer address
+			if ptr, ok := f.Receiver.(*object.Pointer); ok {
+				if inst, ok := ptr.Value.(*object.Instance); ok {
+					receiverID = fmt.Sprintf("instance-uid-%d", inst.UID)
+				}
+			}
+			b.WriteString(fmt.Sprintf("-receiver:%s", receiverID))
 		}
 	default:
 		b.WriteString(fn.Inspect())
@@ -4153,6 +4277,188 @@ func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Packag
 	// Store in cache for next time.
 	e.funcCache[key] = fn
 	return fn
+}
+
+// evalLHS evaluates an expression on the left-hand side of an assignment
+// to determine the "location" to which a value should be assigned.
+// It returns an object representing this location, which could be a
+// *object.Variable, *object.FieldLHS, or an error.
+func (e *Evaluator) evalLHS(ctx context.Context, node ast.Expr, env *object.Environment, pkg *scan.PackageInfo, tok token.Token) object.Object {
+	switch n := node.(type) {
+	case *ast.Ident:
+		// For `:=`, we only care if the variable exists in the *local* scope for the
+		// purpose of multi-value assignments where one variable is new and another is not.
+		// A simple `SetLocal` in `performAssignment` will handle shadowing correctly.
+		// For `=`, we search all scopes.
+		var val object.Object
+		var ok bool
+		if tok == token.DEFINE {
+			// For a short variable declaration, we don't look in outer scopes.
+			// If it's not in the local scope, it's a new variable.
+			val, ok = env.GetLocal(n.Name)
+		} else {
+			// For a standard assignment, we search up through all scopes.
+			val, ok = env.Get(n.Name)
+		}
+
+		if ok {
+			return val
+		}
+		// If the identifier doesn't exist, it's either a new variable in a `:=`
+		// statement, or an error in a `=` statement (which we handle leniently).
+		return &object.UnresolvedIdentifier{Name: n.Name}
+
+	case *ast.SelectorExpr:
+		// The location is a field on a struct. We evaluate the receiver.
+		container := e.Eval(ctx, n.X, env, pkg)
+		if isError(container) {
+			return container
+		}
+		// We don't need to force-eval the container here, as `p.F = x` is valid
+		// even if `p` is a pointer.
+		return &object.FieldLHS{
+			Container: container,
+			Name:      n.Sel.Name,
+		}
+
+	case *ast.StarExpr:
+		// The location is the memory pointed to by the pointer expression.
+		// We evaluate the pointer expression `n.X`.
+		ptrObj := e.Eval(ctx, n.X, env, pkg)
+		if isError(ptrObj) {
+			return ptrObj
+		}
+		// The pointer itself might be in a variable, so we get its value.
+		ptrVal := e.forceEval(ctx, ptrObj, pkg)
+		if isError(ptrVal) {
+			return ptrVal
+		}
+
+		ptr, ok := ptrVal.(*object.Pointer)
+		if !ok {
+			return e.newError(ctx, n.Pos(), "cannot assign to a non-pointer dereference, got %T", ptrVal)
+		}
+		// The "location" is the object the pointer points to.
+		// For a valid assignment, this must be a variable.
+		return ptr.Value
+
+	case *ast.IndexExpr:
+		// The location is an element of a map or slice.
+		collection := e.Eval(ctx, n.X, env, pkg)
+		if isError(collection) {
+			return collection
+		}
+		index := e.Eval(ctx, n.Index, env, pkg)
+		if isError(index) {
+			return index
+		}
+		return &object.IndexLHS{
+			Collection: collection,
+			Index:      index,
+		}
+
+	default:
+		return e.newError(ctx, node.Pos(), "invalid left-hand side in assignment: %T", node)
+	}
+}
+
+// resolveTypeFromExpr is a helper to get type information from an AST expression.
+func (e *Evaluator) resolveTypeFromExpr(ctx context.Context, expr ast.Expr, pkg *scan.PackageInfo) (*scan.FieldType, *scan.TypeInfo) {
+	if pkg == nil || pkg.Fset == nil {
+		return nil, nil
+	}
+	file := pkg.Fset.File(expr.Pos())
+	if file == nil {
+		return nil, nil
+	}
+	astFile, ok := pkg.AstFiles[file.Name()]
+	if !ok {
+		return nil, nil
+	}
+	importLookup := e.scanner.BuildImportLookup(astFile)
+
+	fieldType := e.scanner.TypeInfoFromExpr(ctx, expr, nil, pkg, importLookup)
+	if fieldType == nil {
+		return nil, nil
+	}
+	resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+	// If the type was unresolved, we can infer its kind to be an interface,
+	// as this is a common scenario in type assertions or switches.
+	if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
+		resolvedType.Kind = scan.InterfaceKind
+	}
+	return fieldType, resolvedType
+}
+
+// createZeroValue creates a zero-value object for a given type. It prioritizes
+// the FieldType for information about pointers/slices etc., then falls back to TypeInfo.
+func (e *Evaluator) createZeroValue(ctx context.Context, typeInfo *scan.TypeInfo, fieldType *scan.FieldType) object.Object {
+	var zeroVal object.Object
+
+	// fieldType is more specific for composite types like pointers, slices, etc.
+	if fieldType != nil {
+		if fieldType.IsPointer || fieldType.IsSlice || fieldType.IsMap || fieldType.IsChan {
+			zeroVal = object.NIL
+		}
+	}
+
+	// If not a reference type handled above, use typeInfo to determine the kind.
+	if zeroVal == nil && typeInfo != nil {
+		zeroVal = e.createZeroValueForType(ctx, typeInfo, fieldType)
+	}
+
+	// If we still don't have a value, it might be a basic type that doesn't have a TypeInfo
+	if zeroVal == nil && fieldType != nil {
+		switch fieldType.Name {
+		case "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "rune", "byte":
+			zeroVal = &object.Integer{Value: 0}
+		case "string":
+			zeroVal = &object.String{Value: ""}
+		case "bool":
+			zeroVal = object.FALSE
+		case "float32", "float64":
+			zeroVal = &object.Float{Value: 0}
+		case "complex64", "complex128":
+			zeroVal = &object.Complex{Value: 0}
+		}
+	}
+
+	// Fallback
+	if zeroVal == nil {
+		zeroVal = &object.SymbolicPlaceholder{Reason: "zero value for unknown type"}
+	}
+
+	zeroVal.SetTypeInfo(typeInfo)
+	zeroVal.SetFieldType(fieldType)
+	return zeroVal
+}
+
+// createZeroValueForType handles the creation of zero values for named types.
+func (e *Evaluator) createZeroValueForType(ctx context.Context, typeInfo *scan.TypeInfo, fieldType *scan.FieldType) object.Object {
+	switch typeInfo.Kind {
+	case scan.StructKind:
+		structObj := &object.Struct{
+			StructType: typeInfo,
+			Fields:     make(map[string]object.Object),
+		}
+		instance := &object.Instance{
+			TypeName:   typeInfo.PkgPath + "." + typeInfo.Name,
+			Underlying: structObj,
+		}
+		instance.SetTypeInfo(typeInfo)
+		instance.SetFieldType(fieldType)
+		return instance
+	case scan.InterfaceKind, scan.FuncKind:
+		return object.NIL
+	case scan.AliasKind:
+		if typeInfo.Underlying != nil {
+			// Resolve the underlying type to get its full TypeInfo, then recurse.
+			underlyingTypeInfo, _ := typeInfo.Underlying.Resolve(ctx)
+			return e.createZeroValue(ctx, underlyingTypeInfo, typeInfo.Underlying)
+		}
+	}
+	return nil // Let the caller handle basic types or fall back
 }
 
 // Finalize performs the final analysis step, connecting interface method calls

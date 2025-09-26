@@ -82,7 +82,7 @@ func TestGoInspect(t *testing.T) {
 		// via higher-order functions without a stack overflow.
 		// {
 		// 	name:        "indirect",
-		// 	pkgPatterns: []string{"./testdata/src/indirect"},
+		// 	pkgPatterns: []string{"./testdata/known_failures/indirect"},
 		// },
 	}
 

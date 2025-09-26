@@ -20,9 +20,15 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
+// CallInfo stores information about a single function call.
+type CallInfo struct {
+	Callee      *scanner.FunctionInfo
+	IsRecursive bool
+}
+
 // callGraph is a data structure to store the call graph.
-// The key is the caller function, and the value is a list of callee functions.
-type callGraph map[*scanner.FunctionInfo][]*scanner.FunctionInfo
+// The key is the caller function, and the value is a list of CallInfo structs.
+type callGraph map[*scanner.FunctionInfo][]*CallInfo
 
 // stringSlice is a custom type to handle multiple string flags.
 type stringSlice []string
@@ -153,12 +159,17 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 
 		calleeObj := args[0]
 		var calleeFunc *scanner.FunctionInfo
+		isRecursive := false
 
 		switch f := calleeObj.(type) {
 		case *object.Function:
 			calleeFunc = f.Def
 		case *object.SymbolicPlaceholder:
 			calleeFunc = f.UnderlyingFunc
+			// Check if the placeholder reason indicates a recursive call.
+			if strings.HasPrefix(f.Reason, "bounded recursion depth exceeded") {
+				isRecursive = true
+			}
 		}
 
 		if callerFrame.Fn != nil && callerFrame.Fn.Def != nil && calleeFunc != nil {
@@ -166,7 +177,10 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 			if callerFunc == nil {
 				return nil
 			}
-			graph[callerFunc] = append(graph[callerFunc], calleeFunc)
+			graph[callerFunc] = append(graph[callerFunc], &CallInfo{
+				Callee:      calleeFunc,
+				IsRecursive: isRecursive,
+			})
 		}
 		return nil
 	})
@@ -247,9 +261,9 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 
 	// 5. Filter for true top-level functions (not called by any other entry point).
 	callees := make(map[string]bool)
-	for _, calledFuncs := range graph {
-		for _, f := range calledFuncs {
-			callees[getFuncID(f)] = true
+	for _, calledInfos := range graph {
+		for _, info := range calledInfos {
+			callees[getFuncID(info.Callee)] = true
 		}
 	}
 
@@ -327,90 +341,79 @@ func (p *Printer) Print(entryPoints []*scanner.FunctionInfo) {
 	})
 
 	for _, f := range entryPoints {
-		p.printRecursive(f, 0)
+		p.printRecursive(f, 0, false)
 	}
 }
 
-func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
+func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int, isRecursive bool) {
 	id := getFuncID(f)
 
-	accessorPrefix := ""
+	var prefixes []string
 	if isAccessor(f) {
-		accessorPrefix = "[accessor] "
+		prefixes = append(prefixes, "[accessor]")
 	}
+	if isRecursive {
+		prefixes = append(prefixes, "[recursive]")
+	}
+
+	prefixStr := ""
+	if len(prefixes) > 0 {
+		prefixStr = strings.Join(prefixes, " ") + " "
+	}
+
 	formatted := p.formatFunc(f)
 
 	// Default mode (expand=false): Use IDs to show a function's tree only once.
 	if !p.Expand {
 		if num, ok := p.assigned[id]; ok {
 			// This function has been printed before, just show its reference.
-			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, num)
+			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), prefixStr, formatted, num)
 			return
 		}
 	}
 
-	// Cycle detection (for both modes). If we are currently visiting this node in this path, it's a cycle.
+	// Cycle detection (for both modes).
 	if p.visited[id] {
 		cycleRef := ""
-		// In default mode, a cycle to a node that's already been fully printed
-		// would have been caught by the `p.assigned` check above. This `p.visited`
-		// check is for cycles within a *single* new call tree that we are in the
-		// process of printing for the first time.
 		if !p.Expand {
 			if num, ok := p.assigned[id]; ok {
 				cycleRef = fmt.Sprintf(" #%d", num)
 			}
 		}
-		fmt.Fprintf(p.Out, "%s%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), accessorPrefix, formatted, cycleRef)
+		fmt.Fprintf(p.Out, "%s%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), prefixStr, formatted, cycleRef)
 		return
 	}
 
-	// Mark as visited for the current path traversal.
 	p.visited[id] = true
+	defer func() { p.visited[id] = false }()
 
-	// --- Printing Logic (Corrected) ---
-	// - expand=false (default): show ID on first appearance, reference on subsequent.
-	// - expand=true: show full tree every time, no IDs.
 	if !p.Expand {
-		// First time seeing this function in default mode. Assign an ID and print it.
 		p.nextID++
 		p.assigned[id] = p.nextID
-		fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, p.nextID)
+		fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), prefixStr, formatted, p.nextID)
 	} else {
-		// Expand mode: just print the formatted function, no ID.
-		fmt.Fprintf(p.Out, "%s%s%s\n", strings.Repeat("  ", indent), accessorPrefix, formatted)
+		fmt.Fprintf(p.Out, "%s%s%s\n", strings.Repeat("  ", indent), prefixStr, formatted)
 	}
 
-	// Recursively print callees.
-	if callees, ok := p.Graph[f]; ok {
-		uniqueCallees := make([]*scanner.FunctionInfo, 0, len(callees))
+	if callInfos, ok := p.Graph[f]; ok {
+		uniqueCallees := make([]*CallInfo, 0, len(callInfos))
 		seen := make(map[string]bool)
-		for _, callee := range callees {
-			calleeID := getFuncID(callee)
+		for _, info := range callInfos {
+			calleeID := getFuncID(info.Callee)
 			if !seen[calleeID] {
-				uniqueCallees = append(uniqueCallees, callee)
+				uniqueCallees = append(uniqueCallees, info)
 				seen[calleeID] = true
 			}
 		}
 
-		// Sort callees for deterministic output.
 		sort.Slice(uniqueCallees, func(i, j int) bool {
-			return getFuncID(uniqueCallees[i]) < getFuncID(uniqueCallees[j])
+			return getFuncID(uniqueCallees[i].Callee) < getFuncID(uniqueCallees[j].Callee)
 		})
 
-		for _, callee := range uniqueCallees {
-			p.printRecursive(callee, indent+1)
+		for _, info := range uniqueCallees {
+			p.printRecursive(info.Callee, indent+1, info.IsRecursive)
 		}
 	}
-
-	// Reset visited flag for this path. This allows the function to be printed again
-	// if it appears in a different call branch. In expand mode, this won't happen
-	// because the `p.assigned` check at the top will catch it.
-	p.visited[id] = false
-
-	// In non-expand mode, we prevent a function from being printed more than once
-	// at the top level by a different mechanism (in the Print method), but this
-	// reset is crucial for correct cycle detection.
 }
 
 // isAccessor checks if a function is a simple getter or setter.

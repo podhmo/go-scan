@@ -32,7 +32,7 @@ type FileScope struct {
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
 	scanner           *goscan.Scanner
-	funcCache         map[string]object.Object
+	funcCache         map[token.Pos]object.Object
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
@@ -182,7 +182,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 
 	e := &Evaluator{
 		scanner:                scanner,
-		funcCache:              make(map[string]object.Object),
+		funcCache:              make(map[token.Pos]object.Object),
 		intrinsics:             intrinsics.New(),
 		logger:                 logger,
 		tracer:                 tracer,
@@ -4062,15 +4062,14 @@ func (e *Evaluator) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn ob
 }
 
 func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
-	// Generate a unique key for the function. For methods, the receiver type is crucial.
-	key := ""
-	if funcInfo.Receiver != nil && funcInfo.Receiver.Type != nil {
-		// e.g., "example.com/me/impl.(*Dog).Speak"
-		key = fmt.Sprintf("%s.(%s).%s", pkg.Path, funcInfo.Receiver.Type.String(), funcInfo.Name)
-	} else {
-		// e.g., "example.com/me.MyFunction"
-		key = fmt.Sprintf("%s.%s", pkg.Path, funcInfo.Name)
+	// The AST declaration is guaranteed to exist for functions from source.
+	if funcInfo.AstDecl == nil {
+		// Handle functions without an AST node (e.g., synthetic from interfaces).
+		// These cannot be cached by position, so we resolve them directly.
+		return e.resolver.ResolveFunction(ctx, pkg, funcInfo)
 	}
+
+	key := funcInfo.AstDecl.Pos()
 
 	// Check cache first.
 	if fn, ok := e.funcCache[key]; ok {

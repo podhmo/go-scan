@@ -838,6 +838,54 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 	rType := right.Type()
 
 	switch {
+	// Special handling for == and != on nillable types.
+	case node.Op == token.EQL || node.Op == token.NEQ:
+		isLeftNil := left.Type() == object.NIL_OBJ
+		isRightNil := right.Type() == object.NIL_OBJ
+
+		if isLeftNil && isRightNil {
+			// nil == nil is true, nil != nil is false
+			return nativeBoolToBooleanObject(node.Op == token.EQL)
+		}
+
+		if isLeftNil || isRightNil {
+			other := left
+			if isLeftNil {
+				other = right
+			}
+
+			isNillable := false
+			switch other.Type() {
+			case object.FUNCTION_OBJ, object.POINTER_OBJ, object.SLICE_OBJ, object.MAP_OBJ, object.CHANNEL_OBJ, object.UNRESOLVED_FUNCTION_OBJ:
+				isNillable = true
+			default:
+				// Also check if it's an interface type
+				if ti := other.TypeInfo(); ti != nil && ti.Kind == scan.InterfaceKind {
+					isNillable = true
+				}
+			}
+
+			if isNillable {
+				// Comparing a non-nil nillable type to nil.
+				// e.g. `myFunc != nil` is true, `myFunc == nil` is false.
+				return nativeBoolToBooleanObject(node.Op == token.NEQ)
+			}
+		}
+
+		// Fallback for non-nil comparisons (e.g., bool == bool, which isn't handled elsewhere)
+		if lType == object.BOOLEAN_OBJ && rType == object.BOOLEAN_OBJ {
+			leftVal := left.(*object.Boolean).Value
+			rightVal := right.(*object.Boolean).Value
+			if node.Op == token.EQL {
+				return nativeBoolToBooleanObject(leftVal == rightVal)
+			}
+			if node.Op == token.NEQ {
+				return nativeBoolToBooleanObject(leftVal != rightVal)
+			}
+		}
+		// For other types, we can't determine equality symbolically.
+		return &object.SymbolicPlaceholder{Reason: "equality comparison on non-nillable or non-boolean types"}
+
 	case lType == object.INTEGER_OBJ && rType == object.INTEGER_OBJ:
 		return e.evalIntegerInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	case lType == object.STRING_OBJ && rType == object.STRING_OBJ:
@@ -845,8 +893,6 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 	case lType == object.COMPLEX_OBJ || rType == object.COMPLEX_OBJ:
 		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	case lType == object.FLOAT_OBJ || rType == object.FLOAT_OBJ:
-		// For now, treat float operations as complex to simplify.
-		// A more complete implementation would have a separate float path.
 		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	default:
 		return &object.SymbolicPlaceholder{Reason: "binary expression"}
@@ -2522,15 +2568,32 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 		}
 	}
 
-	// Also evaluate the condition to trace any function calls within it.
+	var condResult object.Object
 	if n.Cond != nil {
-		if condResult := e.Eval(ctx, n.Cond, ifStmtEnv, pkg); isError(condResult) {
-			// If the condition errors, we can't proceed.
+		condResult = e.Eval(ctx, n.Cond, ifStmtEnv, pkg)
+		if isError(condResult) {
 			return condResult
 		}
+	} else {
+		// Should not happen in valid Go, but handle defensively.
+		return &object.SymbolicPlaceholder{Reason: "if statement with no condition"}
 	}
 
-	// Evaluate both branches. Each gets its own enclosed environment.
+	// Check if the condition is a concrete boolean value.
+	if cond, ok := condResult.(*object.Boolean); ok {
+		if cond.Value {
+			// Condition is true, only evaluate the 'then' branch.
+			return e.Eval(ctx, n.Body, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+		}
+		// Condition is false, only evaluate the 'else' branch (if it exists).
+		if n.Else != nil {
+			return e.Eval(ctx, n.Else, object.NewEnclosedEnvironment(ifStmtEnv), pkg)
+		}
+		return nil // No else branch, so the if-statement does nothing.
+	}
+
+	// If the condition is not a concrete boolean, it's symbolic.
+	// Evaluate both branches as potential paths.
 	thenEnv := object.NewEnclosedEnvironment(ifStmtEnv)
 	thenResult := e.Eval(ctx, n.Body, thenEnv, pkg)
 
@@ -2540,23 +2603,17 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 		elseResult = e.Eval(ctx, n.Else, elseEnv, pkg)
 	}
 
-	// If the 'then' branch returned a control flow object, propagate it.
-	// This is a heuristic; a more complex analysis might merge states.
-	// We prioritize the 'then' branch's signal.
-	// We do NOT propagate ReturnValue, as that would prematurely terminate
-	// the analysis of the current function just because one symbolic path returned.
+	// Propagate control flow signals if either branch returns one.
+	// This is a simplification; a full path-sensitive analysis might merge states.
 	switch thenResult.(type) {
-	case *object.Error, *object.Break, *object.Continue:
+	case *object.Error, *object.Break, *object.Continue, *object.ReturnValue:
 		return thenResult
 	}
-	// Otherwise, check the 'else' branch.
 	switch elseResult.(type) {
-	case *object.Error, *object.Break, *object.Continue:
+	case *object.Error, *object.Break, *object.Continue, *object.ReturnValue:
 		return elseResult
 	}
 
-	// A more sophisticated, path-sensitive analysis would require a different
-	// approach. For now, if no control flow signal was returned, we continue.
 	return nil
 }
 

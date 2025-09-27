@@ -163,3 +163,49 @@ case *object.UnresolvedFunction:
 ```
 
 This ensures that even if type information is incomplete or incorrect for an external symbol, `len()` will not crash the analysis. It will instead return a symbolic value, allowing the analysis to continue.
+
+---
+
+## 5. Problem: `symgo` Erroneously Calls `nil` Function Pointers
+
+**Symptom:**
+
+When running analysis on codebases that include test files (`--include-tests`), `symgo` would frequently crash with a "not a function: NIL" error.
+
+```
+level=ERROR msg="not a function: NIL" in_func=nil in_func_pos=/app/examples/minigo/main_test.go:28:4
+```
+
+This error occurred in code patterns like the following, where a function is called with a `nil` function pointer:
+
+```go
+func TakesFunc(fn func()) {
+	if fn != nil { // The bug occurred here
+		fn()
+	}
+}
+
+func main() {
+	TakesFunc(nil)
+}
+```
+
+**Root Cause Analysis:**
+
+The problem was a composite failure in how the `symgo` evaluator handled `nil` comparisons and `if` statements.
+
+1.  **`evalBinaryExpr` Failure:** The function responsible for evaluating binary expressions (`==`, `!=`, etc.) did not have specific logic for comparing a nillable type (like a function, interface, or pointer) against the `nil` literal. When it encountered `fn != nil`, instead of returning a concrete `*object.Boolean{Value: false}`, it returned a generic `*object.SymbolicPlaceholder`.
+
+2.  **`evalIfStmt` Assumption:** The function for evaluating `if` statements did not correctly handle cases where the condition evaluated to a non-boolean object. It treated any non-`nil` object (including the `SymbolicPlaceholder` from the failed comparison) as `true`.
+
+The combination of these two issues meant the `if fn != nil` check would always pass symbolically, causing the evaluator to attempt to execute the `fn()` call, which resulted in the "not a function: NIL" crash.
+
+**Solution Implemented:**
+
+A two-part fix was implemented in `symgo/evaluator/evaluator.go`:
+
+1.  **Enhanced `evalBinaryExpr`:** The logic for `==` and `!=` was completely rewritten. It now explicitly checks if one side of the comparison is `nil` and the other side is a nillable type (function, pointer, slice, map, channel, or interface). In these cases, it now correctly returns a concrete `*object.Boolean` object (`object.TRUE` or `object.FALSE`).
+
+2.  **Smarter `evalIfStmt`:** The `if` statement evaluator was updated to check if the condition's result is a concrete `*object.Boolean`. If it is, `evalIfStmt` now executes *only* the correct branch (`then` or `else`). If the condition is symbolic, it retains the previous behavior of exploring both paths for whole-program analysis.
+
+This combined fix ensures that conditions like `fn != nil` are correctly evaluated to `false`, the `if` body is correctly skipped, and the evaluator no longer attempts to call a `nil` function. This was verified by adding a new unit test (`TestNilFunctionComparison`) and by confirming that the `make -C examples/find-orphans` command with `--include-tests` now completes without this error.

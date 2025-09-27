@@ -20,7 +20,6 @@ This tool is designed for applications like OpenAPI document generation, ORM cod
 - **Function Signature Extraction**: Extracts top-level function and method signatures.
 - **Documentation Parsing**: Captures GoDoc comments for types, fields, functions, and constants.
 - **Package Locator**: Finds the module root by locating `go.mod` and resolves internal package paths.
-- **Symbol Definition Caching**: (Experimental) Optionally caches the file location of scanned symbols (`types`, `functions`, `constants`) to speed up subsequent analyses by tools that need this information. The cache is stored as a JSON file.
 - **External Type Overrides**: Allows specifying how types from external (or even internal) packages should be interpreted by the scanner, e.g., treating `uuid.UUID` as a `string`.
 
 ## Quick Start
@@ -55,26 +54,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// --- Optional: Enable Symbol Cache ---
-	// To enable symbol definition caching, set the CachePath.
-	// If CachePath is an empty string (which is the default for a new Scanner), caching is disabled.
-	// scanner.CachePath = filepath.Join(os.TempDir(), "my-app-symbol-cache.json") // Example
-	// Or, for a user-level cache (ensure your app handles dir creation if needed by CachePath):
-	// homeDir, _ := os.UserHomeDir()
-	// if homeDir != "" {
-	//    _ = os.MkdirAll(filepath.Join(homeDir, ".your-app-name"), 0750) // Ensure dir exists
-	//    scanner.CachePath = filepath.Join(homeDir, ".your-app-name", "go-scan-symbols.json")
-	// }
-
-	// Important: Ensure to save the cache when your program exits if caching is enabled.
-	// SaveSymbolCache will do nothing if scanner.CachePath is empty.
-	defer func() {
-		if err := scanner.SaveSymbolCache(); err != nil {
-			slog.WarnContext(ctx, "Failed to save symbol cache", slog.Any("error", err))
-		}
-	}()
-	// --- End Optional: Enable Symbol Cache ---
-
 	// Scan a package by its import path
 	// Replace with an actual import path from your project or testdata.
 	// The example below uses testdata included in this repository.
@@ -100,22 +79,6 @@ func main() {
 					slog.InfoContext(ctx, "Struct details", slog.String("type", def.Name), slog.Int("field_count", len(def.Struct.Fields)))
 				}
 			}
-		}
-	}
-
-	// --- Optional: Using FindSymbolDefinitionLocation (often with cache) ---
-	// This method attempts to find the file where a symbol is defined.
-	// It uses the cache if enabled and will fallback to scanning if the symbol isn't found in cache
-	// or if the cached entry is stale (e.g., file deleted).
-	if pkgInfo.Types != nil && len(pkgInfo.Types) > 0 {
-		firstType := pkgInfo.Types[0]
-		symbolFullName := pkgImportPath + "." + firstType.Name
-
-		filePath, err := scanner.FindSymbolDefinitionLocation(symbolFullName)
-		if err != nil {
-			slog.WarnContext(ctx, "Could not find definition location for symbol", slog.String("symbol", symbolFullName), slog.Any("error", err))
-		} else {
-			slog.InfoContext(ctx, "Definition of symbol found", slog.String("symbol", symbolFullName), slog.String("path", filePath))
 		}
 	}
 }
@@ -181,17 +144,6 @@ When a type is resolved using an override:
 
 This feature gives you fine-grained control over how specific types are interpreted, which is essential for working around complex build contexts or for simplifying external types.
 
-## Caching Symbol Locations
-
-The scanner can cache the file paths where symbols (types, functions, constants) are defined. This is useful for tools that repeatedly need to look up symbol locations.
-
-- Caching is enabled by setting the `scanner.CachePath` field to a non-empty string representing the desired path for the cache file.
-- If `scanner.CachePath` is an empty string (the default for a new `Scanner` instance), caching is disabled.
-- There is no default cache path if `CachePath` is left empty; it must be explicitly provided to enable caching.
-- **Crucially**, if caching is enabled (i.e., `CachePath` is set), you should call `defer scanner.SaveSymbolCache()` after creating your scanner instance. This ensures the cache is written to disk when your program finishes. `SaveSymbolCache` will do nothing if `CachePath` is empty.
-- The `scanner.FindSymbolDefinitionLocation("package/import/path.SymbolName")` method leverages this cache. If caching is enabled and a symbol is not found in the cache (or if the cached file path is no longer valid), it will attempt to scan the relevant package and update the cache. If caching is disabled, it will always perform a fresh scan.
-
-This library is currently under development. See `docs/todo.md` for planned features.
 
 ## More Examples
 

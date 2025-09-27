@@ -194,24 +194,38 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		}
 	}
 
-	logger.Info("starting analysis", "entrypoints", len(entryPoints))
+	// Collect all functions that could be analyzed into a single slice.
+	var allFunctions []*scanner.FunctionInfo
 	for _, pkg := range pkgs {
-		for _, f := range pkg.Functions {
-			if !includeUnexported && !ast.IsExported(f.Name) {
-				continue
-			}
-			if _, ok := graph[f]; ok {
-				continue // Already visited as part of another call
-			}
-			eval := interp.EvaluatorForTest()
-			pkgObj, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
-			if err != nil {
-				logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", pkg.ImportPath, "error", err)
-				continue
-			}
-			fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
-			interp.Apply(ctx, fnObj, nil, pkg)
+		allFunctions = append(allFunctions, pkg.Functions...)
+	}
+
+	// Sort the functions to ensure a deterministic analysis order.
+	sort.Slice(allFunctions, func(i, j int) bool {
+		return getFuncID(allFunctions[i]) < getFuncID(allFunctions[j])
+	})
+
+	logger.Info("starting analysis", "entrypoints", len(entryPoints), "total_functions", len(allFunctions))
+
+	// 5. Analyze all functions in a deterministic order.
+	for _, f := range allFunctions {
+		if !includeUnexported && !ast.IsExported(f.Name) {
+			continue
 		}
+
+		// Don't re-analyze a function if it has already been processed as a callee.
+		if _, ok := graph[f]; ok {
+			continue
+		}
+
+		eval := interp.EvaluatorForTest()
+		pkgObj, err := eval.GetOrLoadPackageForTest(ctx, f.Pkg.ImportPath)
+		if err != nil {
+			logger.Warn("failed to load package for analysis, skipping", "func", f.Name, "pkg", f.Pkg.ImportPath, "error", err)
+			continue
+		}
+		fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
+		interp.Apply(ctx, fnObj, nil, f.Pkg)
 	}
 
 	// 5. Filter for true top-level functions (not called by any other entry point).

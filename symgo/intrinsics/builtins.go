@@ -146,6 +146,9 @@ func BuiltinLen(ctx context.Context, args ...object.Object) object.Object {
 		// package that is mis-identified as a function. Instead of crashing,
 		// return a symbolic placeholder for the length.
 		return &object.SymbolicPlaceholder{Reason: "len on unresolved function"}
+	case *object.Nil:
+		// len(nil) is a valid operation for slices, maps, and channels, and it returns 0.
+		return &object.Integer{Value: 0}
 	default:
 		return &object.Error{Message: fmt.Sprintf("argument to `len` not supported, got %s", arg.Type())}
 	}

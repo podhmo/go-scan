@@ -133,3 +133,34 @@ func TestEvalComplex(t *testing.T) {
 		})
 	}
 }
+
+func TestEvalComplexInfixExpression_WithSymbolicPlaceholder(t *testing.T) {
+	s, _ := goscan.New()
+	eval := New(s, nil, nil, nil)
+
+	tests := []struct {
+		name string
+		left object.Object
+		right object.Object
+	}{
+		{
+			name: "left is symbolic",
+			left: &object.SymbolicPlaceholder{Reason: "symbolic float"},
+			right: &object.Complex{Value: 1 + 2i},
+		},
+		{
+			name: "right is symbolic",
+			left: &object.Complex{Value: 1 + 2i},
+			right: &object.SymbolicPlaceholder{Reason: "symbolic float"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := eval.evalComplexInfixExpression(context.Background(), token.NoPos, token.ADD, tt.left, tt.right)
+			if _, ok := result.(*object.SymbolicPlaceholder); !ok {
+				t.Errorf("expected result to be a SymbolicPlaceholder, but got %T (%+v)", result, result)
+			}
+		})
+	}
+}

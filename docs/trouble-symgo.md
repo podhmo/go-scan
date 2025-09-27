@@ -163,3 +163,43 @@ case *object.UnresolvedFunction:
 ```
 
 This ensures that even if type information is incomplete or incorrect for an external symbol, `len()` will not crash the analysis. It will instead return a symbolic value, allowing the analysis to continue.
+
+---
+
+## 5. Problem: `invalid left operand for complex expression` in Test Code
+
+**Symptom:**
+
+When running `find-orphans` with the `--include-tests` flag, the analysis would fail with an error related to complex number evaluation, even when processing code that only involved floats.
+
+```
+level=ERROR msg="invalid left operand for complex expression: SYMBOLIC_PLACEHOLDER" in_func=TestEvalFloatLiteral ...
+```
+
+**Root Cause Analysis:**
+
+1.  **Test Analysis:** The `--include-tests` flag causes `symgo` to analyze its own test files, such as `symgo/evaluator/evaluator_test.go`.
+2.  **Symbolic Values in Tests:** Inside a test like `TestEvalFloatLiteral`, a comparison like `floatObj.Value != 5.5` is performed. During symbolic execution of this test, `floatObj` is a symbolic placeholder, not a concrete float object. Therefore, `floatObj.Value` is also a placeholder.
+3.  **Incorrect Dispatch:** The `evalBinaryExpr` function, when seeing a comparison involving a float literal (`5.5`), would dispatch the evaluation to `evalComplexInfixExpression` as a simplifying assumption.
+4.  **Placeholder Handling:** The `evalComplexInfixExpression` function was not designed to handle `*object.SymbolicPlaceholder` operands. When it received the placeholder from `floatObj.Value`, it couldn't find a valid case for its type and returned the "invalid left operand" error.
+
+**Solution Implemented:**
+
+The `evalComplexInfixExpression` function was made more robust to handle symbolic values gracefully.
+
+-   **File Modified:** `symgo/evaluator/evaluator.go`
+-   **Function Modified:** `evalComplexInfixExpression`
+
+The function was updated to check if either operand is a `*object.SymbolicPlaceholder`. If so, instead of returning an error, it now immediately returns a new `*object.SymbolicPlaceholder`.
+
+```go
+// at the top of evalComplexInfixExpression
+if _, ok := left.(*object.SymbolicPlaceholder); ok {
+    return &object.SymbolicPlaceholder{Reason: "complex operation with symbolic operand"}
+}
+if _, ok := right.(*object.SymbolicPlaceholder); ok {
+    return &object.SymbolicPlaceholder{Reason: "complex operation with symbolic operand"}
+}
+```
+
+This change prevents the evaluator from crashing when it encounters symbolic values in arithmetic or comparison expressions that are routed through the complex evaluation path, allowing analysis to continue.

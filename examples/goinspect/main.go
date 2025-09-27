@@ -41,7 +41,9 @@ func main() {
 	var targets stringSlice
 	flag.Var(&targets, "target", "Target function or method to inspect (e.g., mypkg.MyFunc, (*mypkg.MyType).MyMethod). Can be specified multiple times.")
 	var pkgPatterns stringSlice
-	flag.Var(&pkgPatterns, "pkg", "Go package pattern to inspect (e.g., ./...). Can be specified multiple times.")
+	flag.Var(&pkgPatterns, "pkg", "Go package pattern to inspect (e.g., ./...). This is the primary analysis scope and where entry points are found. Can be specified multiple times.")
+	var withPatterns stringSlice
+	flag.Var(&withPatterns, "with", "Go package pattern to include in the analysis scope, but not as an entry point. Can be specified multiple times.")
 	trimPrefix := flag.Bool("trim-prefix", false, "Trim module path prefix from output")
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
@@ -70,7 +72,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(os.Stdout, logger, pkgPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
+	if err := run(os.Stdout, logger, pkgPatterns, withPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
@@ -92,7 +94,7 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
 }
 
-func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
+func run(out io.Writer, logger *slog.Logger, pkgPatterns, withPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 	ctx := context.Background()
 
 	// 2. Scan packages using goscan.
@@ -105,19 +107,55 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	var pkgs []*scanner.PackageInfo
-	for _, pkgPattern := range pkgPatterns {
+	// 2a. Scan all packages from both --pkg and --with patterns.
+	var allPatterns []string
+	allPatterns = append(allPatterns, pkgPatterns...)
+	allPatterns = append(allPatterns, withPatterns...)
+
+	var allScannedPkgs []*scanner.PackageInfo
+	for _, pkgPattern := range allPatterns {
 		scannedPkgs, err := s.Scan(ctx, pkgPattern)
 		if err != nil {
+			// It's possible a pattern matches no packages, which isn't a fatal error.
+			if strings.Contains(err.Error(), "no packages found") {
+				logger.Debug("pattern matched no packages", "pattern", pkgPattern)
+				continue
+			}
 			return fmt.Errorf("failed to scan package pattern %q: %w", pkgPattern, err)
 		}
-		pkgs = append(pkgs, scannedPkgs...)
+		allScannedPkgs = append(allScannedPkgs, scannedPkgs...)
+	}
+
+	// 2b. Deduplicate packages based on their unique ID.
+	pkgsMap := make(map[string]*scanner.PackageInfo)
+	for _, pkg := range allScannedPkgs {
+		pkgsMap[pkg.ID] = pkg
+	}
+	var pkgs []*scanner.PackageInfo
+	for _, pkg := range pkgsMap {
+		pkgs = append(pkgs, pkg)
 	}
 
 	// Sort packages by ID for deterministic order.
 	sort.Slice(pkgs, func(i, j int) bool {
 		return pkgs[i].ID < pkgs[j].ID
 	})
+
+	// 2c. To determine entry points, we need the set of packages specified with --pkg.
+	// We can get this by scanning just those patterns again; it will be fast due to caching.
+	entrypointPkgPaths := make(map[string]bool)
+	for _, pkgPattern := range pkgPatterns {
+		entryPkgs, err := s.Scan(ctx, pkgPattern) // This is fast due to the scanner's cache
+		if err != nil {
+			if strings.Contains(err.Error(), "no packages found") {
+				continue
+			}
+			return fmt.Errorf("failed to re-scan --pkg pattern %q: %w", pkgPattern, err)
+		}
+		for _, pkg := range entryPkgs {
+			entrypointPkgPaths[pkg.ImportPath] = true
+		}
+	}
 
 	// Define the analysis scope.
 	primaryScope := make(map[string]bool)
@@ -197,10 +235,14 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		}
 
 	} else {
-		// If no targets, use all relevant functions from the sorted list as potential entry points.
+		// If no targets, use functions from packages specified by --pkg as potential entry points.
 		for _, f := range allFunctions {
-			if includeUnexported || ast.IsExported(f.Name) {
-				entryPoints = append(entryPoints, f)
+			// A function is an entry point if it's in a --pkg package
+			// AND (it's exported OR --include-unexported is set).
+			if _, isEntryPointPkg := entrypointPkgPaths[f.PkgPath]; isEntryPointPkg {
+				if includeUnexported || ast.IsExported(f.Name) {
+					entryPoints = append(entryPoints, f)
+				}
 			}
 		}
 	}

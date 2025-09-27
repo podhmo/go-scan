@@ -17,6 +17,7 @@ func TestGoInspect(t *testing.T) {
 	testCases := []struct {
 		name              string
 		pkgPatterns       []string
+		withPatterns      []string
 		targets           []string
 		trimPrefix        bool
 		includeUnexported bool
@@ -86,6 +87,11 @@ func TestGoInspect(t *testing.T) {
 			name:        "stdlib_errors",
 			pkgPatterns: []string{"errors"},
 		},
+		{
+			name:         "with_option",
+			pkgPatterns:  []string{"./testdata/src/myapp"},
+			withPatterns: []string{"./testdata/src/another"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -95,7 +101,7 @@ func TestGoInspect(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-			err := run(&buf, logger, tc.pkgPatterns, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
+			err := run(&buf, logger, tc.pkgPatterns, tc.withPatterns, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
 			if err != nil {
 				t.Fatalf("run() failed: %v", err)
 			}

@@ -110,3 +110,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
+
+### `symgo`: Robustness in Test Code Analysis
+- [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.
+- [ ] **Handle `not a function: NIL`**: Investigate and fix "not a function: NIL" errors that occur when analyzing test files, possibly by improving how symbolic placeholders for function-typed variables are handled.

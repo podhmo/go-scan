@@ -591,6 +591,11 @@ func TestEvalBuiltinFunctions(t *testing.T) {
 			input:    `panic(nil)`,
 			expected: &object.PanicError{Value: object.NIL},
 		},
+		{
+			name:     "len-nil",
+			input:    `len(nil)`,
+			expected: 0,
+		},
 	}
 
 	for _, tt := range tests {

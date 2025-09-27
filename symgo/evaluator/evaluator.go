@@ -854,6 +854,13 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 }
 
 func (e *Evaluator) evalComplexInfixExpression(ctx context.Context, pos token.Pos, op token.Token, left, right object.Object) object.Object {
+	if _, ok := left.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: "complex operation with symbolic operand"}
+	}
+	if _, ok := right.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: "complex operation with symbolic operand"}
+	}
+
 	var lval, rval complex128
 
 	switch l := left.(type) {

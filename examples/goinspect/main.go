@@ -232,7 +232,18 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	// A function is a "callee" if it's called by another function. A self-recursive
 	// call does not disqualify a function from being a top-level entry point.
 	callees := make(map[string]bool)
-	for caller, calledFuncs := range graph {
+
+	// Sort the callers to ensure deterministic iteration over the graph.
+	callers := make([]*scanner.FunctionInfo, 0, len(graph))
+	for caller := range graph {
+		callers = append(callers, caller)
+	}
+	sort.Slice(callers, func(i, j int) bool {
+		return getFuncID(callers[i]) < getFuncID(callers[j])
+	})
+
+	for _, caller := range callers {
+		calledFuncs := graph[caller]
 		callerID := getFuncID(caller)
 		for _, callee := range calledFuncs {
 			calleeID := getFuncID(callee)

@@ -3226,7 +3226,11 @@ func (e *Evaluator) logc(ctx context.Context, level slog.Level, msg string, args
 
 func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, args ...interface{}) *object.Error {
 	msg := fmt.Sprintf(format, args...)
-	e.logc(ctx, slog.LevelError, msg, "pos", pos)
+	posStr := fmt.Sprintf("%d", pos) // Default to raw number
+	if e.scanner != nil && e.scanner.Fset() != nil && pos.IsValid() {
+		posStr = e.scanner.Fset().Position(pos).String()
+	}
+	e.logc(ctx, slog.LevelError, msg, "pos", posStr)
 
 	frames := make([]*object.CallFrame, len(e.callStack))
 	copy(frames, e.callStack)
@@ -3346,40 +3350,47 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 	return result
 }
 
-// scanFunctionLiteral evaluates the body of a function literal in a new, symbolic
-// environment. This is used to find function calls inside anonymous functions that are
-// passed as arguments, without needing to fully execute the function they are passed to.
+// scanFunctionLiteral evaluates the body of a function literal or method value in a new,
+// symbolic environment. This is used to find function calls inside anonymous functions or
+// method values that are passed as arguments, without needing to fully execute the function
+// they are passed to.
 func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function) {
 	if fn.Body == nil || fn.Package == nil {
 		return // Nothing to scan.
 	}
 
-	// Prevent infinite recursion when a function literal is passed to a function
-	// that then calls another function that scans the same literal again.
+	// Prevent infinite recursion.
 	if e.scanLiteralInProgress[fn.Body] {
 		return
 	}
 	e.scanLiteralInProgress[fn.Body] = true
 	defer delete(e.scanLiteralInProgress, fn.Body)
 
-	e.logger.DebugContext(ctx, "scanning function literal to find usages", "pos", fn.Package.Fset.Position(fn.Body.Pos()))
+	e.logger.DebugContext(ctx, "scanning function literal/method value to find usages", "pos", fn.Package.Fset.Position(fn.Body.Pos()))
 
-	// Create a new environment for the function literal's execution.
-	// It's enclosed by the environment where the literal was defined.
+	// Create a new environment for the function's execution.
+	// It's enclosed by the environment where the function was defined.
 	fnEnv := object.NewEnclosedEnvironment(fn.Env)
 
-	// Populate the environment with symbolic placeholders for the function's parameters.
+	// **FIX**: Bind receiver if it's a method value.
+	if fn.Receiver != nil && fn.Decl != nil && fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
+		recvField := fn.Decl.Recv.List[0]
+		if len(recvField.Names) > 0 && recvField.Names[0].Name != "" {
+			receiverName := recvField.Names[0].Name
+			fnEnv.SetLocal(receiverName, fn.Receiver)
+			e.logger.DebugContext(ctx, "scanFunctionLiteral: bound receiver", "name", receiverName, "type", fn.Receiver.Type())
+		}
+	}
+
+	// Populate the environment with symbolic placeholders for the parameters.
 	if fn.Parameters != nil {
 		var importLookup map[string]string
-		// A FuncLit doesn't have a specific *ast.File, but its body has a position.
-		// We can use this position to find the containing file and its imports.
 		file := fn.Package.Fset.File(fn.Body.Pos())
 		if file != nil {
 			if astFile, ok := fn.Package.AstFiles[file.Name()]; ok {
 				importLookup = e.scanner.BuildImportLookup(astFile)
 			}
 		}
-		// Fallback if we couldn't get a specific import lookup.
 		if importLookup == nil && len(fn.Package.AstFiles) > 0 {
 			for _, astFile := range fn.Package.AstFiles {
 				importLookup = e.scanner.BuildImportLookup(astFile)
@@ -3395,7 +3406,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 			}
 
 			placeholder := &object.SymbolicPlaceholder{
-				Reason: "symbolic parameter for function literal scan",
+				Reason: "symbolic parameter for function scan",
 				BaseObject: object.BaseObject{
 					ResolvedTypeInfo:  resolvedType,
 					ResolvedFieldType: fieldType,
@@ -3404,7 +3415,6 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 
 			for _, name := range field.Names {
 				if name.Name != "_" {
-					// Bind the placeholder to a new variable in the function's environment.
 					v := &object.Variable{Name: name.Name, Value: placeholder}
 					v.SetFieldType(fieldType)
 					v.SetTypeInfo(resolvedType)
@@ -3414,8 +3424,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 		}
 	}
 
-	// Now evaluate the body. The result is ignored; we only care about the side effects
-	// (i.e., triggering the defaultIntrinsic on calls within the body).
+	// Now evaluate the body. The result is ignored; we only care about the side effects.
 	e.Eval(ctx, fn.Body, fnEnv, fn.Package)
 }
 

@@ -60,6 +60,95 @@ func main() { add(1, 2) }
 	}
 }
 
+func TestEvalCallExpr_MethodValueAsArgument(t *testing.T) {
+	// This test reproduces a bug where passing a method value (e.g., `instance.myMethod`)
+	// to a higher-order function would cause an "identifier not found" error for the receiver.
+	// The `scanFunctionLiteral` heuristic was not correctly setting up the receiver's
+	// context in its temporary evaluation environment.
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": `
+package main
+
+type MyType struct {
+	field int
+}
+
+// myMethod accesses the receiver's field.
+func (m *MyType) myMethod() {
+	_ = m.field
+}
+
+// higherOrder takes a function and calls it.
+func higherOrder(f func()) {
+	f()
+}
+
+func main() {
+	instance := &MyType{field: 42}
+	higherOrder(instance.myMethod)
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+
+		// Use a logger to see potential errors during development.
+		handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+		logger := slog.New(handler)
+
+		// The scan policy should scan everything for this test.
+		scanPolicy := func(pkgPath string) bool { return true }
+		eval := New(s, logger, nil, scanPolicy)
+
+		// A default intrinsic is required to trigger the `scanFunctionLiteral` heuristic
+		// which was the source of the bug.
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
+			// This intrinsic doesn't need to do anything for this test.
+			// Its presence is enough to trigger the code path.
+			return nil
+		})
+
+		// Evaluate the package to populate top-level definitions.
+		for _, file := range mainPkg.AstFiles {
+			if res := eval.Eval(ctx, file, nil, mainPkg); res != nil && isError(res) {
+				return fmt.Errorf("evaluation of file failed: %v", res)
+			}
+		}
+
+		// Find and execute the main function.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, got %T", mainFuncObj)
+		}
+
+		// Apply the main function. The test passes if this doesn't return an error.
+		// Before the fix, this would trigger the bug and return an "identifier not found: m" error.
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, token.NoPos)
+		if result != nil && isError(result) {
+			return fmt.Errorf("applyFunction failed with an unexpected error: %v", result)
+		}
+
+		return nil
+	}
+
+	// The test runs against the 'main' package.
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
 func TestEvalCallExpr_SymbolicInterfaceMethod_MultiReturn(t *testing.T) {
 	// This test specifically targets the bug where a call to a symbolic interface
 	// method that returns multiple values was returning a single placeholder instead

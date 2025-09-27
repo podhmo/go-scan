@@ -1,30 +1,58 @@
-# `symgo` Evaluator Panics on `panic(nil)`
+# Trouble with Method Values as Higher-Order Function Arguments
 
-**Date**: 2025-09-19
-**Status**: Resolved
+This document details the investigation into a bug where `symgo` fails to resolve an identifier within a method that is passed as a value to a higher-order function.
 
-## Problem
+## 1. Symptom
 
-When running symbolic analysis on Go code that contains a `panic(nil)` call, the `symgo` evaluator itself panics and crashes. This was discovered while running the `find-orphans` tool in library mode (`--mode lib`) on a large workspace, which triggered the analysis of a function containing this pattern.
+When running `goinspect` on the `net/http/httptest` package, the analysis fails with an "identifier not found" error.
 
-The error log shows the evaluator failing during the symbolic execution of a specific function (`github.com/podhmo/go-scan/minigo.New` in this case):
+```sh
+$ goinspect -pkg net/http/httptest > /dev/null
 
+level=ERROR msg="identifier not found: s" \
+  symgo.in_func=Close \
+  symgo.pos=/opt/homebrew/Cellar/go/1.24.3/libexec/src/net/http/httptest/server.go:255:2
 ```
-level=ERROR ... msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/minigo.New error="symgo runtime error: panic: nil\n"
+
+The error occurs within the `(*Server).Close` method, which contains the following code:
+
+```go
+// /opt/homebrew/Cellar/go/1.24.3/libexec/src/net/http/httptest/server.go
+
+func (s *Server) Close() {
+    // ...
+    t := time.AfterFunc(5*time.Second, s.logCloseHangDebugInfo)
+    // ...
+}
+
+func (s *Server) logCloseHangDebugInfo() {
+	s.mu.Lock() // ERROR: identifier not found: s
+    // ...
+}
 ```
 
-Drilling down into the debug logs reveals that the evaluator is attempting to apply the intrinsic `panic` function with a `nil` argument, which causes a `nil pointer dereference` within the evaluator's own runtime.
+The issue is triggered when `symgo` attempts to analyze the body of `logCloseHangDebugInfo`, which was passed as an argument to `time.AfterFunc`.
 
-## Root Cause
+## 2. Root Cause Analysis
 
-The root cause of this issue lies in the implementation of the `panic` intrinsic within the `symgo` evaluator. The code did not correctly handle the case where the argument to `panic` evaluates to `nil`.
+Analysis of the debug logs (`-log-level debug`) revealed the precise mechanism of the failure.
 
-When `symgo` encounters a `panic(expr)` call, it first evaluates `expr`. In this case, `expr` was `nil`. The intrinsic handler for `panic` received this `nil` value but did not have a proper guard. It attempted to access properties of the argument assuming it was a valid `object.Object`, leading to a `nil pointer dereference` inside the evaluator.
+1.  **`evalCallExpr` Heuristic**: The `symgo` evaluator's `evalCallExpr` function contains a heuristic to proactively discover function calls within arguments. When it sees a call like `time.AfterFunc(..., s.logCloseHangDebugInfo)`, it identifies `s.logCloseHangDebugInfo` as a function-like argument.
 
-The expected behavior is for the evaluator to treat `panic(nil)` as a valid, albeit unusual, control flow event. It should wrap the `nil` value in a `symgo.PanicError` object and return it, allowing the symbolic execution to continue unwinding the stack, rather than crashing the analysis process.
+2.  **`scanFunctionLiteral` is Triggered**: This heuristic immediately invokes `scanFunctionLiteral` on the `object.Function` representing `s.logCloseHangDebugInfo`. The purpose of this scan is to trace any calls *inside* the function body without fully evaluating the higher-order function (`time.AfterFunc`) it is passed to.
 
-## Solution
+3.  **The Flaw: Missing Receiver Context**: The core of the problem lies in `scanFunctionLiteral`. This function creates a new, temporary environment to symbolically execute the function's body. It correctly populates this environment with symbolic placeholders for the function's *parameters*. However, it **does not account for the function's receiver**.
 
-The fix involves modifying the `panic` intrinsic handler in `symgo/evaluator/evaluator.go`. A check is added at the beginning of the handler to test if the argument is `nil`. If it is, the handler now creates and returns a `*object.PanicError` containing the symbolic `object.NIL` constant.
+4.  **Execution Failure**: When `scanFunctionLiteral` begins evaluating the body of `logCloseHangDebugInfo`, its environment is missing the receiver `s`. The first statement it encounters is `s.mu.Lock()`. The evaluator looks for `s` in the current (temporary) environment, cannot find it, and throws the "identifier not found: s" error.
 
-This ensures that `panic(nil)` is handled gracefully as a symbolic event, allowing the evaluator to correctly model the program's behavior without crashing. A regression test was added to specifically cover the `panic(nil)` case.
+The `object.Function` created for the method value correctly contains the receiver instance in its `Receiver` field. The failure is that `scanFunctionLiteral` does not utilize this information when constructing the evaluation environment.
+
+## 3. Path to Resolution
+
+The fix requires modifying `scanFunctionLiteral` in `symgo/evaluator/evaluator.go`. The function must be updated to check if the `object.Function` it is scanning has a non-nil `Receiver`.
+
+If a receiver exists, `scanFunctionLiteral` must:
+1.  Identify the receiver's name from the function's AST declaration (`fn.Decl.Recv`).
+2.  Bind the `fn.Receiver` object to that name within the new, temporary environment before evaluating the function body.
+
+This will mirror the logic already present in `extendFunctionEnv` for regular function calls, ensuring that the method's receiver is correctly in scope during the symbolic scan.

@@ -100,6 +100,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Recursive Functions**: Analysis has been improved to correctly detect and represent direct, mutual, and indirect recursive function calls in the call graph.
 - [x] **Anonymous Recursive Functions**: The evaluator can now detect and halt analysis of direct and mutual recursion in anonymous functions (function literals) by tracking their source position, preventing infinite loops.
 - [x] **Interface Union Types**: Correctly parse and analyze interfaces defined as a union of types (e.g., `type MyInterface interface { *TypeA | *TypeB }`), enabling accurate analysis of generic functions that use them as constraints.
+- [x] **Fix `invalid indirect` on Unresolved Function Types**: Fixed a crash in the evaluator when dereferencing a pointer to an unresolved function type (e.g., a function type from an unscanned package). The evaluator now returns a symbolic placeholder, improving robustness for tools like `find-orphans`. ([docs/trouble-symgo.md](docs/trouble-symgo.md))
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
 - [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.

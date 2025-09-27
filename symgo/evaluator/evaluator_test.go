@@ -1749,3 +1749,41 @@ func main() {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }
+
+func TestEvalStarExpr_OnUnresolvedFunction(t *testing.T) {
+	s, _ := goscan.New()
+	// Create an evaluator with a policy that denies everything,
+	// forcing functions to be unresolved.
+	eval := New(s, s.Logger, nil, func(s string) bool { return false })
+	env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+
+	// Create a placeholder representing a function from an unscanned package.
+	unresolvedFunc := &object.UnresolvedFunction{
+		PkgPath:  "example.com/foo",
+		FuncName: "Bar",
+	}
+	env.Set("unresolved", unresolvedFunc)
+
+	// The expression to evaluate is `*unresolved`
+	fset := token.NewFileSet()
+	expr, err := parser.ParseExpr("*unresolved")
+	if err != nil {
+		t.Fatalf("failed to parse expression: %v", err)
+	}
+
+	// The package info is minimal, just enough to avoid nil panics.
+	pkgInfo := &scanner.PackageInfo{
+		Name:     "main",
+		Fset:     fset,
+		AstFiles: map[string]*ast.File{},
+	}
+
+	// Evaluate the star expression.
+	result := eval.Eval(context.Background(), expr, env, pkgInfo)
+
+	// Before the fix, this would be an *object.Error with "invalid indirect".
+	// After the fix, it should be a SymbolicPlaceholder.
+	if _, ok := result.(*object.SymbolicPlaceholder); !ok {
+		t.Fatalf("expected result to be *object.SymbolicPlaceholder, but got %T: %v", result, result)
+	}
+}

@@ -220,6 +220,7 @@ type InterfaceInfo struct {
 	// their method sets. Resolution is currently supported for interfaces
 	// within the same package.
 	Embedded []*FieldType `json:"embedded,omitempty"`
+	Union    []*FieldType `json:"union,omitempty"` // For union-type interfaces
 }
 
 // MethodInfo represents a single method in an interface.

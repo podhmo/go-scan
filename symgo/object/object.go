@@ -312,11 +312,6 @@ func (p *Package) Inspect() string {
 	return fmt.Sprintf("package %s (%q)", p.Name, p.Path)
 }
 
-// Info returns the underlying scanner.PackageInfo for the package.
-func (p *Package) Info() *scanner.PackageInfo {
-	return p.ScannedInfo
-}
-
 // --- Error Object ---
 
 // CallFrame represents a single frame in the symbolic execution call stack.

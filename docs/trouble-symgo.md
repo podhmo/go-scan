@@ -158,3 +158,49 @@ func (e *Evaluator) evalStarExpr(...) object.Object {
 ```
 
 This ensures that the rest of the function operates on the actual returned value, not the wrapper, resolving the error.
+
+---
+
+# Issue: `symgo` Fails to Evaluate Generic Functions with Union-Type Interface Constraints (New Strategy)
+
+This document details the debugging process for implementing support for generic functions constrained by union-type interfaces in `symgo`.
+
+## 1. The Goal: Support for Generic Union Interfaces
+
+The objective is to enable `symgo` to correctly analyze code that uses generic functions with union-type interface constraints, a feature introduced in Go 1.18. An example of such a constraint is:
+
+```go
+type Loginable interface {
+    *Foo | *Bar
+}
+
+func WithLogin[T Loginable](t T) {
+    // ...
+}
+```
+
+The evaluator should be able to:
+1.  Validate that a type argument provided to `WithLogin` (e.g., `*Foo`) satisfies the `Loginable` constraint.
+2.  Correctly handle the type of the parameter `t` inside the function body, allowing constructs like type switches to work as expected.
+
+## 2. Initial Attempts and Regressions
+
+Initial implementation attempts involved making broad changes to both the `scanner` and `evaluator` packages simultaneously. While these changes brought the dedicated tests for the new feature closer to passing, they consistently introduced a wide range of regressions across the existing test suite. The cycle of fixing one test only to break another indicated a fundamental issue, likely stemming from an incorrect or incomplete data model being passed from the `scanner` to the `evaluator`.
+
+## 3. New Strategy: Scanner-First Development
+
+To break the cycle of regressions, a more disciplined, bottom-up strategy was adopted. The core idea is to ensure the correctness of the `scanner` in isolation before attempting to build the `evaluator` logic on top of it.
+
+### Step 1: Isolate and Perfect the Scanner (In Progress)
+
+-   **Action:** A new, highly-focused test file (`scanner/union_test.go`) was created. This test's sole purpose is to scan a simple Go file containing a union-type interface and meticulously validate the resulting `scanner.TypeInfo` struct.
+-   **Goal:** Ensure that the `InterfaceInfo.Union` field is correctly populated with all member types, and that each member's `FieldType` correctly represents its name and pointer status.
+-   **Status:** The test has been created. The immediate next step is to implement the parsing logic in `scanner/scanner.go` to make this test pass, and then to run the full repository test suite to confirm that this core change introduces no regressions.
+
+### Step 2: Re-implement Evaluator Logic Incrementally
+
+-   **Action:** Once the scanner is verifiably correct and stable, the evaluator logic will be re-implemented.
+-   **Goal:** Make the integration tests in `evaluator_generic_union_test.go` pass.
+-   **Method:** This will be done in small, incremental steps. After each logical change (e.g., updating data models, adding constraint checking, fixing the type switch), the *entire* test suite (`go test ./...`) will be run to catch any regressions immediately.
+
+This methodical approach ensures that each layer of the system is correct before the next is built, preventing the accumulation of errors and making the source of any new regression immediately obvious.

@@ -763,14 +763,41 @@ func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast
 	return params
 }
 
+// collectUnionTypes recursively traverses a binary expression representing a type union
+// (e.g., *Foo | *Bar) and collects all constituent types.
+func (s *Scanner) collectUnionTypes(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) []*FieldType {
+	if binExpr, ok := expr.(*ast.BinaryExpr); ok && binExpr.Op == token.OR {
+		// This is a union type, e.g., `A | B`. Recursively collect from both sides.
+		leftTypes := s.collectUnionTypes(ctx, binExpr.X, currentTypeParams, info, importLookup)
+		rightTypes := s.collectUnionTypes(ctx, binExpr.Y, currentTypeParams, info, importLookup)
+		return append(leftTypes, rightTypes...)
+	}
+	// This is a single type (a leaf in the union expression tree).
+	return []*FieldType{s.TypeInfoFromExpr(ctx, expr, currentTypeParams, info, importLookup)}
+}
+
 func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *InterfaceInfo {
 	if it.Methods == nil {
 		return &InterfaceInfo{}
 	}
 	interfaceInfo := &InterfaceInfo{
-		Methods:  make([]*MethodInfo, 0, len(it.Methods.List)),
+		Methods:  make([]*MethodInfo, 0),
 		Embedded: make([]*FieldType, 0),
+		Union:    make([]*FieldType, 0),
 	}
+
+	// First pass: determine if this interface uses union syntax at all.
+	// The presence of '|' makes it a type set.
+	isUnionInterface := false
+	for _, field := range it.Methods.List {
+		if len(field.Names) == 0 {
+			if _, ok := field.Type.(*ast.BinaryExpr); ok {
+				isUnionInterface = true
+				break
+			}
+		}
+	}
+
 	for _, field := range it.Methods.List {
 		if len(field.Names) > 0 { // This is a method definition
 			methodName := field.Names[0].Name
@@ -783,9 +810,16 @@ func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType,
 			methodInfo.Parameters = parsedFuncDetails.Parameters
 			methodInfo.Results = parsedFuncDetails.Results
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
-		} else { // This is an embedded type
-			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
-			interfaceInfo.Embedded = append(interfaceInfo.Embedded, embeddedType)
+		} else { // This is an embedded type or a union term
+			if isUnionInterface {
+				// If we determined this is a union interface, all non-method fields are terms.
+				terms := s.collectUnionTypes(ctx, field.Type, currentTypeParams, info, importLookup)
+				interfaceInfo.Union = append(interfaceInfo.Union, terms...)
+			} else {
+				// Otherwise, it's a regular embedded interface.
+				embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
+				interfaceInfo.Embedded = append(interfaceInfo.Embedded, embeddedType)
+			}
 		}
 	}
 	return interfaceInfo

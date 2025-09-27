@@ -31,19 +31,19 @@ type FileScope struct {
 
 // Evaluator is the main object that evaluates the AST.
 type Evaluator struct {
-	scanner           *goscan.Scanner
-	funcCache         map[string]object.Object
-	intrinsics        *intrinsics.Registry
-	logger            *slog.Logger
-	tracer            object.Tracer // Tracer for debugging evaluation flow.
-	callStack         []*object.CallFrame
-	resolver          *Resolver
-	defaultIntrinsic  intrinsics.IntrinsicFunc
-	initializedPkgs   map[string]bool // To track packages whose constants are loaded
-	pkgCache          map[string]*object.Package
-	files             []*FileScope
-	fileMap           map[string]bool
-	UniverseEnv       *object.Environment
+	scanner          *goscan.Scanner
+	funcCache        map[string]object.Object
+	intrinsics       *intrinsics.Registry
+	logger           *slog.Logger
+	tracer           object.Tracer // Tracer for debugging evaluation flow.
+	callStack        []*object.CallFrame
+	resolver         *Resolver
+	defaultIntrinsic intrinsics.IntrinsicFunc
+	initializedPkgs  map[string]bool // To track packages whose constants are loaded
+	pkgCache         map[string]*object.Package
+	files            []*FileScope
+	fileMap          map[string]bool
+	UniverseEnv      *object.Environment
 
 	// accessor provides methods for finding fields and methods.
 	accessor *accessor
@@ -260,7 +260,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 			e.logger.DebugContext(ctx, "evaluating node",
 				"type", fmt.Sprintf("%T", node),
 				"pos", pkg.Fset.Position(node.Pos()),
-				"source", buf.String(),
+				// "source", buf.String(),
 			)
 		}
 	}
@@ -3755,7 +3755,7 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		// Use the policy-enforcing method to resolve the package.
 		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
 		if err != nil {
-			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved function (or denied by policy)", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
+			e.logc(ctx, slog.LevelInfo, "could not scan package for unresolved function (or denied by policy)", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved function %s.%s", fn.PkgPath, fn.FuncName)}
 		}
 

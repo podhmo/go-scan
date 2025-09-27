@@ -166,46 +166,37 @@ This ensures that even if type information is incomplete or incorrect for an ext
 
 ---
 
-## 5. Problem: `symgo` Erroneously Calls `nil` Function Pointers
+## 5. Problem: "Identifier Not Found" in Test Files with --include-tests
 
 **Symptom:**
 
-When running analysis on codebases that include test files (`--include-tests`), `symgo` would frequently crash with a "not a function: NIL" error.
+When running `find-orphans` with the `--include-tests` flag, the analysis fails with numerous `level=ERROR msg="identifier not found: ..."` messages. These errors often point to variables defined within test functions (`*_test.go` files).
 
-```
-level=ERROR msg="not a function: NIL" in_func=nil in_func_pos=/app/examples/minigo/main_test.go:28:4
-```
-
-This error occurred in code patterns like the following, where a function is called with a `nil` function pointer:
-
-```go
-func TakesFunc(fn func()) {
-	if fn != nil { // The bug occurred here
-		fn()
-	}
-}
-
-func main() {
-	TakesFunc(nil)
-}
+Example log output from `make -C examples/find-orphans`:
+```text
+time=2025-09-27T16:46:26.747Z level=ERROR msg="identifier not found: want" in_func=TestGoInterop_Import ...
+time=2025-09-27T16:46:26.910Z level=ERROR msg="identifier not found: sampleAPIPath" in_func=TestDocgen ...
+time=2025-09-27T16:46:26.910Z level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/docgen.TestDocgen error="symgo runtime error: identifier not found: sampleAPIPath\n\t/app/examples/docgen/main_test.go:39:34:\n\t\tif err := analyzer.Analyze(ctx, sampleAPIPath, \"NewServeMux\"); err != nil {\n\t:0:0:\tin TestDocgen\n"
 ```
 
 **Root Cause Analysis:**
 
-The problem was a composite failure in how the `symgo` evaluator handled `nil` comparisons and `if` statements.
-
-1.  **`evalBinaryExpr` Failure:** The function responsible for evaluating binary expressions (`==`, `!=`, etc.) did not have specific logic for comparing a nillable type (like a function, interface, or pointer) against the `nil` literal. When it encountered `fn != nil`, instead of returning a concrete `*object.Boolean{Value: false}`, it returned a generic `*object.SymbolicPlaceholder`.
-
-2.  **`evalIfStmt` Assumption:** The function for evaluating `if` statements did not correctly handle cases where the condition evaluated to a non-boolean object. It treated any non-`nil` object (including the `SymbolicPlaceholder` from the failed comparison) as `true`.
-
-The combination of these two issues meant the `if fn != nil` check would always pass symbolically, causing the evaluator to attempt to execute the `fn()` call, which resulted in the "not a function: NIL" crash.
+1.  **Purpose of `--include-tests`:** This flag correctly adds `*_test.go` files to the scanning scope. This is necessary so that production code referenced *only* by tests is not incorrectly marked as orphaned.
+2.  **Incorrect Entry Point Analysis:** The `find-orphans` tool, when operating in library mode, gathers all functions from the scanned packages and treats them as potential entry points for symbolic execution.
+3.  **The Conflict:** The problem is that this logic does not differentiate between production functions and test functions (e.g., `Test...`, `Benchmark...`, `Example...`). It attempts to symbolically execute the *body* of test functions. Test functions are not standard Go code from an execution perspective; they rely on the `go test` runner, which provides a testing framework, command-line flags, and helper objects like `t *testing.T`.
+4.  **The Crash:** `symgo` is a symbolic execution engine for standard Go, not a test runner. When it tries to analyze a function like `TestSomething(t *testing.T)`, it cannot resolve identifiers like `t.Run`, `assert.Equal`, or test-local variables, leading to a cascade of "identifier not found" errors and failing the analysis.
 
 **Solution Implemented:**
 
-A two-part fix was implemented in `symgo/evaluator/evaluator.go`:
+The initial approach of completely skipping the analysis of test functions was incorrect. While it prevented crashes, it also prevented `symgo` from discovering valid function calls within those tests, leading to false positives (i.e., reporting functions as orphans when they were actually used by tests).
 
-1.  **Enhanced `evalBinaryExpr`:** The logic for `==` and `!=` was completely rewritten. It now explicitly checks if one side of the comparison is `nil` and the other side is a nillable type (function, pointer, slice, map, channel, or interface). In these cases, it now correctly returns a concrete `*object.Boolean` object (`object.TRUE` or `object.FALSE`).
+The correct solution is to attempt to analyze test functions but to gracefully handle the inevitable errors that arise from test-specific syntax. This allows the analysis to proceed as far as possible, capturing most usages before encountering an unresolvable symbol (like `t.Run`).
 
-2.  **Smarter `evalIfStmt`:** The `if` statement evaluator was updated to check if the condition's result is a concrete `*object.Boolean`. If it is, `evalIfStmt` now executes *only* the correct branch (`then` or `else`). If the condition is symbolic, it retains the previous behavior of exploring both paths for whole-program analysis.
+-   **File Modified:** `examples/find-orphans/main.go`
 
-This combined fix ensures that conditions like `fn != nil` are correctly evaluated to `false`, the `if` body is correctly skipped, and the evaluator no longer attempts to call a `nil` function. This was verified by adding a new unit test (`TestNilFunctionComparison`) and by confirming that the `make -C examples/find-orphans` command with `--include-tests` now completes without this error.
+The implementation was changed in the main analysis loop. Instead of skipping test functions entirely, the tool now does the following:
+1.  It calls `interp.Apply()` on all functions, including test functions.
+2.  If `interp.Apply()` returns an error, it checks if the function being analyzed was a test function (using the `isTestFunc` helper and checking the filename suffix).
+3.  If the error occurred within a test function, it is suppressed (logged at `DEBUG` level) and the analysis continues to the next entry point. Errors from non-test functions are still reported as `ERROR`s.
+
+This approach strikes the right balance: it allows `symgo` to trace usages from test files, preventing false positives, while also maintaining robustness by not crashing on testing-framework-specific code it cannot understand. The fix was verified by adding a new regression test, `TestFindOrphans_UsageInTestFilePreventsOrphan`, which ensures that functions used only by tests are not reported as orphans.

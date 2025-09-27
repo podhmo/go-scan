@@ -893,6 +893,8 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 	case lType == object.COMPLEX_OBJ || rType == object.COMPLEX_OBJ:
 		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	case lType == object.FLOAT_OBJ || rType == object.FLOAT_OBJ:
+		// For now, treat float operations as complex to simplify.
+		// A more complete implementation would have a separate float path.
 		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	default:
 		return &object.SymbolicPlaceholder{Reason: "binary expression"}
@@ -2603,17 +2605,23 @@ func (e *Evaluator) evalIfStmt(ctx context.Context, n *ast.IfStmt, env *object.E
 		elseResult = e.Eval(ctx, n.Else, elseEnv, pkg)
 	}
 
-	// Propagate control flow signals if either branch returns one.
-	// This is a simplification; a full path-sensitive analysis might merge states.
+	// If the 'then' branch returned a control flow object, propagate it.
+	// This is a heuristic; a more complex analysis might merge states.
+	// We prioritize the 'then' branch's signal.
+	// We do NOT propagate ReturnValue, as that would prematurely terminate
+	// the analysis of the current function just because one symbolic path returned.
 	switch thenResult.(type) {
-	case *object.Error, *object.Break, *object.Continue, *object.ReturnValue:
+	case *object.Error, *object.Break, *object.Continue:
 		return thenResult
 	}
+	// Otherwise, check the 'else' branch.
 	switch elseResult.(type) {
-	case *object.Error, *object.Break, *object.Continue, *object.ReturnValue:
+	case *object.Error, *object.Break, *object.Continue:
 		return elseResult
 	}
 
+	// A more sophisticated, path-sensitive analysis would require a different
+	// approach. For now, if no control flow signal was returned, we continue.
 	return nil
 }
 

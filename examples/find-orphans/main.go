@@ -641,12 +641,13 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	for _, ep := range analysisFns {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
+
 		slog.DebugContext(ctx, "analyzing from function", "function", epName)
 
 		args := []object.Object{}
 		// If the entry point is a test function, provide a symbolic *testing.T.
 		// We only do this for library mode entry points, as main.main is not a test.
-		if !isAppMode && a.includeTests && isTestFunction(ep.Def) {
+		if !isAppMode && a.includeTests && isStandardTestFunc(ep.Def) {
 			// Lazily load the type info for *testing.T once.
 			if testingT_FieldType == nil {
 				testingPkg, err := a.s.ScanPackageFromImportPath(ctx, "testing")
@@ -691,7 +692,16 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 
 		if _, err := interp.Apply(ctx, ep, args, ep.Package); err != nil {
-			slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
+			pos := a.s.Fset().Position(ep.Decl.Pos())
+			isTestFile := strings.HasSuffix(pos.Filename, "_test.go")
+			// Suppress errors from test functions, as they often contain test runner
+			// specific constructs that symgo can't resolve. The analysis will proceed
+			// up to the point of error, which is sufficient for finding most usages.
+			if isTestFunc(ep.Name.Name) && isTestFile {
+				slog.DebugContext(ctx, "ignoring symbolic execution error in test function", "function", epName, "error", err)
+			} else {
+				slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
+			}
 			// We continue to the next entry point even if one fails.
 		}
 	}
@@ -908,8 +918,16 @@ func buildInterfaceMap(ctx context.Context, s *goscan.Scanner, packages map[stri
 	return interfaceMap
 }
 
-// isTestFunction checks if a function is a standard Go test function.
-func isTestFunction(def *scanner.FunctionInfo) bool {
+// isTestFunc checks if a function name matches Go's testing conventions.
+func isTestFunc(name string) bool {
+	return strings.HasPrefix(name, "Test") ||
+		strings.HasPrefix(name, "Benchmark") ||
+		strings.HasPrefix(name, "Example") ||
+		strings.HasPrefix(name, "Fuzz")
+}
+
+// isStandardTestFunc checks if a function is a standard Go test function (func(t *testing.T)).
+func isStandardTestFunc(def *scanner.FunctionInfo) bool {
 	if def == nil || !strings.HasPrefix(def.Name, "Test") {
 		return false
 	}

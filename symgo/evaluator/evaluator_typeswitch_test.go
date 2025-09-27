@@ -47,7 +47,7 @@ func main() {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register an intrinsic for the inspect function
-		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return nil
 			}
@@ -96,7 +96,11 @@ func main() {
 			eval.Eval(ctx, file, env, mainPkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -120,6 +124,81 @@ func main() {
 	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir))
 	if err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestTypeSwitchStmt_NoVar(t *testing.T) {
+	source := `
+package main
+
+// inspect is a special function that will be implemented as an intrinsic
+// to check the type of the variable passed to it.
+func inspect(v any) {}
+
+func main() {
+	var x any = 123
+	switch x.(type) {
+	case int:
+		inspect(x) // x should be an int here
+	case string:
+		inspect(x) // x should be a string here
+	}
+}
+`
+	files := map[string]string{
+		"go.mod":  "module example.com/main",
+		"main.go": source,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var inspectedCount int
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		// Register an intrinsic for the inspect function
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
+			inspectedCount++
+			return nil
+		})
+
+		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, env, mainPkg)
+		}
+
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc := mainFuncObj.(*object.Function)
+
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+		if err, ok := result.(*object.Error); ok && err != nil {
+			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Message)
+		}
+
+		// After the fix, this part should run.
+		// Since the symbolic execution evaluates all branches, we expect inspect()
+		// to be called for each case block.
+		expectedCount := 2
+		if inspectedCount != expectedCount {
+			return fmt.Errorf("expected inspect() to be called %d times, but got %d", expectedCount, inspectedCount)
+		}
+
+		return nil
+	}
+
+	_, err := scantest.Run(t, t.Context(), dir, []string{"."}, action, scantest.WithModuleRoot(dir))
+	if err != nil {
+		t.Fatalf("scantest.Run() failed unexpectedly: %v", err)
 	}
 }
 
@@ -157,7 +236,7 @@ func process(prefix string, data any) {
 		eval := New(s, s.Logger, nil, nil)
 
 		// Register an intrinsic for the inspect function
-		eval.RegisterIntrinsic("example.com/main.inspect", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/main.inspect", func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) == 1 {
 				if str, ok := args[0].(*object.String); ok {
 					inspectedValue = str.Value
@@ -167,9 +246,13 @@ func process(prefix string, data any) {
 		})
 
 		// This intrinsic mocks fmt.Sprintf to return a concrete string.
-		eval.RegisterIntrinsic("fmt.Sprintf", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("fmt.Sprintf", func(ctx context.Context, args ...object.Object) object.Object {
 			// This is a simplified mock. A real one would format the string.
 			// For this test, we just check that the prefix is accessible.
+			t.Logf("fmt.Sprintf called with %d args", len(args))
+			for i, arg := range args {
+				t.Logf("  arg[%d]: %T = %s", i, arg, arg.Inspect())
+			}
 			if len(args) > 1 {
 				if format, ok := args[0].(*object.String); ok {
 					if strings.Contains(format.Value, "%s") {
@@ -187,7 +270,11 @@ func process(prefix string, data any) {
 			eval.Eval(ctx, file, env, mainPkg)
 		}
 
-		processFuncObj, ok := env.Get("process")
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		processFuncObj, ok := pkgEnv.Get("process")
 		if !ok {
 			return fmt.Errorf("process function not found")
 		}
@@ -198,6 +285,7 @@ func process(prefix string, data any) {
 			&object.String{Value: "param-prefix"},
 			&object.Integer{Value: 123},
 		}
+		t.Logf("Calling process function with args: %v", args)
 		result := eval.Apply(ctx, processFunc, args, mainPkg)
 		if err, ok := result.(*object.Error); ok && err != nil {
 			return fmt.Errorf("evaluation failed unexpectedly: %s", err.Inspect())

@@ -54,7 +54,7 @@
 ### 主な統合ステップ
 
 1.  **初期化**: `minigo` の `Interpreter` が `go-scan` の `Scanner` インスタンスを生成（`token.FileSet` を共有）。
-2.  **スキャン**: `minigo` のソースファイルを `Scanner.ScanFiles()` または `Scanner.ScanPackage()` でスキャンし、`PackageInfo` を取得。
+2.  **スキャン**: `minigo` のソースファイルを `Scanner.ScanFiles()` または `Scanner.ScanPackageFromFilePath()` でスキャンし、`PackageInfo` を取得。
 3.  **シンボル登録**:
     *   `PackageInfo.Functions` を元に、各 `FunctionInfo.AstDecl (*ast.FuncDecl)` を `minigo` の環境に登録。
     *   `PackageInfo.AstFiles` から各 `*ast.File` を取得し、トップレベルの `ast.GenDecl` (VAR) を見つけてグローバル変数を評価・登録。`PackageInfo.Constants` も活用。

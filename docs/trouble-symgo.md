@@ -1,71 +1,53 @@
-# Symgo Engine Troubleshooting and Fixes
+# `symgo` Robustness Report: Identifier Resolution in Test Code
 
-This document tracks issues found and fixed in the `symgo` symbolic execution engine, serving as a log for future development and debugging.
+This document details the analysis and resolution of a critical identifier resolution issue within the `symgo` symbolic execution engine, discovered when analyzing test files.
 
-## 1. Nested Function Calls
+## 1. Problem Description
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/nested_function_calls`
--   **Code**: `add(add(1, 2), 3)`
--   **Status**: **Fixed**
+When running `symgo`-based tools like `find-orphans` with test file analysis enabled (`--include-tests`), the evaluator would fail with numerous `identifier not found` errors.
 
-### Problem Description
+**Symptom:**
 
-The test for nested function calls was failing because the intrinsic (mock) for the `add` function was never being called. The evaluator was instead trying to evaluate the *actual* body of the `add` function.
+The analysis logs would show many errors similar to the following, originating from various test files across the project:
 
-### Root Cause Analysis
+```
+level=ERROR msg="identifier not found: sampleAPIPath" in_func=TestDocgen exec_pos=...
+level=ERROR msg="symbolic execution failed for entry point" function=...TestDocgen error="symgo runtime error: identifier not found: sampleAPIPath..."
+```
 
-The root cause was the lookup order within the `evalIdent` function, which is responsible for resolving identifiers like `add`. The function was implemented to check the local environment for a function declaration *before* checking the intrinsic registry.
+These errors prevented `symgo` from correctly analyzing any test functions that used locally defined constants, significantly limiting its utility for whole-program analysis that includes test code.
 
-1.  The evaluator would first parse the file and place an `*object.Function` for `add` into the environment.
-2.  The test would then register an `*object.Intrinsic` for `add`.
-3.  When `evalIdent` was called for `add`, it would find the `*object.Function` in the environment first and return it, never reaching the code that checks for the intrinsic.
+## 2. Root Cause Analysis
 
-### Solution
+The investigation revealed that the issue was specific to how the `symgo` evaluator handled declarations within the scope of a function, particularly when that function was an entry point for analysis (as is common for tests).
 
-The fix was to reverse the lookup order in `evalIdent`. The function now checks for a registered intrinsic **first**, and only if one is not found does it proceed to check the environment. This allows tests to correctly override and mock functions that exist in the package being analyzed. This change was made in `symgo/evaluator/evaluator.go`.
+1.  **Local Constants in Tests:** Go tests frequently define local constants within the test function body for convenience (e.g., `const sampleAPIPath = "..."`).
+2.  **Statement-by-Statement Evaluation:** The `symgo` evaluator processes the statements within a function body sequentially. It does not pre-scan the entire function body to hoist all declarations.
+3.  **Missing `const` Handler:** The core of the bug was a critical omission in the `evalGenDecl` function, which is responsible for handling `var`, `type`, and `const` declarations. While it had logic for `var` and `type`, it was completely missing a `case token.CONST`.
+4.  **The Crash:** Because the `const` handler was missing, any `const` declaration inside a function was simply ignored. When a later statement in the function attempted to use that constant, the `evalIdent` function would look for it in the current environment, fail to find it, and produce the `identifier not found` error, halting the analysis of that function.
 
-## 2. Method Calls on Composite Literals
+## 3. Solution Implemented
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/method_call_on_a_struct_literal`
--   **Code**: `S{}.Do()`
--   **Status**: **Fixed**
+The fix involved implementing the missing logic for constant declarations within the evaluator, making it correctly recognize and process them.
 
-### Problem Description
+-   **File Modified:** `symgo/evaluator/evaluator.go`
+-   **Function Modified:** `evalGenDecl`
 
-The evaluator could not handle a method call where the receiver was a composite literal (a struct being instantiated directly, like `S{}`). The test failed because the `Do` method's intrinsic was never found or called.
+A new `case token.CONST` was added to the `switch` statement in `evalGenDecl`. The new logic correctly handles the semantics of constant declarations:
 
-### Root Cause Analysis
+-   It iterates through all constant specifications in a `const (...)` block.
+-   It correctly handles value repetition (e.g., `const (a = 1; b; c)` where `b` and `c` inherit the value of `a`).
+-   To correctly handle `iota`, it creates a temporary, enclosed environment for each constant's value expression, binding the current `iota` value within it.
+-   It uses the evaluator's own `e.Eval` method to evaluate the constant's value expression.
+-   Finally, it adds the resulting constant object to the current function's scope using `env.SetLocal()`, ensuring it is available for subsequent statements.
 
-The issue was two-fold:
+This change ensures that `symgo` correctly processes `const` declarations as it encounters them, making the identifiers available for the rest of the symbolic execution process within that function.
 
-1.  **Missing `CompositeLit` Evaluation**: The main `Eval` function did not have a case for `*ast.CompositeLit` nodes. When the evaluator encountered `S{}`, it didn't know what to do with it and couldn't produce a symbolic object that `evalSelectorExpr` could use.
-2.  **Incomplete Type Name Resolution**: The initial implementation for handling composite literals did not correctly form a fully-qualified type name (e.g., `example.com/me.S`). It resolved the type name to just `S`, which caused a mismatch with the key used to register the intrinsic in the test.
+## 4. Verification
 
-### Solution
+The fix was validated through two methods:
 
-The fix involved several changes in `symgo/evaluator/evaluator.go`:
+1.  **New Unit Test:** A new test, `TestSymgo_LocalConstantResolution`, was added in a new file, `symgo/symgo_local_const_test.go`. This test specifically defines a function with a local constant and asserts that `symgo` can correctly resolve and return its value. This test failed before the fix and passed after, confirming the solution's effectiveness and preventing future regressions.
+2.  **End-to-End Test:** The `make -C examples/find-orphans` command was re-run. A review of the generated `find-orphans.out` log confirmed that all `identifier not found` errors related to local constants in test files were successfully eliminated.
 
-1.  A new case for `*ast.CompositeLit` was added to the `Eval` function's switch statement.
-2.  A new function, `evalCompositeLit`, was implemented. This function uses the `scanner` to resolve the type of the literal and creates a symbolic `*object.Instance` to represent it.
-3.  The logic within `evalCompositeLit` was refined to correctly construct a fully-qualified type name by combining the package's import path with the type's local name, ensuring it matches the intrinsic keys.
-4.  The `evalSelectorExpr` function was also improved to check for methods on both value (`(T).Method`) and pointer (`(*T).Method`) receivers, making it more robust.
-
-## 3. Method Chaining
-
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/method_chaining`
--   **Code**: `NewGreeter("world").WithName("gopher").Greet()`
--   **Status**: **Fixed**
-
-### Problem Description
-
-The test for method chaining was failing. The final method in the chain, `Greet`, was never being called, and the test assertions failed as a result.
-
-### Root Cause Analysis
-
-The problem was a simple but crucial error in the test setup. The keys used to register the intrinsics for the `Greeter` methods were not using fully-qualified type names. For example, the test was registering `(*main.Greeter).Greet` instead of the correct `(*example.com/me.Greeter).Greet`.
-
-The evaluator was correctly resolving the types and looking for the fully-qualified keys, but since the test had registered the wrong keys, no match was found.
-
-### Solution
-
-The fix was to update the "method chaining" test case in `symgo/evaluator/evaluator_call_test.go` to use programmatically-generated, fully-qualified names for the intrinsic keys. This was done by using `fmt.Sprintf` with the package's import path (`pkg.ImportPath`) to build the correct keys at test runtime. This ensures the keys registered in the test match the keys the evaluator is looking for, allowing the method chain to be resolved correctly.
+While a separate issue causing `not a function: NIL` errors in `minigo` tests remains, the primary bug preventing the analysis of test code with local constants has been resolved.

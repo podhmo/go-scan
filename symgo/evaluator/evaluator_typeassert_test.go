@@ -116,7 +116,11 @@ func main() {
 				}
 
 				// 2. Find the main function.
-				mainFuncObj, ok := env.Get("main")
+				pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+				if !ok {
+					return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+				}
+				mainFuncObj, ok := pkgEnv.Get("main")
 				if !ok {
 					return fmt.Errorf("main function not found")
 				}

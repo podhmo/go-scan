@@ -1,8 +1,6 @@
 package evaluator
 
 import (
-	"fmt"
-
 	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -64,12 +62,12 @@ func init() {
 
 	// Built-in Types
 	for _, name := range []string{
-		"string", "int", "int8", "int16", "int32", "int64",
+		"any", "string", "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
 		"float32", "float64", "complex64", "complex128",
 		"bool", "byte", "rune", "error",
 	} {
-		objects[name] = &object.SymbolicPlaceholder{Reason: fmt.Sprintf("built-in type %s", name)}
+		objects[name] = &object.Type{TypeName: name}
 	}
 
 	universe = &universeScope{

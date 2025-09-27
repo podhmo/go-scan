@@ -48,8 +48,8 @@ OuterLoop:
 		}
 		pkg := pkgs[0]
 
-		tracer := object.TracerFunc(func(node ast.Node) {
-			if call, ok := node.(*ast.CallExpr); ok {
+		tracer := object.TracerFunc(func(ev object.TraceEvent) {
+			if call, ok := ev.Node.(*ast.CallExpr); ok {
 				if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "trace" {
 					if len(call.Args) > 0 {
 						if lit, ok := call.Args[0].(*ast.BasicLit); ok {
@@ -64,20 +64,15 @@ OuterLoop:
 
 		eval := New(s, s.Logger, tracer, nil)
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
-		pkgObj := &object.Package{
-			Path:        pkg.ImportPath,
-			Name:        pkg.Name,
-			ScannedInfo: pkg,
-			Env:         env,
-		}
-		env.Set(pkg.Name, pkgObj)
-
 		for _, f := range pkg.AstFiles {
-			eval.Eval(ctx, f, env, pkg)
+			eval.Eval(ctx, f, nil, pkg)
 		}
 
-		mainFuncObj, ok := pkgObj.Env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in package environment")
 		}

@@ -86,12 +86,15 @@ func TestEvalComplex(t *testing.T) {
 			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 				pkg := pkgs[0]
 				eval := New(s, s.Logger, nil, nil)
-				env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 				for _, file := range pkg.AstFiles {
-					eval.Eval(ctx, file, env, pkg)
+					eval.Eval(ctx, file, nil, pkg)
 				}
 
-				mainFuncObj, ok := env.Get("main")
+				pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+				if !ok {
+					return fmt.Errorf("could not get package env for 'example.com/me'")
+				}
+				mainFuncObj, ok := pkgEnv.Get("main")
 				if !ok {
 					return fmt.Errorf("main function not found")
 				}
@@ -126,6 +129,37 @@ func TestEvalComplex(t *testing.T) {
 			}
 			if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 				t.Fatalf("scantest.Run() failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestEvalComplexInfixExpression_WithSymbolicPlaceholder(t *testing.T) {
+	s, _ := goscan.New()
+	eval := New(s, nil, nil, nil)
+
+	tests := []struct {
+		name string
+		left object.Object
+		right object.Object
+	}{
+		{
+			name: "left is symbolic",
+			left: &object.SymbolicPlaceholder{Reason: "symbolic float"},
+			right: &object.Complex{Value: 1 + 2i},
+		},
+		{
+			name: "right is symbolic",
+			left: &object.Complex{Value: 1 + 2i},
+			right: &object.SymbolicPlaceholder{Reason: "symbolic float"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := eval.evalComplexInfixExpression(context.Background(), token.NoPos, token.ADD, tt.left, tt.right)
+			if _, ok := result.(*object.SymbolicPlaceholder); !ok {
+				t.Errorf("expected result to be a SymbolicPlaceholder, but got %T (%+v)", result, result)
 			}
 		})
 	}

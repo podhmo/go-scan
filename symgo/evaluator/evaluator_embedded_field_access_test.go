@@ -55,12 +55,15 @@ func GetBody(resp *TestResponse) io.Reader {
 
 		eval := New(s, s.Logger, nil, nil)
 
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		getBody, ok := env.Get("GetBody")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/m")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/m'")
+		}
+		getBody, ok := pkgEnv.Get("GetBody")
 		if !ok {
 			return fmt.Errorf("GetBody function not found")
 		}

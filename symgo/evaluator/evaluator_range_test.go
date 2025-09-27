@@ -41,19 +41,22 @@ func main() {
 		pkg := pkgs[0]
 
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Register an intrinsic to track when getItems is called
-		eval.RegisterIntrinsic(fmt.Sprintf("%s.getItems", pkg.ImportPath), func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic(fmt.Sprintf("%s.getItems", pkg.ImportPath), func(ctx context.Context, args ...object.Object) object.Object {
 			getItemsCalled = true
 			return &object.Slice{} // Return a symbolic slice
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
 		}

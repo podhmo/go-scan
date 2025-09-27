@@ -77,7 +77,7 @@ func (e *Evaluator) getOrLoadPackage(ctx context.Context, path string) (*object.
 		return pkg, nil
 	}
 
-	scannedPkg, err := e.scanner.ScanPackageByImport(ctx, path)
+	scannedPkg, err := e.scanner.ScanPackageFromImportPath(ctx, path)
 	if err != nil {
 		// Even if scanning fails, we create a placeholder package object to cache the failure
 		// and avoid re-scanning. The ScannedInfo will be nil.
@@ -254,7 +254,7 @@ func (e *Evaluator) findDirectMethodOnType(ctx context.Context, typeInfo *scanne
 
 A critical aspect of the fix was to correctly handle packages that are outside the defined `scanPolicy`. For these packages, the evaluator should not have access to internal details like unexported constants.
 
-The `getOrLoadPackage` function still uses `ScanPackageByImport` to get package metadata (like the correct package name), but the subsequent population of the environment respects the policy.
+The `getOrLoadPackage` function still uses `ScanPackageFromImportPath` to get package metadata (like the correct package name), but the subsequent population of the environment respects the policy.
 
 ### Step 3.1: Modify `ensurePackageEnvPopulated`
 
@@ -383,9 +383,9 @@ func FuncB() string {
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
-	loglibPkg, err := goscanner.ScanPackage(ctx, loglibModuleDir)
+	loglibPkg, err := goscanner.ScanPackageFromFilePath(ctx, loglibModuleDir)
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 	loglibFile := findFile(t, loglibPkg, "context.go")
 	if _, err := interp.Eval(ctx, loglibFile, loglibPkg); err != nil {
@@ -463,9 +463,9 @@ func (c *Client) GetValue() string {
 	if err != nil {
 		t.Fatalf("NewInterpreter failed: %v", err)
 	}
-	mainPkg, err := goscanner.ScanPackage(ctx, mainModuleDir)
+	mainPkg, err := goscanner.ScanPackageFromFilePath(ctx, mainModuleDir)
 	if err != nil {
-		t.Fatalf("ScanPackage failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath failed: %v", err)
 	}
 	mainFile := findFile(t, mainPkg, "main.go")
 	if _, err := interp.Eval(ctx, mainFile, mainPkg); err != nil {

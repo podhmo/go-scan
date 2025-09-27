@@ -27,7 +27,7 @@
 
     ```go
     // 提案するAPIのイメージ
-    // pkgInfo, err := gscn.ScanPackage(pkgPath, goscan.WithDocAnnotation(unmarshalAnnotation))
+    // pkgInfo, err := gscn.ScanPackageFromFilePath(pkgPath, goscan.WithDocAnnotation(unmarshalAnnotation))
     // or
     // filteredTypes := pkgInfo.FilterTypes(goscan.WithDocAnnotation(unmarshalAnnotation))
     ```
@@ -117,7 +117,7 @@
 
 *   **現状の `derivingjson`**:
     フィールドの型情報を扱う際、その型がプリミティブ型か、ローカルパッケージで定義された型か、外部パッケージの型かを判別するために、`field.Type.PkgName == ""` や `field.Type.Resolve()` の結果を組み合わせて複雑な条件分岐を行っています。また、ポインタ、スライス、マップといった複合型の完全な型名を文字列として再構築するロジックも自前で実装しています。
-    さらに、型が定義されているパッケージの正確なインポートパスを取得するために、`TypeInfo.FilePath` からディレクトリパスを算出し、再度 `ScanPackage` を呼び出すといった間接的な方法を取る必要がありました。
+    さらに、型が定義されているパッケージの正確なインポートパスを取得するために、`TypeInfo.FilePath` からディレクトリパスを算出し、再度 `ScanPackageFromFilePath` を呼び出すといった間接的な方法を取る必要がありました。
 
     ```go
     // examples/derivingjson/generator.go より抜粋
@@ -130,7 +130,7 @@
     // ImportPath取得の複雑さ (イメージ)
     // if oneOfInterfaceDef.FilePath != "" {
     //     interfaceDir := filepath.Dir(oneOfInterfaceDef.FilePath)
-    //     tempInterfacePkgInfo, _ := gscn.ScanPackage(interfaceDir)
+    //     tempInterfacePkgInfo, _ := gscn.ScanPackageFromFilePath(interfaceDir)
     //     if tempInterfacePkgInfo != nil {
     //          importPath = tempInterfacePkgInfo.ImportPath
     //     }

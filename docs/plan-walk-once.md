@@ -14,7 +14,7 @@ The key requirement is that this new tool must parse the target Go source files 
 Both `examples/derivingjson/main.go` and `examples/derivingbind/main.go` follow an identical pattern:
 
 1.  **Initialization**: Parse command-line arguments (file or directory paths) and instantiate a `goscan.Scanner`.
-2.  **Scanning**: Call `ScanPackage` or `ScanFiles` on the scanner instance to obtain a `scanner.PackageInfo`. This `PackageInfo` object is a complete representation of the parsed code for the target package.
+2.  **Scanning**: Call `ScanPackageFromFilePath` or `ScanFiles` on the scanner instance to obtain a `scanner.PackageInfo`. This `PackageInfo` object is a complete representation of the parsed code for the target package.
 3.  **Generation**: Pass the `goscan.Scanner` instance and the `scanner.PackageInfo` object to a dedicated `Generate` function. This function contains the core logic for that tool, iterating through the types in the `PackageInfo` and generating code based on specific annotations.
 4.  **Output**: The `Generate` function is responsible for creating and writing the final `_deriving.go` file, including managing imports.
 
@@ -57,7 +57,7 @@ The `Generate` functions in both `derivingjson` and `derivingbind` will be modif
 A new `main` package will be created (e.g., `examples/deriving-all/main.go`). This tool will:
 
 1.  **Setup**: Initialize a single `goscan.Scanner`.
-2.  **Scan**: For each target package specified in the command-line arguments, call `gscn.ScanPackage` or `gscn.ScanFiles` **once**.
+2.  **Scan**: For each target package specified in the command-line arguments, call `gscn.ScanPackageFromFilePath` or `gscn.ScanFiles` **once**.
 3.  **Define Generators**: Create a list of the refactored `Generate` functions to be executed.
     ```go
     generators := []func(context.Context, *goscan.Scanner, *scanner.PackageInfo) (*generator.GeneratedCode, error){

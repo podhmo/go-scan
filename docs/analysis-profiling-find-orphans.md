@@ -38,7 +38,7 @@ Showing nodes accounting for 9378.78kB, 100% of 9378.78kB total
   512.03kB  5.46% 83.62%  1024.04kB 10.92%  go/parser.(*parser).parseLiteralValue
   512.03kB  5.46% 89.08%   512.03kB  5.46%  go/parser.(*parser).parseParameterList.func1 (inline)
   512.03kB  5.46% 94.54%  1024.05kB 10.92%  go/parser.(*parser).parseSimpleStmt
-  512.02kB  5.46%   100%   512.02kB  5.46%  github.com/podhmo/go-scan/scanner.(*Scanner).ScanPackageImports
+  512.02kB  5.46%   100%   512.02kB  5.46%  github.com/podhmo/go-scan/scanner.(*Scanner).ScanPackageFromFilePathImports
 ```
 
 ## Analysis and Conclusion
@@ -47,7 +47,7 @@ The profiling results clearly indicate that the majority of memory is consumed d
 
 -   **Primary Cause**: The `go/parser` package and its functions (`parseIdent`, `parseSelector`, etc.) are the top direct (`flat`) allocators.
 -   **Cumulative Impact**: The cumulative (`cum`) allocations show that functions like `go/parser.ParseFile` (60.06% of cumulative memory) are the main drivers of memory usage. This function is responsible for parsing Go source files into Abstract Syntax Trees (ASTs).
--   **Architectural Bottleneck**: The core issue lies in the `analyzer`'s architecture. The `analyzer.Visit` method is called for every package in the dependency graph. Inside this method, `a.s.ScanPackageByImport` is called, which parses the entire package and returns a `*scanner.PackageInfo` object. This object, which contains the memory-intensive ASTs for all files in the package, is then stored in the `a.pacakges` map.
+-   **Architectural Bottleneck**: The core issue lies in the `analyzer`'s architecture. The `analyzer.Visit` method is called for every package in the dependency graph. Inside this method, `a.s.ScanPackageFromImportPath` is called, which parses the entire package and returns a `*scanner.PackageInfo` object. This object, which contains the memory-intensive ASTs for all files in the package, is then stored in the `a.pacakges` map.
 
 This approach leads to **all packages and their full ASTs being held in memory for the entire duration of the program**. While the memory usage for the tool's own repository was manageable (~9.4 MB), this design will not scale well to larger monorepos, where it could easily consume gigabytes of memory.
 

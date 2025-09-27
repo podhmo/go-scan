@@ -25,7 +25,10 @@ To use the tool, you can run it directly from the source code.
 
 ## Command-Line Options
 
--   `--pkg <pattern>`: (Required) The Go package pattern to inspect (e.g., `./...`, `example.com/mymodule/pkg/util`).
+-   `--pkg <pattern>`: (Required) The Go package pattern for the primary analysis scope (e.g., `./...`). Functions in these packages are treated as the entry points for the call graph. Can be specified multiple times.
+-   `--with <pattern>`: (Optional) A Go package pattern to include in the analysis, but not as an entry point. This is useful for tracing calls into shared libraries or dependencies without treating them as top-level entry points. Can be specified multiple times. For example, `go run . --pkg ./myapp --with ./mylib` will show calls from `myapp` into `mylib`, but will not show `mylib`'s functions as root-level items.
+-   `--target <function>`: (Optional) A specific target function or method to inspect (e.g., `mypkg.MyFunc`). If provided, the analysis will start only from these targets instead of all exported functions. Can be specified multiple times.
+-   `--trim-prefix`: (Optional) Trim the Go module path prefix from the output for cleaner, more readable results.
 -   `--include-unexported`: (Optional) Include unexported functions as analysis entry points. Defaults to `false`.
 -   `--short`: (Optional) Use a short format for function signatures in the output, replacing arguments with `(...)`.
 -   `--expand`: (Optional) Use an expanded format that assigns a unique ID to each function to handle cycles and repeated calls gracefully.
@@ -74,9 +77,9 @@ func main.main()
 
 ## Known Limitations
 
-`goinspect` relies on the `symgo` symbolic execution engine, and its accuracy is subject to the capabilities of `symgo`. Current testing has revealed the following limitations:
+`goinspect` relies on the `symgo` symbolic execution engine, and its accuracy is subject to the capabilities of `symgo`.
 
--   **Cross-Package Calls**: Calls to functions in packages outside the primary analysis scope are currently not displayed in the call graph. The underlying engine does not yet represent these as terminal nodes.
--   **Higher-Order & Anonymous Functions**: The engine has limited support for analyzing anonymous functions (function literals) passed as arguments. As a result, the tool may not be able to resolve their signatures correctly or trace calls made from within their bodies.
+-   **Cross-Package Calls**: By default, calls to functions in packages outside the primary analysis scope (`--pkg`) are not scanned. To trace calls into dependency packages, use the `--with` flag to include them in the analysis.
+-   **Higher-Order & Anonymous Functions**: The engine has improved but still has some limitations in analyzing anonymous functions (function literals) passed as arguments. As a result, the tool may not always be able to resolve their signatures correctly or trace calls made from within their bodies.
 
 These limitations are tracked in the project's `TODO.md` and will be addressed by enhancing the `symgo` library in the future.

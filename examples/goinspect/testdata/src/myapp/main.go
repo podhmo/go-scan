@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/podhmo/go-scan/examples/goinspect/testdata/src/another"
+)
 
 // Greeter is an interface for greeting.
 type Greeter interface {
@@ -15,6 +19,7 @@ type Person struct {
 // Greet prints a greeting from the person.
 func (p *Person) Greet() {
 	fmt.Printf("Hello, my name is %s\n", p.Name)
+	another.Helper()
 	privateFunc()
 }
 

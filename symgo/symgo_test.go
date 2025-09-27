@@ -83,6 +83,106 @@ func B() {
 	symgotest.Run(t, tc, action)
 }
 
+func TestBuiltinLen_OnUnresolvedFunction(t *testing.T) {
+	source := `
+package main
+import "os"
+
+func main() {
+	// This tests a specific scenario where a package-level variable (os.Args)
+	// from an unscanned package might be incorrectly resolved as an
+	// UnresolvedFunction. The len() intrinsic should be robust enough to
+	// handle this without crashing.
+	_ = len(os.Args)
+}
+`
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": source,
+		},
+		EntryPoint: "mymodule.main",
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
+		}
+		// The main check is that it doesn't panic. The result of len() on
+		// such an object is a symbolic placeholder, which is fine.
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
+func TestBuiltinNew_OnUnresolvedFunction(t *testing.T) {
+	source := `
+package main
+import "net/http"
+
+func main() {
+	_ = new(http.HandlerFunc)
+}
+`
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": source,
+		},
+		EntryPoint: "mymodule.main",
+		Options: []symgotest.Option{
+			// We explicitly do NOT include net/http in the scan policy
+			// to ensure http.HandlerFunc is an unresolved type.
+		},
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		// The main check is that execution doesn't fail with an
+		// "invalid argument for new" error.
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
+func TestBuiltinLen_OnFunctionResult(t *testing.T) {
+	source := `
+package main
+
+func getSlice() []string {
+	return []string{"a", "b", "c"}
+}
+
+func main() int {
+	return len(getSlice())
+}
+`
+	tc := symgotest.TestCase{
+		Source: map[string]string{
+			"go.mod":  "module mymodule",
+			"main.go": source,
+		},
+		EntryPoint: "mymodule.main",
+	}
+
+	action := func(t *testing.T, r *symgotest.Result) {
+		if r.Error != nil {
+			t.Fatalf("Execution failed unexpectedly: %v", r.Error)
+		}
+		got, ok := r.ReturnValue.(*object.Integer)
+		if !ok {
+			t.Fatalf("Expected return value to be an *object.Integer, but got %T", r.ReturnValue)
+		}
+		if got.Value != 3 {
+			t.Errorf("Expected len to be 3, but got %d", got.Value)
+		}
+	}
+
+	symgotest.Run(t, tc, action)
+}
+
 func TestInterpreter_Eval_Simple(t *testing.T) {
 	source := `
 package main

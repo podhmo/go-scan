@@ -108,6 +108,11 @@ func BuiltinLen(ctx context.Context, args ...object.Object) object.Object {
 		return &object.Error{Message: "wrong number of arguments: len expects 1"}
 	}
 
+	// If the argument is a return value, unwrap it to get the actual object.
+	if ret, ok := args[0].(*object.ReturnValue); ok {
+		args[0] = ret.Value
+	}
+
 	arg := args[0]
 	// Recursively unwrap variables to get to the underlying object.
 	for {
@@ -136,6 +141,11 @@ func BuiltinLen(ctx context.Context, args ...object.Object) object.Object {
 			return &object.Integer{Value: arg.Len}
 		}
 		return &object.SymbolicPlaceholder{Reason: "len on symbolic value"}
+	case *object.UnresolvedFunction:
+		// This can happen if `len` is called on a variable from an unscanned
+		// package that is mis-identified as a function. Instead of crashing,
+		// return a symbolic placeholder for the length.
+		return &object.SymbolicPlaceholder{Reason: "len on unresolved function"}
 	default:
 		return &object.Error{Message: fmt.Sprintf("argument to `len` not supported, got %s", arg.Type())}
 	}
@@ -195,6 +205,14 @@ func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 		// This placeholder can then be used in subsequent operations.
 		placeholder := &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("instance of unresolved type %s.%s", t.PkgPath, t.TypeName),
+		}
+		pointee = placeholder
+
+	case *object.UnresolvedFunction:
+		// If we try to new an unresolved function type, it's valid. We can't know
+		// the "zero value" but we can return a placeholder for the pointer's pointee.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("instance of unresolved function %s.%s", t.PkgPath, t.FuncName),
 		}
 		pointee = placeholder
 

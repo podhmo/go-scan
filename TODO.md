@@ -91,7 +91,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ## To Be Implemented
 
 ### `goinspect`: Fix Bugs and Enhancements
-- [ ] **Fix `stdlib_errors` test failure**: The `TestGoInspect/stdlib_errors` test is failing. This may be due to an order-of-execution dependency in the analysis. Investigate and fix the underlying issue.
+- [x] **Fix `stdlib_errors` test failure**: The `TestGoInspect/stdlib_errors` test was failing intermittently due to a non-deterministic analysis order in `symgo`. The fix was to collect all functions from scanned packages, sort them deterministically, and then perform the analysis, ensuring a stable call-graph generation.
 
 ### `symgo`: Improve Analysis Capabilities
 - [x] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.

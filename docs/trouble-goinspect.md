@@ -1,49 +1,53 @@
-# Trouble Report: `goinspect` Fails on Its Own Codebase
+# Troubleshooting: `goinspect` Fails on Standard Library Packages
 
-This document details an issue where the `examples/goinspect` tool failed to analyze its own source code, and the steps taken to resolve it.
+## Problem
 
-## Symptom
-
-When running `goinspect` on its own package, the tool would terminate with an error from the underlying `symgo` symbolic execution engine.
-
-**Commands to Reproduce:**
+The `goinspect` tool failed to analyze standard library packages like `net/http` or `errors`. When run with a standard library package as an argument, it produced an error indicating it could not find the package on the file system.
 
 ```bash
-( cd ./examples/goinspect && GOBIN=/tmp go install -v . )
-/tmp/goinspect --trim-prefix --pkg .
+$ goinspect --pkg net/http
+# Expected: Output call graph for net/http
+# Actual: Error: failed to scan pattern "net/http": could not stat pattern "net/http" ... no such file or directory
 ```
 
-**Error Log:**
+This indicated that `goinspect` was incorrectly treating the import path as a relative file path.
 
-The `symgo` evaluator would produce an error similar to the following (actual error message varied depending on the exact code state, but the nature was consistent):
+## Investigation
 
-```
-symgo runtime error: identifier not found: PackageDirectory
-    at path/to/goinspect/main.go:XX:XX
-    in NewPackageDirectory
-```
+1.  **Initial Hypothesis (Incorrect):** My first assumption was that the underlying `goscan` library was missing a feature to resolve standard library packages, likely by not invoking `go list`.
 
-This indicated that when `symgo` was symbolically executing a function (e.g., `NewPackageDirectory`), it could not find the definition for a type (`PackageDirectory`) that was defined in the same package.
+2.  **Correction & Deeper Analysis:** I was reminded that `AGENTS.md` explicitly forbids the use of `go list` to avoid creating a dependency on the Go command-line tool. This forced a more careful review of the `goscan` library's architecture.
 
-## Root Cause Analysis
+3.  **Root Cause Analysis:** The investigation revealed two distinct issues:
+    *   **Configuration Issue in `goinspect`:** The `goinspect` tool's `main.go` was initializing the `goscan.Scanner` without the `goscan.WithGoModuleResolver()` option. This option is crucial as it configures the scanner's `locator` to understand the Go module environment, including the location of `GOROOT` (for standard library) and the module cache (for external dependencies), without shelling out to `go list`. Without it, the scanner defaulted to a basic file-system-only resolver.
+    *   **Brittleness in `goscan.Scanner.Scan`:** The `goscan.Scanner.Scan` method had a logic flaw. For patterns that did not contain `...`, it would *only* attempt to resolve the pattern as a file system path. If `os.Stat` failed, it would immediately return an error, without attempting to treat the pattern as a potential import path. This made the library less robust.
 
-The investigation revealed a fundamental flaw in how the `symgo` evaluator managed scope. When `Eval()` was called on a function, the environment (`env`) did not contain all the necessary package-level declarations, specifically type definitions. The evaluator would only load functions and constants, but not the `type` declarations from the package.
+## Solution
 
-This led to a cascading failure:
-1.  A composite literal like `PackageDirectory{...}` would be evaluated.
-2.  The evaluator would try to resolve the type `PackageDirectory` in the current environment.
-3.  Since type declarations were not loaded into the package's environment, the lookup failed.
-4.  The evaluator correctly reported an "identifier not found" error.
+A two-part fix was implemented:
 
-A secondary, related issue was discovered during the fix: the `object.Struct` type, necessary for representing struct instances, was missing from the `symgo/object` package, likely due to an accidental deletion.
+1.  **Fix `goinspect`:** The call to `goscan.New` in `examples/goinspect/main.go` was updated to include the `goscan.WithGoModuleResolver()` option.
 
-## Resolution
+    ```go
+    // examples/goinspect/main.go
+    s, err := goscan.New(
+        goscan.WithLogger(logger),
+        goscan.WithGoModuleResolver(), // This was added
+    )
+    ```
 
-A multi-part fix was implemented in the `symgo/evaluator` and `symgo/object` packages:
+2.  **Fix `goscan` Library:** The `goscan.Scanner.Scan` method in `goscan.go` was refactored. It now attempts to resolve a pattern as a file path first. If that fails (i.e., `os.Stat` returns an error), it gracefully falls back to treating the pattern as an import path and attempts to resolve it using `ScanPackageFromImportPath`.
 
-1.  **Reinstated `object.Struct`**: The `object.Struct` type was re-added to `symgo/object/object.go`.
-2.  **Populate Type Definitions**: The `ensurePackageEnvPopulated` function in `symgo/evaluator/evaluator.go` was modified to iterate over `pkgInfo.Types` and add them to the package's environment (`pkgObj.Env`). This ensures that all type definitions are available before any function in that package is evaluated.
-3.  **Refined Struct Literal Evaluation**: `evalCompositeLit` was updated to create a new `*object.Instance` that wraps an underlying `*object.Struct`. This provides the detailed field information needed for struct-specific operations while maintaining compatibility with the rest of the evaluator, which expects `*object.Instance` for method calls.
-4.  **Updated Field/Method Access**: `evalSelectorExpr` was modified to check if an `*object.Instance` has an underlying `*object.Struct` and, if so, to attempt direct field access on it before falling back to method resolution.
+    ```go
+    // goscan.go (simplified logic)
+    info, statErr := os.Stat(absPath)
+    if statErr == nil { // Path exists on filesystem
+        // ... scan as file or directory
+    } else { // Path does not exist, assume it's an import path
+        pkg, err = s.ScanPackageFromImportPath(ctx, pattern)
+    }
+    ```
 
-These changes collectively ensure that package-level scope is correctly established and that struct literals are evaluated into a rich object representation that supports both field access and method calls, resolving the original bug.
+## Outcome
+
+With these changes, `goinspect` can now correctly analyze standard library packages. The underlying `goscan` library is also more robust, as it can transparently handle both file paths and import paths in its main `Scan` method. All existing tests pass, and a new test case for the `errors` package confirms the fix.

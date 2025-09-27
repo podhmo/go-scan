@@ -52,8 +52,6 @@ type Scanner struct {
 	packageCache          map[string]*Package // Cache for PackageInfo from ScanPackageFromFilePath/ScanPackageFromImportPath, key is import path
 	visitedFiles          map[string]struct{} // Set of visited (parsed) file absolute paths for this Scanner instance.
 	mu                    sync.RWMutex
-	CachePath             string
-	symbolCache           *symbolCache // Symbol cache (persisted across Scanner instances if path is reused)
 	ExternalTypeOverrides scanner.ExternalTypeOverride
 
 	// Walker is responsible for lightweight, dependency-focused scanning operations.
@@ -645,7 +643,6 @@ func (s *Scanner) privateScan(ctx context.Context, pkgDirAbs string, importPath 
 	}
 
 	// 5. Update cache.
-	s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo) // Update symbol cache
 	s.mu.Lock()
 	s.packageCache[importPath] = pkgInfo // Update in-memory package cache
 	s.mu.Unlock()
@@ -852,9 +849,6 @@ func (s *Scanner) ScanFiles(ctx context.Context, filePaths []string) (*scanner.P
 			s.visitedFiles[fp] = struct{}{}
 		}
 		s.mu.Unlock()
-		// Results from ScanFiles (which are partial by design based on unvisited files)
-		// are NOT cached in s.packageCache. Only symbol cache is updated.
-		s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 	}
 	return pkgInfo, nil
 }
@@ -939,118 +933,6 @@ func (s *Scanner) ScanPackageFromImportPath(ctx context.Context, importPath stri
 	return s.privateScan(ctx, pkgDirAbs, importPath)
 }
 
-// getOrCreateSymbolCache ensures the symbolCache is initialized.
-func (s *Scanner) getOrCreateSymbolCache(ctx context.Context) (*symbolCache, error) {
-	if s.CachePath == "" {
-		if s.symbolCache == nil || s.symbolCache.isEnabled() {
-			rootDir := ""
-			if s.locator != nil {
-				rootDir = s.locator.RootDir()
-			}
-			disabledCache, err := newSymbolCache(rootDir, "")
-			if err != nil {
-				return nil, fmt.Errorf("failed to initialize a disabled symbol cache: %w", err)
-			}
-			s.symbolCache = disabledCache
-		}
-		return s.symbolCache, nil
-	}
-
-	if s.symbolCache != nil && s.symbolCache.isEnabled() && s.symbolCache.getFilePath() == s.CachePath {
-		return s.symbolCache, nil
-	}
-
-	rootDir := ""
-	if s.locator != nil {
-		rootDir = s.locator.RootDir()
-	} else {
-		return nil, fmt.Errorf("scanner locator is not initialized, cannot determine root directory for cache")
-	}
-
-	sc, err := newSymbolCache(rootDir, s.CachePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize symbol cache with path %s: %w", s.CachePath, err)
-	}
-	s.symbolCache = sc
-
-	if err := s.symbolCache.load(ctx); err != nil {
-		slog.WarnContext(ctx, "Could not load symbol cache", slog.String("path", s.symbolCache.getFilePath()), slog.Any("error", err))
-	}
-	return s.symbolCache, nil
-}
-
-// updateSymbolCacheWithPackageInfo updates the symbol cache with information from a given PackageInfo.
-// The pkgInfo provided should typically represent the symbols parsed from a specific set of files
-// in the context of the given importPath.
-func (s *Scanner) updateSymbolCacheWithPackageInfo(ctx context.Context, importPath string, pkgInfo *scanner.PackageInfo) {
-	if s.CachePath == "" || pkgInfo == nil || len(pkgInfo.Files) == 0 {
-		return
-	}
-	symCache, err := s.getOrCreateSymbolCache(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "Error getting symbol cache for update", slog.Any("error", err))
-		return
-	}
-	if !symCache.isEnabled() {
-		return
-	}
-
-	symbolsByFile := make(map[string][]string)
-	addSymbol := func(symbolName, absFilePath string) {
-		if symbolName != "" && absFilePath != "" {
-			// Ensure absFilePath is truly absolute for consistency
-			absFilePath, _ = filepath.Abs(absFilePath) // error unlikely if path came from system
-			key := importPath + "." + symbolName
-			if err := symCache.setSymbol(key, absFilePath); err != nil {
-				slog.ErrorContext(ctx, "Error setting cache for symbol", slog.String("symbol_key", key), slog.Any("error", err))
-			}
-			symbolsByFile[absFilePath] = append(symbolsByFile[absFilePath], symbolName)
-		}
-	}
-
-	for _, typeInfo := range pkgInfo.Types {
-		addSymbol(typeInfo.Name, typeInfo.FilePath)
-	}
-	for _, funcInfo := range pkgInfo.Functions {
-		addSymbol(funcInfo.Name, funcInfo.FilePath)
-	}
-	for _, constInfo := range pkgInfo.Constants {
-		addSymbol(constInfo.Name, constInfo.FilePath)
-	}
-
-	for _, absFilePath := range pkgInfo.Files { // These are files that were actually parsed for pkgInfo
-		absFilePath, _ = filepath.Abs(absFilePath) // Ensure absolute
-		if _, err := os.Stat(absFilePath); os.IsNotExist(err) {
-			slog.WarnContext(ctx, "File from pkgInfo.Files not found, skipping for fileMetadata update", slog.String("file", absFilePath))
-			continue
-		}
-		fileSymbols := symbolsByFile[absFilePath]
-		if fileSymbols == nil {
-			fileSymbols = []string{}
-		}
-		metadata := fileMetadata{Symbols: fileSymbols}
-		if err := symCache.setFileMetadata(absFilePath, metadata); err != nil {
-			slog.ErrorContext(ctx, "Error setting file metadata", slog.String("file", absFilePath), slog.Any("error", err))
-		}
-	}
-}
-
-// SaveSymbolCache saves the symbol cache to disk if CachePath is set.
-func (s *Scanner) SaveSymbolCache(ctx context.Context) error {
-	if s.CachePath == "" {
-		return nil
-	}
-	if _, err := s.getOrCreateSymbolCache(ctx); err != nil {
-		return fmt.Errorf("cannot save symbol cache, failed to ensure cache initialization for path %s: %w", s.CachePath, err)
-	}
-	if s.symbolCache != nil && s.symbolCache.isEnabled() {
-		if err := s.symbolCache.save(); err != nil {
-			return fmt.Errorf("failed to save symbol cache to %s: %w", s.symbolCache.getFilePath(), err)
-		}
-	}
-	return nil
-}
-
 // ListExportedSymbols scans a package by its import path and returns a list of all
 // its exported top-level symbol names (functions, types, and constants).
 func (s *Scanner) ListExportedSymbols(ctx context.Context, pkgPath string) ([]string, error) {
@@ -1100,36 +982,11 @@ func (s *Scanner) FindSymbolDefinitionLocation(ctx context.Context, symbolFullNa
 	}
 	importPath := symbolFullName[:lastDot]
 	symbolName := symbolFullName[lastDot+1:]
-	cacheKey := importPath + "." + symbolName
 
-	if s.CachePath != "" {
-		symCache, err := s.getOrCreateSymbolCache(ctx)
-		if err != nil {
-			slog.WarnContext(ctx, "Could not get symbol cache. Proceeding with full scan.", slog.String("symbol", symbolFullName), slog.Any("error", err))
-		} else if symCache != nil && symCache.isEnabled() {
-			filePath, found := symCache.verifyAndGet(ctx, cacheKey)
-			if found {
-				return filePath, nil
-			}
-		}
-	}
 	// If symbol not found in cache, try to scan the package.
 	pkgInfo, err := s.ScanPackageFromImportPath(ctx, importPath) // This will parse unvisited files and update caches
 	if err != nil {
 		return "", fmt.Errorf("scan for package %s (for symbol %s) failed: %w", importPath, symbolName, err)
-	}
-
-	// After scan, check cache again (if enabled)
-	if s.CachePath != "" {
-		if s.symbolCache != nil && s.symbolCache.isEnabled() {
-			filePath, found := s.symbolCache.get(cacheKey) // Get does not need context
-			if found {
-				if _, statErr := os.Stat(filePath); statErr == nil {
-					return filePath, nil
-				}
-				slog.WarnContext(ctx, "Symbol found in cache after scan, but file does not exist.", slog.String("symbol", symbolFullName), slog.String("path", filePath))
-			}
-		}
 	}
 
 	// If still not found via cache, check the pkgInfo returned by the ScanPackageFromImportPath call.
@@ -1224,7 +1081,6 @@ func (s *Scanner) FindSymbolInPackage(ctx context.Context, importPath string, sy
 					s.visitedFiles[fp] = struct{}{}
 				}
 				s.mu.Unlock()
-				s.updateSymbolCacheWithPackageInfo(ctx, importPath, pkgInfo)
 			}
 		} else {
 			// For in-module packages, the public `ScanFiles` method works correctly.

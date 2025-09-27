@@ -128,6 +128,7 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	interp, err := symgo.NewInterpreter(s,
 		symgo.WithLogger(logger.WithGroup("symgo")),
 		symgo.WithScanPolicy(scanPolicy),
+		symgo.WithMemoization(true),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create interpreter: %w", err)
@@ -214,10 +215,16 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	}
 
 	// 5. Filter for true top-level functions (not called by any other entry point).
+	// A function is a "callee" if it's called by another function. A self-recursive
+	// call does not disqualify a function from being a top-level entry point.
 	callees := make(map[string]bool)
-	for _, calledFuncs := range graph {
-		for _, f := range calledFuncs {
-			callees[getFuncID(f)] = true
+	for caller, calledFuncs := range graph {
+		callerID := getFuncID(caller)
+		for _, callee := range calledFuncs {
+			calleeID := getFuncID(callee)
+			if callerID != calleeID {
+				callees[calleeID] = true
+			}
 		}
 	}
 
@@ -226,6 +233,13 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		if !callees[getFuncID(f)] {
 			topLevelFunctions = append(topLevelFunctions, f)
 		}
+	}
+
+	// If filtering results in an empty list, it's likely a library composed
+	// entirely of a call cycle (e.g., mutual recursion). In this case,
+	// fall back to showing all original entry points.
+	if len(topLevelFunctions) == 0 && len(entryPoints) > 0 {
+		topLevelFunctions = entryPoints
 	}
 
 	// 6. Print the call graph starting from the true top-level functions.
@@ -308,37 +322,35 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 	}
 	formatted := p.formatFunc(f)
 
-	// Default mode (expand=false): Use IDs to show a function's tree only once.
-	if !p.Expand {
-		if num, ok := p.assigned[id]; ok {
-			// This function has been printed before, just show its reference.
-			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, num)
-			return
-		}
-	}
-
-	// Cycle detection (for both modes). If we are currently visiting this node in this path, it's a cycle.
+	// Check for recursion first. A function is recursive if it's already in the current visit path.
 	if p.visited[id] {
+		recursivePrefix := "[recursive] "
 		cycleRef := ""
-		// In default mode, a cycle to a node that's already been fully printed
-		// would have been caught by the `p.assigned` check above. This `p.visited`
-		// check is for cycles within a *single* new call tree that we are in the
-		// process of printing for the first time.
+		// In default mode, add the function's assigned ID for reference.
 		if !p.Expand {
 			if num, ok := p.assigned[id]; ok {
 				cycleRef = fmt.Sprintf(" #%d", num)
 			}
 		}
-		fmt.Fprintf(p.Out, "%s%s%s ... (cycle detected%s)\n", strings.Repeat("  ", indent), accessorPrefix, formatted, cycleRef)
+		fmt.Fprintf(p.Out, "%s%s%s%s%s\n", strings.Repeat("  ", indent), recursivePrefix, accessorPrefix, formatted, cycleRef)
 		return
 	}
 
-	// Mark as visited for the current path traversal.
-	p.visited[id] = true
+	// In default mode, if we've already fully printed this function's tree elsewhere,
+	// just print a reference to it and stop.
+	if !p.Expand {
+		if num, ok := p.assigned[id]; ok {
+			fmt.Fprintf(p.Out, "%s%s%s #%d\n", strings.Repeat("  ", indent), accessorPrefix, formatted, num)
+			return
+		}
+	}
 
-	// --- Printing Logic (Corrected) ---
-	// - expand=false (default): show ID on first appearance, reference on subsequent.
-	// - expand=true: show full tree every time, no IDs.
+	// Mark as visited for the current path traversal and ensure it's reset on exit.
+	p.visited[id] = true
+	defer func() { p.visited[id] = false }()
+
+	// --- Printing Logic ---
+	// Print the function itself.
 	if !p.Expand {
 		// First time seeing this function in default mode. Assign an ID and print it.
 		p.nextID++
@@ -370,15 +382,6 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 			p.printRecursive(callee, indent+1)
 		}
 	}
-
-	// Reset visited flag for this path. This allows the function to be printed again
-	// if it appears in a different call branch. In expand mode, this won't happen
-	// because the `p.assigned` check at the top will catch it.
-	p.visited[id] = false
-
-	// In non-expand mode, we prevent a function from being printed more than once
-	// at the top level by a different mechanism (in the Print method), but this
-	// reset is crucial for correct cycle detection.
 }
 
 // isAccessor checks if a function is a simple getter or setter.

@@ -33,8 +33,8 @@ func TestGoInspect(t *testing.T) {
 			shortFormat: true,
 		},
 		{
-			name:        "expand",
-			pkgPatterns: []string{"./testdata/src/myapp"},
+			name:         "expand",
+			pkgPatterns:  []string{"./testdata/src/myapp"},
 			expandFormat: true,
 		},
 		{
@@ -75,6 +75,14 @@ func TestGoInspect(t *testing.T) {
 			pkgPatterns: []string{"./testdata/src/myapp", "./testdata/src/another"},
 		},
 		{
+			name:        "mutual",
+			pkgPatterns: []string{"./testdata/src/mutual"},
+		},
+		{
+			name:        "indirect",
+			pkgPatterns: []string{"./testdata/src/indirect"},
+		},
+{
 			name:        "stdlib_errors",
 			pkgPatterns: []string{"errors"},
 		},
@@ -82,6 +90,8 @@ func TestGoInspect(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Logf("Running test case %s", tc.name)
+
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

@@ -86,13 +86,19 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **Unify Scanner Logic and Add Package ID**: Refactored the core scanner to use a single, robust private method for all package scanning, eliminating divergent and fragile logic. This change introduced a new `PackageInfo.ID` field, which serves as a unique identifier for packages, correctly disambiguating multiple `main` packages within a workspace (e.g., `"path/to/cmd.main"`). This fixed a class of bugs in whole-program analysis tools. ([docs/plan-goscan-scanner-refactoring.md](./docs/plan-goscan-scanner-refactoring.md)
 - **`examples/goinspect`: Call-Graph Explorer**: A tool to analyze Go source code and display the call graph for specified functions. It supports multiple output formats (`--short`, `--expand`) and uses stable, position-based UIDs to correctly handle duplicate functions and recursion in expanded view. The test suite is comprehensive, using golden files to validate output for various scenarios including cross-package calls. ([docs/plan-goinspect.md](./docs/plan-goinspect.md))
     - **Orphan-Style Output**: The tool now filters the call graph to only show true entry points (functions not called by any other scanned function) at the top level. This provides a cleaner, more focused view of a library's public API or an application's main execution flows.
+    - **Recursion Detection**: The output now correctly identifies and labels direct, mutual, and indirect recursive calls with a `[recursive]` prefix. The underlying `symgo` engine can now trace call context through higher-order functions to detect these complex cycles. Also enabled memoization for the `symgo` engine in `goinspect`. A bug was fixed where recursive functions were incorrectly filtered from the top-level output. ([docs/trouble-goinspect-recursive.md](./docs/trouble-goinspect-recursive.md))
  
 ## To Be Implemented
 
+### `goinspect`: Fix Bugs and Enhancements
+- [ ] **Fix `stdlib_errors` test failure**: The `TestGoInspect/stdlib_errors` test is failing. This may be due to an order-of-execution dependency in the analysis. Investigate and fix the underlying issue.
+
 ### `symgo`: Improve Analysis Capabilities
 - [x] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.
-- [ ] **Higher-Order & Anonymous Functions**: Improve symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. This includes resolving the function signature correctly instead of `unhandled_type_*ast.FuncType`.
-- [ ] **Recursive Functions**: Improve analysis to correctly detect and represent recursive function calls in the call graph.
+- [x] **Higher-Order & Anonymous Functions**: Improved symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. The engine now "tags" function values with the call-site's context, allowing for more robust analysis of higher-order function calls.
+- [x] **Indirect Recursion via Higher-Order Functions**: The `symgo` engine can now detect and halt analysis of indirect recursion through higher-order functions (e.g., `A -> HOF -> B`, `B -> HOF -> A`), preventing stack overflows. This was achieved by propagating call-stack context with function arguments. ([docs/trouble-goinspect-recursive.md](./docs/trouble-goinspect-recursive.md))
+- [x] **Recursive Functions**: Analysis has been improved to correctly detect and represent direct, mutual, and indirect recursive function calls in the call graph.
+
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
 - [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.

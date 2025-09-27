@@ -1161,6 +1161,13 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		}
 	}
 
+	// Handle dereferencing an unresolved function object.
+	if uf, ok := val.(*object.UnresolvedFunction); ok {
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("instance of unresolved function %s.%s from dereference", uf.PkgPath, uf.FuncName),
+		}
+	}
+
 	// If we are trying to dereference a symbolic placeholder that isn't a pointer,
 	// we shouldn't error out, but return another placeholder. This allows analysis
 	// of incorrect but plausible code paths to continue.

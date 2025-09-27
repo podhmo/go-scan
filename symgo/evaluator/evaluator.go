@@ -3188,12 +3188,18 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 
 // logc logs a message with the current function context from the call stack.
 func (e *Evaluator) logc(ctx context.Context, level slog.Level, msg string, args ...any) {
+	// usually depth is 2, because logc is called from other functions
+	e.logcWithCallerDepth(ctx, level, 2, msg, args...)
+}
+
+// for user, use logc instead of this function
+func (e *Evaluator) logcWithCallerDepth(ctx context.Context, level slog.Level, depth int, msg string, args ...any) {
 	if !e.logger.Enabled(ctx, level) {
 		return
 	}
 
 	// Get execution position (the caller of this function)
-	_, file, line, ok := runtime.Caller(1)
+	_, file, line, ok := runtime.Caller(depth)
 	if ok {
 		// Prepend exec_pos so it appears early in the log output.
 		args = append([]any{slog.String("exec_pos", fmt.Sprintf("%s:%d", file, line))}, args...)
@@ -3230,7 +3236,7 @@ func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, 
 	if e.scanner != nil && e.scanner.Fset() != nil && pos.IsValid() {
 		posStr = e.scanner.Fset().Position(pos).String()
 	}
-	e.logc(ctx, slog.LevelError, msg, "pos", posStr)
+	e.logcWithCallerDepth(ctx, slog.LevelError, 2, msg, "pos", posStr)
 
 	frames := make([]*object.CallFrame, len(e.callStack))
 	copy(frames, e.callStack)

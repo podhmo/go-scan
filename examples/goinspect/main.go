@@ -46,7 +46,7 @@ func main() {
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
 	expandFormat := flag.Bool("expand", false, "Use expand format for output with UIDs")
-	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logLevel := flag.String("log-level", "warn", "Log level (debug, info, warn, error)")
 
 	flag.Parse()
 

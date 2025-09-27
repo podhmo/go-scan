@@ -98,6 +98,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Higher-Order & Anonymous Functions**: Improved symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. The engine now "tags" function values with the call-site's context, allowing for more robust analysis of higher-order function calls.
 - [x] **Indirect Recursion via Higher-Order Functions**: The `symgo` engine can now detect and halt analysis of indirect recursion through higher-order functions (e.g., `A -> HOF -> B`, `B -> HOF -> A`), preventing stack overflows. This was achieved by propagating call-stack context with function arguments. ([docs/trouble-goinspect-recursive.md](./docs/trouble-goinspect-recursive.md))
 - [x] **Recursive Functions**: Analysis has been improved to correctly detect and represent direct, mutual, and indirect recursive function calls in the call graph.
+- [x] **Anonymous Recursive Functions**: The evaluator can now detect and halt analysis of direct and mutual recursion in anonymous functions (function literals) by tracking their source position, preventing infinite loops.
 
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))

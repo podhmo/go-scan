@@ -1187,6 +1187,46 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 
 func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *object.Environment, pkg *scan.PackageInfo) object.Object {
 	switch node.Tok {
+	case token.CONST:
+		var lastValues []ast.Expr
+		for iota, spec := range node.Specs {
+			valSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+
+			// Handle implicit value repetition.
+			if len(valSpec.Values) > 0 {
+				lastValues = valSpec.Values
+			}
+
+			for i, name := range valSpec.Names {
+				if name.Name == "_" {
+					continue
+				}
+
+				if i >= len(lastValues) {
+					e.logc(ctx, slog.LevelWarn, "not enough values for constant declaration", "const", name.Name)
+					continue
+				}
+
+				exprToEval := lastValues[i]
+
+				// Create a temporary environment for this expression evaluation
+				// to correctly handle `iota`.
+				exprEnv := object.NewEnclosedEnvironment(env)
+				exprEnv.SetLocal("iota", &object.Integer{Value: int64(iota)})
+
+				val := e.Eval(ctx, exprToEval, exprEnv, pkg)
+				if isError(val) {
+					e.logc(ctx, slog.LevelWarn, "could not evaluate constant expression", "const", name.Name, "error", val)
+					continue
+				}
+
+				// A const declaration is a local definition.
+				env.SetLocal(name.Name, val)
+			}
+		}
 	case token.VAR:
 		if pkg == nil || pkg.Fset == nil {
 			return e.newError(ctx, node.Pos(), "package info or fset is missing, cannot resolve types")

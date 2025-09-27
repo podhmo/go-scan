@@ -114,6 +114,11 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		pkgs = append(pkgs, scannedPkgs...)
 	}
 
+	// Sort packages by ID for deterministic order.
+	sort.Slice(pkgs, func(i, j int) bool {
+		return pkgs[i].ID < pkgs[j].ID
+	})
+
 	// Define the analysis scope.
 	primaryScope := make(map[string]bool)
 	for _, pkg := range pkgs {
@@ -160,40 +165,6 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		return nil
 	})
 
-	// 4. Determine entry point functions for analysis.
-	var entryPoints []*scanner.FunctionInfo
-	if len(targets) > 0 {
-		// If specific targets are provided, find them.
-		targetSet := make(map[string]bool)
-		for _, target := range targets {
-			targetSet[target] = true
-		}
-
-		for _, pkg := range pkgs {
-			for _, f := range pkg.Functions {
-				// Check for function: "pkg/path.FuncName"
-				// Check for method: "(*pkg/path.TypeName).MethodName"
-				targetName := getFuncTargetName(f)
-				if targetSet[targetName] {
-					entryPoints = append(entryPoints, f)
-				}
-			}
-		}
-		if len(entryPoints) != len(targets) {
-			logger.Warn("could not find all specified targets", "found", len(entryPoints), "wanted", len(targets))
-		}
-
-	} else {
-		// If no targets are specified, use all functions in the scanned packages as potential entry points.
-		for _, pkg := range pkgs {
-			for _, f := range pkg.Functions {
-				if includeUnexported || ast.IsExported(f.Name) {
-					entryPoints = append(entryPoints, f)
-				}
-			}
-		}
-	}
-
 	// Collect all functions that could be analyzed into a single slice.
 	var allFunctions []*scanner.FunctionInfo
 	for _, pkg := range pkgs {
@@ -204,6 +175,35 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	sort.Slice(allFunctions, func(i, j int) bool {
 		return getFuncID(allFunctions[i]) < getFuncID(allFunctions[j])
 	})
+
+	// 4. Determine entry point functions for analysis.
+	var entryPoints []*scanner.FunctionInfo
+	if len(targets) > 0 {
+		// If specific targets are provided, find them from the sorted list.
+		targetSet := make(map[string]bool)
+		for _, target := range targets {
+			targetSet[target] = true
+		}
+
+		for _, f := range allFunctions {
+			targetName := getFuncTargetName(f)
+			if targetSet[targetName] {
+				entryPoints = append(entryPoints, f)
+			}
+		}
+
+		if len(entryPoints) != len(targets) {
+			logger.Warn("could not find all specified targets", "found", len(entryPoints), "wanted", len(targets))
+		}
+
+	} else {
+		// If no targets, use all relevant functions from the sorted list as potential entry points.
+		for _, f := range allFunctions {
+			if includeUnexported || ast.IsExported(f.Name) {
+				entryPoints = append(entryPoints, f)
+			}
+		}
+	}
 
 	logger.Info("starting analysis", "entrypoints", len(entryPoints), "total_functions", len(allFunctions))
 
@@ -232,7 +232,18 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	// A function is a "callee" if it's called by another function. A self-recursive
 	// call does not disqualify a function from being a top-level entry point.
 	callees := make(map[string]bool)
-	for caller, calledFuncs := range graph {
+
+	// Sort the callers to ensure deterministic iteration over the graph.
+	callers := make([]*scanner.FunctionInfo, 0, len(graph))
+	for caller := range graph {
+		callers = append(callers, caller)
+	}
+	sort.Slice(callers, func(i, j int) bool {
+		return getFuncID(callers[i]) < getFuncID(callers[j])
+	})
+
+	for _, caller := range callers {
+		calledFuncs := graph[caller]
 		callerID := getFuncID(caller)
 		for _, callee := range calledFuncs {
 			calleeID := getFuncID(callee)

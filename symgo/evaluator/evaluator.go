@@ -349,6 +349,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		return nil // Empty statements do nothing.
 	case *ast.FuncLit:
 		return &object.Function{
+			Lit:        n, // Store the AST node for the literal
 			Parameters: n.Type.Params,
 			Body:       n.Body,
 			Env:        env,
@@ -3367,8 +3368,9 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		return &object.SymbolicPlaceholder{Reason: "max call stack depth exceeded"}
 	}
 
-	// New recursion check based on function definition and receiver position.
-	if f, ok := fn.(*object.Function); ok && f.Def != nil {
+	// New recursion check based on function definition (for named functions)
+	// or function literal position (for anonymous functions).
+	if f, ok := fn.(*object.Function); ok {
 		// Determine which call stack to use for recursion detection.
 		// If the function has a BoundCallStack, it means it was passed as an argument,
 		// and that stack represents the true logical path leading to this call.
@@ -3379,13 +3381,23 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 
 		recursionCount := 0
 		for _, frame := range stackToScan {
-			// The most robust way to detect recursion on a definition is to compare the
-			// source position of the function's declaration AST node. This correctly
-			// identifies recursion on a specific function/method definition, which is
-			// the goal of symgo's analysis, rather than tracking object instances.
-			if frame.Fn != nil && frame.Fn.Def != nil && frame.Fn.Def.AstDecl != nil &&
-				f.Def.AstDecl != nil && frame.Fn.Def.AstDecl.Pos() == f.Def.AstDecl.Pos() {
-				recursionCount++
+			if frame.Fn == nil {
+				continue
+			}
+
+			// Case 1: Named function with a definition. Compare declaration positions.
+			if f.Def != nil && f.Def.AstDecl != nil && frame.Fn.Def != nil && frame.Fn.Def.AstDecl != nil {
+				if f.Def.AstDecl.Pos() == frame.Fn.Def.AstDecl.Pos() {
+					recursionCount++
+				}
+				continue
+			}
+
+			// Case 2: Anonymous function (function literal). Compare literal positions.
+			if f.Lit != nil && frame.Fn.Lit != nil {
+				if f.Lit.Pos() == frame.Fn.Lit.Pos() {
+					recursionCount++
+				}
 			}
 		}
 

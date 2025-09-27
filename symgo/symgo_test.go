@@ -130,7 +130,7 @@ func main() {
 			"main.go": source,
 		},
 		EntryPoint: "mymodule.main",
-		Options: []symgotest.Option{
+		Options:    []symgotest.Option{
 			// We explicitly do NOT include net/http in the scan policy
 			// to ensure http.HandlerFunc is an unresolved type.
 		},

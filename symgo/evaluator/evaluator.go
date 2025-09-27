@@ -1646,6 +1646,79 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			if staticType != nil && staticType.Kind == scan.InterfaceKind {
+				// Handle union-type interfaces.
+				if staticType.Interface != nil && len(staticType.Interface.Union) > 0 {
+					e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: detected union interface method call", "interface", staticType.Name, "method", n.Sel.Name)
+
+					// Iterate over all types in the union.
+					for _, memberFieldType := range staticType.Interface.Union {
+						// The receiver for the method call is the original object `obj` which holds the interface type.
+						// However, to find the method, we need to resolve the concrete type from the union.
+						memberTypeInfo, err := memberFieldType.Resolve(ctx)
+						if err != nil || memberTypeInfo == nil {
+							e.logc(ctx, slog.LevelWarn, "could not resolve union member type", "member", memberFieldType.String(), "error", err)
+							continue
+						}
+
+						// Create a symbolic receiver representing an instance of this specific member type.
+						// This is crucial for `findMethodOnType` to correctly bind the receiver type information,
+						// which is then inspected by the test's intrinsic.
+						symbolicReceiver := &object.SymbolicPlaceholder{
+							Reason: fmt.Sprintf("symbolic instance of union member %s", memberTypeInfo.Name),
+						}
+						symbolicReceiver.SetTypeInfo(memberTypeInfo)
+						symbolicReceiver.SetFieldType(memberFieldType)
+
+						// Find the method on this concrete type. The receiver passed here (symbolicReceiver)
+						// is bound to the resulting function object.
+						method, err := e.accessor.findMethodOnType(ctx, memberTypeInfo, n.Sel.Name, env, symbolicReceiver, n.X.Pos())
+						if err != nil {
+							e.logc(ctx, slog.LevelDebug, "method not found on union member", "member", memberTypeInfo.Name, "method", n.Sel.Name, "error", err)
+							continue
+						}
+
+						// If a method is found, "call" the default intrinsic with the concrete function object
+						// to mark it as used by analysis tools.
+						if method != nil && e.defaultIntrinsic != nil {
+							e.logc(ctx, slog.LevelDebug, "evalSelectorExpr: marking concrete method from union as used", "method", method.Inspect())
+							e.defaultIntrinsic(ctx, method)
+						}
+					}
+
+					// After processing all members, return a symbolic placeholder for the result of the call.
+					// We can try to find the method on the interface definition to get a signature for the placeholder.
+					var methodInfo *scan.MethodInfo
+					if staticType.Interface != nil {
+						allMethods := e.getAllInterfaceMethods(ctx, staticType, make(map[string]struct{}))
+						for _, m := range allMethods {
+							if m.Name == n.Sel.Name {
+								methodInfo = m
+								break
+							}
+						}
+					}
+					if methodInfo != nil {
+						methodFuncInfo := &scan.FunctionInfo{
+							Name:       methodInfo.Name,
+							Parameters: methodInfo.Parameters,
+							Results:    methodInfo.Results,
+						}
+						return &object.SymbolicPlaceholder{
+							Reason:         fmt.Sprintf("union interface method call %s.%s", staticType.Name, n.Sel.Name),
+							Receiver:       obj,
+							UnderlyingFunc: methodFuncInfo,
+							Package:        pkg,
+						}
+					}
+					// Fallback placeholder if we can't find the method signature in the interface itself.
+					return &object.SymbolicPlaceholder{
+						Reason:   fmt.Sprintf("result of call to union interface method %s", n.Sel.Name),
+						Receiver: obj,
+					}
+				}
+
+				// Fallthrough to handle regular (non-union) interfaces.
+
 				// Check for a registered intrinsic for this interface method call.
 				key := fmt.Sprintf("(%s.%s).%s", staticType.PkgPath, staticType.Name, n.Sel.Name)
 				if intrinsicFn, ok := e.intrinsics.Get(key); ok {

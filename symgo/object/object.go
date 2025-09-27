@@ -213,7 +213,7 @@ type Function struct {
 	Body        *ast.BlockStmt
 	Env         *Environment
 	Decl        *ast.FuncDecl // The original declaration, for metadata like godoc.
-	Lit         *ast.FuncLit // The original function literal, for anonymous functions.
+	Lit         *ast.FuncLit  // The original function literal, for anonymous functions.
 	Package     *scanner.PackageInfo
 	Receiver    Object // The receiver for a method call ("self" or "this").
 	ReceiverPos token.Pos

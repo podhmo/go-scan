@@ -260,7 +260,7 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 			e.logger.DebugContext(ctx, "evaluating node",
 				"type", fmt.Sprintf("%T", node),
 				"pos", pkg.Fset.Position(node.Pos()),
-				"source", buf.String(),
+				// "source", buf.String(),
 			)
 		}
 	}

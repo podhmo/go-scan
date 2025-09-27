@@ -3755,7 +3755,7 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		// Use the policy-enforcing method to resolve the package.
 		scannedPkg, err := e.resolver.ResolvePackage(ctx, fn.PkgPath)
 		if err != nil {
-			e.logc(ctx, slog.LevelWarn, "could not scan package for unresolved function (or denied by policy)", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
+			e.logc(ctx, slog.LevelInfo, "could not scan package for unresolved function (or denied by policy)", "package", fn.PkgPath, "function", fn.FuncName, "error", err)
 			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of calling unresolved function %s.%s", fn.PkgPath, fn.FuncName)}
 		}
 

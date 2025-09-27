@@ -1,205 +1,53 @@
-# `symgo` Robustness Report: `invalid indirect` on Unresolved Function Types
+# `symgo` Robustness Report: Identifier Resolution in Test Code
 
-This document details the analysis and resolution of a critical robustness issue within the `symgo` symbolic execution engine, discovered during large-scale analysis with the `find-orphans` tool.
+This document details the analysis and resolution of a critical identifier resolution issue within the `symgo` symbolic execution engine, discovered when analyzing test files.
 
 ## 1. Problem Description
 
-When running `symgo`-based tools that analyze a wide range of dependencies (including the standard library), the evaluator would frequently crash with an "invalid indirect" error.
+When running `symgo`-based tools like `find-orphans` with test file analysis enabled (`--include-tests`), the evaluator would fail with numerous `identifier not found` errors.
 
 **Symptom:**
 
-The logs would show numerous errors of the following form:
+The analysis logs would show many errors similar to the following, originating from various test files across the project:
 
 ```
-level=ERROR msg="invalid indirect of <Unresolved Function: path/filepath.WalkFunc> (type *object.UnresolvedFunction)"
-level=ERROR msg="invalid indirect of <Unresolved Function: net/http.HandlerFunc> (type *object.UnresolvedFunction)"
+level=ERROR msg="identifier not found: sampleAPIPath" in_func=TestDocgen exec_pos=...
+level=ERROR msg="symbolic execution failed for entry point" function=...TestDocgen error="symgo runtime error: identifier not found: sampleAPIPath..."
 ```
 
-This error halted the analysis, preventing tools like `find-orphans` from completing their run on a whole-program scope.
+These errors prevented `symgo` from correctly analyzing any test functions that used locally defined constants, significantly limiting its utility for whole-program analysis that includes test code.
 
 ## 2. Root Cause Analysis
 
-The issue stemmed from how the evaluator's dereference logic (`*` operator) interacted with the package scanning policy.
+The investigation revealed that the issue was specific to how the `symgo` evaluator handled declarations within the scope of a function, particularly when that function was an entry point for analysis (as is common for tests).
 
-1.  **Scanning Policy and Placeholders:** `symgo` uses a `ScanPolicy` to decide which packages to analyze from source. When it encounters a symbol from a package that is *not* in the policy (e.g., most of the standard library in a typical `find-orphans` run), it creates a placeholder object to represent that symbol without analyzing its source.
-2.  **`UnresolvedFunction` Type:** For symbols that appeared to be function types or variables of a function type (like `var v *http.HandlerFunc`), the evaluator would create an `*object.UnresolvedFunction` object.
-3.  **Dereference Failure:** The core of the bug was in the `evalStarExpr` function, which implements the dereference (`*`) operator. This function had logic to handle dereferencing pointers, instances, and even unresolved *struct/interface* types. However, it was missing a specific case for `*object.UnresolvedFunction`.
-4.  **The Crash:** When the evaluator encountered code that involved dereferencing one of these function types (often in `var` declarations like `var V *a.MyFunc`), `evalStarExpr` would be called with the `*object.UnresolvedFunction` object. Lacking a specific handler, it would fall through to the default case, which immediately reported a fatal `invalid indirect of ...` error.
+1.  **Local Constants in Tests:** Go tests frequently define local constants within the test function body for convenience (e.g., `const sampleAPIPath = "..."`).
+2.  **Statement-by-Statement Evaluation:** The `symgo` evaluator processes the statements within a function body sequentially. It does not pre-scan the entire function body to hoist all declarations.
+3.  **Missing `const` Handler:** The core of the bug was a critical omission in the `evalGenDecl` function, which is responsible for handling `var`, `type`, and `const` declarations. While it had logic for `var` and `type`, it was completely missing a `case token.CONST`.
+4.  **The Crash:** Because the `const` handler was missing, any `const` declaration inside a function was simply ignored. When a later statement in the function attempted to use that constant, the `evalIdent` function would look for it in the current environment, fail to find it, and produce the `identifier not found` error, halting the analysis of that function.
 
 ## 3. Solution Implemented
 
-The fix was to make the evaluator more resilient to this specific scenario by treating the dereference of an unresolved function type as a valid symbolic operation.
+The fix involved implementing the missing logic for constant declarations within the evaluator, making it correctly recognize and process them.
 
 -   **File Modified:** `symgo/evaluator/evaluator.go`
--   **Function Modified:** `evalStarExpr`
+-   **Function Modified:** `evalGenDecl`
 
-A new case was added to the main `switch` statement in `evalStarExpr`:
+A new `case token.CONST` was added to the `switch` statement in `evalGenDecl`. The new logic correctly handles the semantics of constant declarations:
 
-```go
-// ... inside evalStarExpr, after checking for other types ...
+-   It iterates through all constant specifications in a `const (...)` block.
+-   It correctly handles value repetition (e.g., `const (a = 1; b; c)` where `b` and `c` inherit the value of `a`).
+-   To correctly handle `iota`, it creates a temporary, enclosed environment for each constant's value expression, binding the current `iota` value within it.
+-   It uses the evaluator's own `e.Eval` method to evaluate the constant's value expression.
+-   Finally, it adds the resulting constant object to the current function's scope using `env.SetLocal()`, ensuring it is available for subsequent statements.
 
-// Handle dereferencing an unresolved function object.
-if uf, ok := val.(*object.UnresolvedFunction); ok {
-    return &object.SymbolicPlaceholder{
-        Reason: fmt.Sprintf("instance of unresolved function %s.%s from dereference", uf.PkgPath, uf.FuncName),
-    }
-}
+This change ensures that `symgo` correctly processes `const` declarations as it encounters them, making the identifiers available for the rest of the symbolic execution process within that function.
 
-// ... rest of the function ...
-```
+## 4. Verification
 
-This change ensures that when `symgo` tries to dereference a pointer to a function type it cannot fully resolve, it no longer crashes. Instead, it correctly produces a `*object.SymbolicPlaceholder`, representing a symbolic instance of that function. This allows the analysis to continue, significantly improving the robustness and usability of tools built on `symgo`.
+The fix was validated through two methods:
 
-This fix was verified by a new unit test (`TestEvalStarExpr_OnUnresolvedFunction`) that specifically reproduces the bug, and by confirming that the `make -C examples/find-orphans` command now completes without the "invalid indirect" errors in its output log.
+1.  **New Unit Test:** A new test, `TestSymgo_LocalConstantResolution`, was added in a new file, `symgo/symgo_local_const_test.go`. This test specifically defines a function with a local constant and asserts that `symgo` can correctly resolve and return its value. This test failed before the fix and passed after, confirming the solution's effectiveness and preventing future regressions.
+2.  **End-to-End Test:** The `make -C examples/find-orphans` command was re-run. A review of the generated `find-orphans.out` log confirmed that all `identifier not found` errors related to local constants in test files were successfully eliminated.
 
----
-
-## 2. Problem: `len` on a Direct Function Call Result
-
-**Symptom:**
-
-During the execution of `find-orphans`, the `symgo` engine would fail with an error indicating that the `len()` built-in function received an unsupported argument type.
-
-```
-level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/docgen.NewAnalyzer error="symgo runtime error: argument to `len` not supported, got RETURN_VALUE\n"
-```
-
-**Root Cause Analysis:**
-
-1.  **Symbolic Execution Flow:** When `symgo` evaluates a function call, it doesn't immediately produce the final, concrete value. Instead, it often returns a special wrapper object, `*object.ReturnValue`, which contains the actual result.
-2.  **`len()` Implementation:** The intrinsic implementation for the `len()` built-in function (`symgo/intrinsics/builtins.go:BuiltinLen`) was designed to operate on concrete types like `*object.String`, `*object.Slice`, `*object.Map`, etc.
-3.  **The Mismatch:** The code being analyzed contained a pattern like `len(someFunc())`. `symgo` would first execute `someFunc()`, which yielded an `*object.ReturnValue`. This `ReturnValue` object was then passed directly to `BuiltinLen`. The `len` function did not have a case to handle this `ReturnValue` wrapper; it expected the underlying slice or map. This caused it to fall through to the default error case, halting analysis.
-
-**Solution Implemented:**
-
-The fix was to make the `BuiltinLen` function more intelligent by teaching it to unwrap the `*object.ReturnValue` object.
-
--   **File Modified:** `symgo/intrinsics/builtins.go`
--   **Function Modified:** `BuiltinLen`
-
-A check was added at the beginning of the function:
-
-```go
-if ret, ok := args[0].(*object.ReturnValue); ok {
-    // If the argument is a return value, unwrap it.
-    args[0] = ret.Value
-}
-```
-
-This ensures that if `len()` is called on the result of a function, it operates on the actual returned value (e.g., the slice) rather than the temporary wrapper, preventing the crash.
-
----
-
-## 3. Problem: `new` on an Unresolved Function Type
-
-**Symptom:**
-
-When analyzing a large codebase, `symgo` would fail when encountering the `new()` built-in function applied to a function type from an external, unscanned package.
-
-```
-level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/find-orphans.main error="symgo runtime error: invalid argument for new: expected a type, got UNRESOLVED_FUNCTION\n"
-```
-
-**Root Cause Analysis:**
-
-1.  **Unresolved Types:** When `symgo` encounters a type from a package outside its primary analysis scope (e.g., `net/http.HandlerFunc`), it creates a placeholder object, `*object.UnresolvedFunction`, to represent it. This is a correct and necessary part of shallow scanning.
-2.  **`new()` Implementation:** The `BuiltinNew` function (`symgo/intrinsics/builtins.go`) is responsible for handling the `new()` built-in. Its purpose is to take a type object and return a pointer to a new instance of that type.
-3.  **The Crash:** The `BuiltinNew` function had logic to handle `*object.Type` (for fully resolved types) and `*object.UnresolvedType` (for unresolved structs/interfaces). However, it was missing a case for `*object.UnresolvedFunction`. When code like `v := new(http.HandlerFunc)` was encountered, `BuiltinNew` received the `*object.UnresolvedFunction` placeholder, didn't know how to handle it, and fell through to the default case, which produced the "invalid argument for new" error.
-
-**Solution Implemented:**
-
-To improve robustness, the `BuiltinNew` function was updated to gracefully handle unresolved function types.
-
--   **File Modified:** `symgo/intrinsics/builtins.go`
--   **Function Modified:** `BuiltinNew`
-
-A new `case` was added to the `switch` statement to detect `*object.UnresolvedFunction` arguments:
-
-```go
-case *object.UnresolvedFunction:
-    // If we try to new an unresolved function type, it's valid.
-    // We can't know the "zero value" but we can return a placeholder for the pointer.
-    placeholder := &object.SymbolicPlaceholder{
-        Reason: fmt.Sprintf("instance of unresolved function %s.%s", t.PkgPath, t.FuncName),
-    }
-    pointee = placeholder
-```
-
-This change allows `symgo` to continue its analysis when it encounters `new()` applied to function types from external packages, replacing a fatal error with a valid symbolic placeholder.
-
----
-
-## 4. Problem: `len` on an Unresolved Function Placeholder
-
-**Symptom:**
-
-After fixing the previous issues, a new `len`-related error emerged during the `find-orphans` run.
-
-```
-level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/minigo.main error="symgo runtime error: argument to `len` not supported, got UNRESOLVED_FUNCTION\n"
-```
-
-**Root Cause Analysis:**
-
-1.  **Placeholder Misclassification:** The analysis of `examples/minigo/main.go` involved the expression `len(os.Args)`. `os.Args` is a variable (a slice of strings) from an external, unscanned package. Due to limitations in how `symgo` creates placeholders for external package-level variables, it was incorrectly creating an `*object.UnresolvedFunction` object for `os.Args` instead of a more appropriate placeholder.
-2.  **Brittle `len()` Intrinsic:** The `BuiltinLen` function, even after the `ReturnValue` fix, did not have a case to handle being called with an `*object.UnresolvedFunction`.
-3.  **The Crash:** When `len(os.Args)` was evaluated, the `*object.UnresolvedFunction` placeholder was passed to `BuiltinLen`, which had no specific case for it and fell through to the default error, crashing the analysis. While the initial misclassification is a deeper issue, the immediate cause of the crash was the lack of robustness in the `len` intrinsic.
-
-**Solution Implemented:**
-
-The `BuiltinLen` function was further hardened to prevent this crash.
-
--   **File Modified:** `symgo/intrinsics/builtins.go`
--   **Function Modified:** `BuiltinLen`
-
-A new `case` was added to the `switch` statement to handle this scenario gracefully:
-
-```go
-case *object.UnresolvedFunction:
-    // This can happen if `len` is called on a variable from an unscanned
-    // package that is mis-identified as a function. Instead of crashing,
-    // return a symbolic placeholder for the length.
-    return &object.SymbolicPlaceholder{Reason: "len on unresolved function"}
-```
-
-This ensures that even if type information is incomplete or incorrect for an external symbol, `len()` will not crash the analysis. It will instead return a symbolic value, allowing the analysis to continue.
-
----
-
-## 5. Problem: `invalid left operand for complex expression` in Test Code
-
-**Symptom:**
-
-When running `find-orphans` with the `--include-tests` flag, the analysis would fail with an error related to complex number evaluation, even when processing code that only involved floats.
-
-```
-level=ERROR msg="invalid left operand for complex expression: SYMBOLIC_PLACEHOLDER" in_func=TestEvalFloatLiteral ...
-```
-
-**Root Cause Analysis:**
-
-1.  **Test Analysis:** The `--include-tests` flag causes `symgo` to analyze its own test files, such as `symgo/evaluator/evaluator_test.go`.
-2.  **Symbolic Values in Tests:** Inside a test like `TestEvalFloatLiteral`, a comparison like `floatObj.Value != 5.5` is performed. During symbolic execution of this test, `floatObj` is a symbolic placeholder, not a concrete float object. Therefore, `floatObj.Value` is also a placeholder.
-3.  **Incorrect Dispatch:** The `evalBinaryExpr` function, when seeing a comparison involving a float literal (`5.5`), would dispatch the evaluation to `evalComplexInfixExpression` as a simplifying assumption.
-4.  **Placeholder Handling:** The `evalComplexInfixExpression` function was not designed to handle `*object.SymbolicPlaceholder` operands. When it received the placeholder from `floatObj.Value`, it couldn't find a valid case for its type and returned the "invalid left operand" error.
-
-**Solution Implemented:**
-
-The `evalComplexInfixExpression` function was made more robust to handle symbolic values gracefully.
-
--   **File Modified:** `symgo/evaluator/evaluator.go`
--   **Function Modified:** `evalComplexInfixExpression`
-
-The function was updated to check if either operand is a `*object.SymbolicPlaceholder`. If so, instead of returning an error, it now immediately returns a new `*object.SymbolicPlaceholder`.
-
-```go
-// at the top of evalComplexInfixExpression
-if _, ok := left.(*object.SymbolicPlaceholder); ok {
-    return &object.SymbolicPlaceholder{Reason: "complex operation with symbolic operand"}
-}
-if _, ok := right.(*object.SymbolicPlaceholder); ok {
-    return &object.SymbolicPlaceholder{Reason: "complex operation with symbolic operand"}
-}
-```
-
-This change prevents the evaluator from crashing when it encounters symbolic values in arithmetic or comparison expressions that are routed through the complex evaluation path, allowing analysis to continue.
+While a separate issue causing `not a function: NIL` errors in `minigo` tests remains, the primary bug preventing the analysis of test code with local constants has been resolved.

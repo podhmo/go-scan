@@ -1,9 +1,15 @@
 package symgo_test
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/podhmo/go-scan/goscan"
+	"github.com/podhmo/go-scan/scantest"
+	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
 	"github.com/podhmo/go-scan/symgotest"
 )
@@ -221,4 +227,80 @@ func main() {
 			t.Fatalf("expected no error, but got: %+v", r.Error)
 		}
 	})
+}
+
+// TestGoInspectStyleRecursion simulates the behavior of the goinspect tool,
+// which analyzes all functions in a package. This is intended to trigger
+// a panic that occurs with faulty recursion detection.
+func TestGoInspectStyleRecursion(t *testing.T) {
+	// 1. Setup test environment from symgotest
+	source := `
+package recursion
+
+// DirectRecursion is a simple function that calls itself.
+func DirectRecursion() {
+	DirectRecursion()
+}
+
+// MutualRecursionA calls MutualRecursionB.
+func MutualRecursionA() {
+	MutualRecursionB()
+}
+
+// MutualRecursionB calls MutualRecursionA.
+func MutualRecursionB() {
+	MutualRecursionA()
+}
+`
+	dir, cleanup := scantest.WriteFiles(t, map[string]string{
+		"go.mod":                 "module example.com/recursion",
+		"recursion/recursion.go": source,
+	})
+	defer cleanup()
+
+	// 2. Create scanner and interpreter
+	s, err := goscan.New(
+		goscan.WithWorkDir(dir),
+		goscan.WithGoModuleResolver(),
+	)
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	interp, err := symgo.NewInterpreter(s,
+		symgo.WithLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))),
+	)
+	if err != nil {
+		t.Fatalf("failed to create interpreter: %v", err)
+	}
+
+	// 3. Scan the package to get all functions
+	pkgName := "example.com/recursion"
+	pkgs, err := s.Scan(context.Background(), pkgName)
+	if err != nil {
+		t.Fatalf("failed to scan package %q: %v", pkgName, err)
+	}
+	if len(pkgs) == 0 {
+		t.Fatalf("package %q not found", pkgName)
+	}
+	pkg := pkgs[0]
+
+	// 4. This is the core of the test: iterate and analyze each function.
+	// This loop should panic if the bug is present.
+	for _, fn := range pkg.Functions {
+		t.Logf("Analyzing function: %s", fn.Name)
+		ctx := context.Background()
+
+		// Get the function object
+		fnObj, ok := interp.FindObjectInPackage(ctx, pkg.ImportPath, fn.Name)
+		if !ok {
+			t.Errorf("could not find function object for %s", fn.Name)
+			continue
+		}
+
+		// Run the interpreter on this function.
+		// We don't care about the result, just that it doesn't panic.
+		interp.Apply(ctx, fnObj, nil, pkg)
+	}
+	// If we reach here, the test passes.
 }

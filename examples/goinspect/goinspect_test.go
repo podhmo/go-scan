@@ -78,6 +78,16 @@ func TestGoInspect(t *testing.T) {
 			name:        "stdlib_errors",
 			pkgPatterns: []string{"errors"},
 		},
+		{
+			name:         "direct_recursion",
+			pkgPatterns:  []string{"./testdata/src/recursion"},
+			expandFormat: true,
+		},
+		{
+			name:         "mutual_recursion",
+			pkgPatterns:  []string{"./testdata/src/recursion"},
+			expandFormat: true,
+		},
 	}
 
 	for _, tc := range testCases {

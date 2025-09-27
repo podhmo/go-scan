@@ -21,8 +21,8 @@ import (
 )
 
 // callGraph is a data structure to store the call graph.
-// The key is the caller function, and the value is a list of callee functions.
-type callGraph map[*scanner.FunctionInfo][]*scanner.FunctionInfo
+// The key is the caller function's stable ID, and the value is a list of callee functions.
+type callGraph map[string][]*scanner.FunctionInfo
 
 // stringSlice is a custom type to handle multiple string flags.
 type stringSlice []string
@@ -154,7 +154,8 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 			if callerFunc == nil {
 				return nil
 			}
-			graph[callerFunc] = append(graph[callerFunc], calleeFunc)
+			callerID := getFuncID(callerFunc)
+			graph[callerID] = append(graph[callerID], calleeFunc)
 		}
 		return nil
 	})
@@ -194,23 +195,40 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 	}
 
 	logger.Info("starting analysis", "entrypoints", len(entryPoints))
+	allScannedFunctions := make(map[string]*scanner.FunctionInfo)
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Functions {
-			if !includeUnexported && !ast.IsExported(f.Name) {
-				continue
-			}
-			if _, ok := graph[f]; ok {
-				continue // Already visited as part of another call
-			}
-			eval := interp.EvaluatorForTest()
-			pkgObj, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
-			if err != nil {
-				logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", pkg.ImportPath, "error", err)
-				continue
-			}
-			fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
-			interp.Apply(ctx, fnObj, nil, pkg)
+			allScannedFunctions[getFuncID(f)] = f
 		}
+	}
+
+	for _, f := range entryPoints {
+		if !includeUnexported && !ast.IsExported(f.Name) {
+			continue
+		}
+		// The main analysis loop. This previously caused an infinite loop for recursion.
+		// By checking the graph using a stable ID, we prevent re-analysis.
+		if _, ok := graph[getFuncID(f)]; ok {
+			continue // Already visited as part of another call
+		}
+
+		// Perform analysis for functions that haven't been visited.
+		// Note: The original code iterated through all functions in all packages here.
+		// We now iterate only through the calculated entryPoints to avoid redundant work.
+		// The symgo analysis will transitively discover callees.
+		eval := interp.EvaluatorForTest()
+		pkg := f.Pkg
+		if pkg == nil {
+			logger.Warn("function has no package info, skipping", "func", f.Name)
+			continue
+		}
+		pkgObj, err := eval.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			logger.Warn("failed to load package for entrypoint, skipping", "func", f.Name, "pkg", pkg.ImportPath, "error", err)
+			continue
+		}
+		fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, f)
+		interp.Apply(ctx, fnObj, nil, pkg)
 	}
 
 	// 5. Filter for true top-level functions (not called by any other entry point).
@@ -226,6 +244,12 @@ func run(out io.Writer, logger *slog.Logger, pkgPatterns []string, targets []str
 		if !callees[getFuncID(f)] {
 			topLevelFunctions = append(topLevelFunctions, f)
 		}
+	}
+
+	// If filtering removed everything (e.g., in a purely recursive package),
+	// treat all original entry points as top-level to avoid empty output.
+	if len(topLevelFunctions) == 0 && len(entryPoints) > 0 {
+		topLevelFunctions = entryPoints
 	}
 
 	// 6. Print the call graph starting from the true top-level functions.
@@ -350,7 +374,7 @@ func (p *Printer) printRecursive(f *scanner.FunctionInfo, indent int) {
 	}
 
 	// Recursively print callees.
-	if callees, ok := p.Graph[f]; ok {
+	if callees, ok := p.Graph[id]; ok {
 		uniqueCallees := make([]*scanner.FunctionInfo, 0, len(callees))
 		seen := make(map[string]bool)
 		for _, callee := range callees {

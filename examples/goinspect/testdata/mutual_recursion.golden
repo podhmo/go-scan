@@ -1,0 +1,8 @@
+func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.MutualRecursionA()
+  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.MutualRecursionB()
+    func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.MutualRecursionA() ... (cycle detected)
+func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.MutualRecursionB()
+  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.MutualRecursionA()
+    func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.MutualRecursionB() ... (cycle detected)
+func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.DirectRecursion()
+  func github.com/podhmo/go-scan/examples/goinspect/testdata/src/recursion.DirectRecursion() ... (cycle detected)

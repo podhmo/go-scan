@@ -116,6 +116,22 @@ func TestLazyResolution_Integration(t *testing.T) {
 	}
 }
 
+func TestFindSymbolDefinitionLocation(t *testing.T) {
+	ctx := context.Background()
+	s, err := New(WithGoModuleResolver())
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	loc, err := s.FindSymbolDefinitionLocation(ctx, "strings.TrimPrefix")
+	if err != nil {
+		t.Fatalf("s.FindSymbolDefinitionLocation failed: %v", err)
+	}
+
+	if !strings.Contains(loc, "strings/") {
+		t.Errorf("unexpected location: %v", loc)
+	}
+}
+
 func TestListExportedSymbols(t *testing.T) {
 	ctx := context.Background()
 	s, err := New(WithGoModuleResolver())

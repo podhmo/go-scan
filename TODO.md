@@ -90,6 +90,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
+### `goinspect`: Fix Bugs and Enhancements
+- [ ] **Fix `stdlib_errors` test failure**: The `TestGoInspect/stdlib_errors` test is failing. This may be due to an order-of-execution dependency in the analysis. Investigate and fix the underlying issue.
+
 ### `symgo`: Improve Analysis Capabilities
 - [x] **Cross-Package Call Representation**: Ensure that calls to functions in non-primary-scope packages are represented as terminal nodes in the call graph (e.g., as `object.SymbolicPlaceholder`) rather than being omitted.
 - [x] **Higher-Order & Anonymous Functions**: Improved symbolic execution to correctly trace calls into and out of anonymous functions passed as arguments. The engine now "tags" function values with the call-site's context, allowing for more robust analysis of higher-order function calls.

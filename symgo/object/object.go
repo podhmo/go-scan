@@ -217,6 +217,11 @@ type Function struct {
 	Receiver    Object // The receiver for a method call ("self" or "this").
 	ReceiverPos token.Pos
 	Def         *scanner.FunctionInfo
+
+	// BoundCallStack stores the evaluator's call stack at the point where this
+	// function was passed as an argument. This is used to detect recursion
+	// through higher-order functions.
+	BoundCallStack []*CallFrame
 }
 
 // Type returns the type of the Function object.
@@ -236,6 +241,14 @@ func (f *Function) WithReceiver(receiver Object, pos token.Pos) *Function {
 	newF := *f // Creates a shallow copy
 	newF.Receiver = receiver
 	newF.ReceiverPos = pos
+	return &newF
+}
+
+// Clone creates a shallow copy of the Function object. This is essential for
+// creating call-site-specific instances of a function (e.g., to bind a call stack)
+// without polluting the globally cached function object.
+func (f *Function) Clone() *Function {
+	newF := *f
 	return &newF
 }
 
@@ -300,10 +313,13 @@ func (p *Package) Inspect() string {
 
 // --- Error Object ---
 
-// CallFrame represents a single frame in the call stack.
+// CallFrame represents a single frame in the symbolic execution call stack.
 type CallFrame struct {
-	Pos      token.Pos
-	Function string // Name of the function for stack traces
+	Function    string
+	Pos         token.Pos
+	Fn          *Function
+	Args        []Object
+	ReceiverPos token.Pos
 }
 
 // Format formats the call frame into a readable string.

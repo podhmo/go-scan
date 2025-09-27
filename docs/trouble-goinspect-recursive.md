@@ -76,16 +76,26 @@ The "orphan-style" filtering, which is intended to only show true entry points, 
 
 A fallback mechanism will be added. After the filtering logic runs, if the resulting list of top-level functions is empty (and the initial list of entry points was not), we will assume we've encountered a cyclical library and revert to using the original, unfiltered list of entry points. This correctly handles the mutual recursion case while preserving the orphan-style filtering for other cases.
 
-## Final Verification: Mutual Recursion
+## Final Verification: Mutual and Indirect Recursion
 
-Based on user feedback, an explicit test case for mutual recursion (`ping-pong`) was added. The fix for Bug #2 proved successful. The tool now correctly identifies and displays the call graph for mutually recursive functions, labeling the second call in the cycle as `[recursive]`. The feature is now considered complete and robust.
+Based on user feedback, explicit test cases for both mutual recursion (`ping-pong`) and indirect recursion via a higher-order function (`indirect`) were added. After implementing the fixes described below, the tool now correctly identifies and displays the call graph for all forms of recursion, labeling the second call in the cycle as `[recursive]`. The feature is now considered complete and robust.
 
-## Known Limitations
+## Bug Fix 3: Indirect Recursion via Higher-Order Functions
 
-### Indirect Recursion via Higher-Order Functions
+A test case for indirect mutual recursion (`Ping` -> `cont` -> `Pong`) initially caused a `fatal error: stack overflow`.
 
-An attempt to add a test case for indirect mutual recursion (`Ping` -> `cont` -> `Pong`) revealed a limitation in the underlying `symgo` symbolic execution engine.
+### Root Cause
 
-- **Issue**: The analysis causes a `fatal error: stack overflow`.
-- **Root Cause**: The `symgo` engine does not currently have a mechanism to halt analysis of infinitely expanding call graphs that involve higher-order functions. It repeatedly tries to trace the `cont` function, leading to a stack overflow.
-- **Status**: Fixing this would require significant changes to the `symgo` evaluator and is outside the scope of this task. To preserve this valuable test case for future work, the `indirect` package has been moved to a `testdata/known_failures` directory. This prevents wildcard tests (e.g., `./...`) from discovering it and crashing. The corresponding test case in `goinspect_test.go` is commented out with a `TODO` note, pointing to the new location. This prevents the build from breaking while documenting the engine's current limitation.
+The `symgo` engine's recursion detection failed because it did not maintain the full logical call stack context when a function was passed as an argument. When `Ping` called `cont(Pong, ...)`, the engine would analyze `cont`, but when `cont` invoked its function argument `f` (which is `Pong`), the analysis of `Pong` would start with a fresh call stack, losing the fact that `Ping` was the original caller in the chain. This led to an infinite analysis loop: `Ping` -> `cont` -> `Pong` -> `cont` -> `Ping`...
+
+A secondary, related stack overflow occurred because the `evalCallExpr` method would pre-scan function arguments that were themselves function literals (`scanFunctionLiteral`). This pre-scan could also trigger an infinite loop if the literal's body contained a call that led back to the original scan.
+
+### Solution
+
+A two-part solution was implemented in the `symgo/evaluator`:
+
+1.  **Propagating Call Context**: The `object.Function` was enhanced with a `BoundCallStack` field. When a function is passed as an argument, the `extendFunctionEnv` method now clones the function object and "tags" it by attaching a copy of the current call stack to `BoundCallStack`. The core recursion detector in `applyFunctionImpl` was then modified to use this `BoundCallStack` for its check, if present. This allows the detector to see the full logical call path across higher-order function boundaries.
+
+2.  **Recursion Guard for Literal Scanning**: A recursion guard was added to the `scanFunctionLiteral` method. It now uses a map (`scanLiteralInProgress`) to track which function literal bodies are currently being scanned. If it encounters a request to scan a literal that is already in progress, it halts immediately, breaking the pre-scan analysis loop.
+
+With these changes, the `symgo` engine can now correctly handle indirect recursion, and the `indirect` test case passes.

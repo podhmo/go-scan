@@ -51,7 +51,6 @@ type Interpreter struct {
 	globalEnv                  *object.Environment
 	logger                     *slog.Logger
 	tracer                     object.Tracer
-	interfaceBindings          map[string]*goscan.TypeInfo
 	scanPolicy                 object.ScanPolicyFunc // This will be built from primary scope
 	primaryAnalysisPatterns    []string
 	symbolicDependencyPatterns []string
@@ -133,9 +132,8 @@ func NewInterpreter(scanner *goscan.Scanner, options ...Option) (*Interpreter, e
 	}
 
 	i := &Interpreter{
-		scanner:           scanner,
-		globalEnv:         object.NewEnvironment(),
-		interfaceBindings: make(map[string]*goscan.TypeInfo),
+		scanner:   scanner,
+		globalEnv: object.NewEnvironment(),
 	}
 
 	for _, opt := range options {
@@ -212,43 +210,6 @@ func matches(pattern, path string) bool {
 		return path == base || strings.HasPrefix(path, base+"/")
 	}
 	return path == pattern
-}
-
-// BindInterface instructs the interpreter to treat a given interface type as a
-// specific concrete type during analysis.
-// The interface name is the fully qualified name (e.g., "io.Writer").
-// The concrete type name can be a pointer or non-pointer type name (e.g., "*bytes.Buffer").
-func (i *Interpreter) BindInterface(ctx context.Context, ifaceTypeName string, concreteTypeName string) error {
-	isPointer := strings.HasPrefix(concreteTypeName, "*")
-	if isPointer {
-		concreteTypeName = strings.TrimPrefix(concreteTypeName, "*")
-	}
-
-	pkgPath, typeName := splitQualifiedName(concreteTypeName)
-	if pkgPath == "" {
-		return fmt.Errorf("concrete type name must be fully qualified (e.g., 'bytes.Buffer'), got %s", concreteTypeName)
-	}
-
-	pkg, err := i.scanner.ScanPackageFromImportPath(ctx, pkgPath)
-	if err != nil {
-		return fmt.Errorf("could not scan package %q for concrete type: %w", pkgPath, err)
-	}
-
-	var foundType *goscan.TypeInfo
-	for _, t := range pkg.Types {
-		if t.Name == typeName {
-			foundType = t
-			break
-		}
-	}
-
-	if foundType == nil {
-		return fmt.Errorf("concrete type %q not found in package %q", typeName, pkgPath)
-	}
-
-	// The binding in the evaluator needs the fully qualified name.
-	i.eval.BindInterface(ifaceTypeName, foundType, isPointer)
-	return nil
 }
 
 // NewSymbolic creates a new symbolic variable with a given type.

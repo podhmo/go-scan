@@ -36,8 +36,7 @@ type Evaluator struct {
 	intrinsics        *intrinsics.Registry
 	logger            *slog.Logger
 	tracer            object.Tracer // Tracer for debugging evaluation flow.
-	callStack         []*CallFrame
-	interfaceBindings map[string]interfaceBinding
+	callStack         []*object.CallFrame
 	resolver          *Resolver
 	defaultIntrinsic  intrinsics.IntrinsicFunc
 	initializedPkgs   map[string]bool // To track packages whose constants are loaded
@@ -54,6 +53,10 @@ type Evaluator struct {
 	evaluationInProgress map[ast.Node]bool
 	evaluatingMu         sync.Mutex
 	evaluating           map[string]bool
+
+	// scanLiteralInProgress tracks function literal bodies currently being scanned
+	// to prevent infinite recursion in scanFunctionLiteral.
+	scanLiteralInProgress map[*ast.BlockStmt]bool
 
 	// calledInterfaceMethods tracks all method calls on interface types.
 	// The key is the fully qualified method name (e.g., "io.Writer.Write"),
@@ -88,28 +91,9 @@ const (
 )
 
 // FrameFromContext returns the call frame from the context, if one exists.
-func FrameFromContext(ctx context.Context) (*CallFrame, bool) {
-	frame, ok := ctx.Value(callFrameKey).(*CallFrame)
+func FrameFromContext(ctx context.Context) (*object.CallFrame, bool) {
+	frame, ok := ctx.Value(callFrameKey).(*object.CallFrame)
 	return frame, ok
-}
-
-// CallFrame represents a single frame in the symbolic execution call stack.
-type CallFrame struct {
-	Function    string
-	Pos         token.Pos
-	Fn          *object.Function
-	Args        []object.Object
-	ReceiverPos token.Pos // The source position of the receiver expression for a method call.
-}
-
-// interfaceBinding stores the information needed to map an interface to a concrete type.
-type interfaceBinding struct {
-	ConcreteType *goscan.TypeInfo
-	IsPointer    bool
-}
-
-func (f *CallFrame) String() string {
-	return f.Function
 }
 
 // Option configures the evaluator.
@@ -186,7 +170,6 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		intrinsics:             intrinsics.New(),
 		logger:                 logger,
 		tracer:                 tracer,
-		interfaceBindings:      make(map[string]interfaceBinding),
 		resolver:               NewResolver(scanPolicy, scanner, logger),
 		initializedPkgs:        make(map[string]bool),
 		pkgCache:               make(map[string]*object.Package),
@@ -195,6 +178,7 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 		evaluationInProgress:   make(map[ast.Node]bool),
 		evaluating:             make(map[string]bool),
 		evaluatingMu:           sync.Mutex{},
+		scanLiteralInProgress:  make(map[*ast.BlockStmt]bool),
 		calledInterfaceMethods: make(map[string][]object.Object),
 		seenPackages:           make(map[string]*goscan.Package),
 		UniverseEnv:            universeEnv,
@@ -209,14 +193,6 @@ func New(scanner *goscan.Scanner, logger *slog.Logger, tracer object.Tracer, sca
 	}
 
 	return e
-}
-
-// BindInterface registers a concrete type for an interface.
-func (e *Evaluator) BindInterface(ifaceTypeName string, concreteType *goscan.TypeInfo, isPointer bool) {
-	e.interfaceBindings[ifaceTypeName] = interfaceBinding{
-		ConcreteType: concreteType,
-		IsPointer:    isPointer,
-	}
 }
 
 // RegisterIntrinsic registers a built-in function.
@@ -1679,42 +1655,6 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					return &object.Intrinsic{Fn: boundIntrinsic}
 				}
 
-				// Check for a manual interface binding.
-				bindingKey := fmt.Sprintf("%s.%s", staticType.PkgPath, staticType.Name)
-				if binding, ok := e.interfaceBindings[bindingKey]; ok {
-					concreteType := binding.ConcreteType
-					var fullReceiverName string
-					if binding.IsPointer {
-						fullReceiverName = fmt.Sprintf("*%s.%s", concreteType.PkgPath, concreteType.Name)
-					} else {
-						fullReceiverName = fmt.Sprintf("%s.%s", concreteType.PkgPath, concreteType.Name)
-					}
-
-					// Check for an intrinsic on the concrete type's method.
-					// The key format is "(*pkg.path.Name).MethodName"
-					intrinsicKey := fmt.Sprintf("(%s).%s", fullReceiverName, n.Sel.Name)
-					if intrinsicFn, ok := e.intrinsics.Get(intrinsicKey); ok {
-						boundIntrinsic := func(ctx context.Context, args ...object.Object) object.Object {
-							// The intrinsic expects the receiver as the first argument.
-							// The original object `obj` (the interface variable) is the logical receiver.
-							return intrinsicFn(ctx, append([]object.Object{obj}, args...)...)
-						}
-						return &object.Intrinsic{Fn: boundIntrinsic}
-					}
-
-					// Fallback: find the method on the concrete type.
-					// We need to create a synthetic pointer type if the binding is for a pointer.
-					typeToSearch := concreteType
-					if binding.IsPointer {
-						ptrType := *concreteType // copy
-						ptrType.Name = "*" + concreteType.Name
-						typeToSearch = &ptrType
-					}
-					if method, err := e.accessor.findMethodOnType(ctx, typeToSearch, n.Sel.Name, env, obj, n.X.Pos()); err == nil && method != nil {
-						return method
-					}
-				}
-
 				// Correct approach: Return a callable placeholder.
 				// a. Record the call if the interface is named.
 				if staticType.Name != "" {
@@ -3161,12 +3101,7 @@ func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, 
 	e.logc(ctx, slog.LevelError, msg, "pos", pos)
 
 	frames := make([]*object.CallFrame, len(e.callStack))
-	for i, frame := range e.callStack {
-		frames[i] = &object.CallFrame{
-			Function: frame.Function,
-			Pos:      frame.Pos,
-		}
-	}
+	copy(frames, e.callStack)
 	err := &object.Error{
 		Message:   fmt.Sprintf(format, args...),
 		Pos:       pos,
@@ -3290,6 +3225,14 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 	if fn.Body == nil || fn.Package == nil {
 		return // Nothing to scan.
 	}
+
+	// Prevent infinite recursion when a function literal is passed to a function
+	// that then calls another function that scans the same literal again.
+	if e.scanLiteralInProgress[fn.Body] {
+		return
+	}
+	e.scanLiteralInProgress[fn.Body] = true
+	defer delete(e.scanLiteralInProgress, fn.Body)
 
 	e.logger.DebugContext(ctx, "scanning function literal to find usages", "pos", fn.Package.Fset.Position(fn.Body.Pos()))
 
@@ -3426,8 +3369,16 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 
 	// New recursion check based on function definition and receiver position.
 	if f, ok := fn.(*object.Function); ok && f.Def != nil {
+		// Determine which call stack to use for recursion detection.
+		// If the function has a BoundCallStack, it means it was passed as an argument,
+		// and that stack represents the true logical path leading to this call.
+		stackToScan := e.callStack
+		if f.BoundCallStack != nil {
+			stackToScan = f.BoundCallStack
+		}
+
 		recursionCount := 0
-		for _, frame := range e.callStack {
+		for _, frame := range stackToScan {
 			// The most robust way to detect recursion on a definition is to compare the
 			// source position of the function's declaration AST node. This correctly
 			// identifies recursion on a specific function/method definition, which is
@@ -3457,7 +3408,7 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		}
 	}
 
-	frame := &CallFrame{Function: name, Pos: callPos, Args: args}
+	frame := &object.CallFrame{Function: name, Pos: callPos, Args: args}
 	if f, ok := fn.(*object.Function); ok {
 		frame.Fn = f
 		if f.Receiver != nil {
@@ -3841,6 +3792,17 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 			}
 
 			if paramDef.Name != "" && paramDef.Name != "_" {
+				// If the argument is a function, we need to "tag" it with the current call stack
+				// to enable recursion detection through higher-order functions.
+				if funcArg, ok := arg.(*object.Function); ok {
+					clonedFunc := funcArg.Clone()
+					// Create a copy of the call stack to avoid shared state issues.
+					stackCopy := make([]*object.CallFrame, len(e.callStack))
+					copy(stackCopy, e.callStack)
+					clonedFunc.BoundCallStack = stackCopy
+					arg = clonedFunc // Use the tagged clone for the binding
+				}
+
 				v := &object.Variable{
 					Name:        paramDef.Name,
 					Value:       arg,

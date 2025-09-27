@@ -3372,7 +3372,7 @@ func (e *Evaluator) scanFunctionLiteral(ctx context.Context, fn *object.Function
 	// It's enclosed by the environment where the function was defined.
 	fnEnv := object.NewEnclosedEnvironment(fn.Env)
 
-	// **FIX**: Bind receiver if it's a method value.
+	// Bind receiver if it's a method value.
 	if fn.Receiver != nil && fn.Decl != nil && fn.Decl.Recv != nil && len(fn.Decl.Recv.List) > 0 {
 		recvField := fn.Decl.Recv.List[0]
 		if len(recvField.Names) > 0 && recvField.Names[0].Name != "" {

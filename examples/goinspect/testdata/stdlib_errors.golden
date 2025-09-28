@@ -1,14 +1,14 @@
-func errors.Is(error, error) #1
-  func errors.is(error, error, bool) #2
-    func .Is(error) #3
-    [recursive] func errors.is(error, error, bool) #2
-func errors.As(error, any) #4
-  func errors.as(error, any, reflectlite.Value, reflectlite.Type) #5
-    func .As(any) #3
+func errors.New(string) #1
+[accessor] func (*errorString).Error() #2
+func errors.Join([]error) #3
+func (*joinError).Error() #4
+[accessor] func (*joinError).Unwrap() #5
 func errors.Unwrap(error) #6
-  func .Unwrap() #3
-func errors.New(string) #7
-[accessor] func (*errorString).Error() #8
-func errors.Join([]error) #9
-func (*joinError).Error() #10
-[accessor] func (*joinError).Unwrap() #11
+  func .Unwrap() #7
+func errors.Is(error, error) #8
+  func errors.is(error, error, bool) #9
+    func .Is(error) #7
+    [recursive] func errors.is(error, error, bool) #9
+func errors.As(error, any) #10
+  func errors.as(error, any, reflectlite.Value, reflectlite.Type) #11
+    func .As(any) #7

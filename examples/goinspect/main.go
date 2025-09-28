@@ -97,6 +97,9 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 func run(out io.Writer, logger *slog.Logger, pkgPatterns, withPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 	ctx := context.Background()
 
+	// Set parallelism to 1 for deterministic output ordering
+	ctx = scanner.WithParallelismLimit(ctx, 1)
+
 	// 2. Scan packages using goscan.
 	s, err := goscan.New(
 		goscan.WithLogger(logger),

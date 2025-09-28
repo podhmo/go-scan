@@ -19,6 +19,24 @@ import (
 // resolutionCacheKey is used to pass a map for tracking in-progress type resolutions.
 type resolutionCacheKey struct{}
 
+// parallelismLimitKey is used to pass the parallelism limit through context.
+type parallelismLimitKey struct{}
+
+// WithParallelismLimit returns a context with the specified parallelism limit.
+// If limit is <= 0, no limit is applied (unlimited concurrency).
+func WithParallelismLimit(ctx context.Context, limit int) context.Context {
+	return context.WithValue(ctx, parallelismLimitKey{}, limit)
+}
+
+// getParallelismLimit extracts the parallelism limit from context.
+// Returns 0 if no limit is set (meaning unlimited concurrency).
+func getParallelismLimit(ctx context.Context) int {
+	if limit, ok := ctx.Value(parallelismLimitKey{}).(int); ok {
+		return limit
+	}
+	return 0 // No limit
+}
+
 // fileParseResult holds the result of parsing a single Go source file.
 type fileParseResult struct {
 	filePath string
@@ -241,6 +259,11 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	// Stage 1: Parallel Parsing
 	results := make(chan fileParseResult, len(filePaths))
 	g, gCtx := errgroup.WithContext(ctx)
+
+	// Apply parallelism limit if specified in context
+	if limit := getParallelismLimit(ctx); limit > 0 {
+		g.SetLimit(limit)
+	}
 
 	for _, filePath := range filePaths {
 		fp := filePath // create a new variable for the closure

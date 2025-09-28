@@ -72,7 +72,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if err := run(os.Stdout, logger, pkgPatterns, withPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
+	if err := run(context.Background(), os.Stdout, logger, pkgPatterns, withPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
@@ -94,11 +94,7 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
 }
 
-func run(out io.Writer, logger *slog.Logger, pkgPatterns, withPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
-	ctx := context.Background()
-
-	// Set parallelism to 1 for deterministic output ordering
-	ctx = scanner.WithParallelismLimit(ctx, 1)
+func run(ctx context.Context, out io.Writer, logger *slog.Logger, pkgPatterns, withPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 
 	// 2. Scan packages using goscan.
 	s, err := goscan.New(

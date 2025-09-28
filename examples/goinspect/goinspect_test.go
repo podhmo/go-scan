@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"io"
 	"log/slog"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/podhmo/go-scan/scanner"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -101,7 +104,11 @@ func TestGoInspect(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-			err := run(&buf, logger, tc.pkgPatterns, tc.withPatterns, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
+			// Set parallelism to 1 for deterministic output ordering in tests
+			ctx := context.Background()
+			ctx = scanner.WithParallelismLimit(ctx, 1)
+
+			err := run(ctx, &buf, logger, tc.pkgPatterns, tc.withPatterns, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
 			if err != nil {
 				t.Fatalf("run() failed: %v", err)
 			}

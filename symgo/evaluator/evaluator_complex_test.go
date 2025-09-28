@@ -139,18 +139,18 @@ func TestEvalComplexInfixExpression_WithSymbolicPlaceholder(t *testing.T) {
 	eval := New(s, nil, nil, nil)
 
 	tests := []struct {
-		name string
-		left object.Object
+		name  string
+		left  object.Object
 		right object.Object
 	}{
 		{
-			name: "left is symbolic",
-			left: &object.SymbolicPlaceholder{Reason: "symbolic float"},
+			name:  "left is symbolic",
+			left:  &object.SymbolicPlaceholder{Reason: "symbolic float"},
 			right: &object.Complex{Value: 1 + 2i},
 		},
 		{
-			name: "right is symbolic",
-			left: &object.Complex{Value: 1 + 2i},
+			name:  "right is symbolic",
+			left:  &object.Complex{Value: 1 + 2i},
 			right: &object.SymbolicPlaceholder{Reason: "symbolic float"},
 		},
 	}

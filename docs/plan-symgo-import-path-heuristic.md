@@ -2,40 +2,29 @@
 
 ## 1. Objective
 
-Improve the heuristic in `symgo` for guessing package names from import paths to handle more complex cases, such as versioned paths and paths with prefixes or hyphens.
+Improve the heuristic in `symgo` for guessing package names from import paths to handle more complex cases, such as versioned paths and paths with prefixes or hyphens. This ensures that the symbolic execution engine can correctly resolve identifiers from unscanned packages.
 
 ## 2. Background
 
-The current symbolic execution engine (`symgo`) sometimes fails to resolve the correct package name from an import path. This leads to `identifier not found` errors when analyzing code that uses certain libraries. For example, the user reported an error `level=ERROR msg="identifier not found: isatty"` when analyzing a dependency on `github.com/mattn/go-isatty`.
+The `symgo` engine sometimes fails to resolve the correct package name from an import path, leading to `identifier not found` errors. This was observed with packages like `github.com/mattn/go-isatty`.
 
-The current heuristic needs to be enhanced to correctly infer the package name in such scenarios.
+The initial approach of creating a single "perfect" heuristic proved too rigid, as different conventions exist (e.g., `go-isatty` becomes `isatty`, but `go-scan` becomes `goscan`). The final, more robust approach is to generate multiple likely candidates for the package name and try each one.
 
-## 3. Requirements
+## 3. Final Implementation
 
-The improved heuristic should correctly handle the following cases:
+1.  **Generate Multiple Candidates**:
+    -   The `guessPackageNameFromImportPath` function in `symgo/evaluator/evaluator.go` was modified to return a slice of strings (`[]string`) instead of a single string.
+    -   For an import path like `github.com/mattn/go-isatty`, it now generates a list of potential candidates, such as `["goisatty", "isatty"]`.
+    -   The heuristic handles various patterns, including version suffixes (`/v5`), `gopkg.in` style paths, `.git` suffixes, and hyphens.
 
--   **Versioned Paths**:
-    -   `"github.com/go-chi/chi/v5"` -> `chi`
--   **Prefixed and Hyphenated Paths**:
-    -   `"github.com/mattn/go-isatty"` -> `isatty` (or `goisatty`)
--   **Subpackages (No Change)**: The existing behavior for subpackages should be preserved.
-    -   `"github.com/go-chi/chi/v5/middleware"` -> `middleware`
+2.  **Iterative Checking**:
+    -   The `evalIdent` function, which is responsible for resolving identifiers, was updated to handle the slice of candidates.
+    -   It now iterates through the list of guessed names and checks if any of them match the identifier being used in the code. This makes the resolution process more flexible and resilient to different package naming conventions.
 
-## 4. Implementation Plan
+3.  **Comprehensive Testing**:
+    -   A dedicated unit test file, `symgo/evaluator/guess_package_name_test.go`, was created to validate the multi-candidate generation logic.
+    -   Test cases were added to cover a wide range of import path styles and ensure the correct set of candidates is generated for each.
 
-1.  **Locate the Heuristic Logic**: Identify the code in the `symgo` package (likely within the resolver or package loading components) that is responsible for converting an import path to a package name.
-2.  **Enhance the Heuristic**: Modify the logic to incorporate the new rules:
-    -   If the last element of the path is a version string (e.g., `vN`), use the second-to-last element as the package name.
-    -   If a package name starts with `go-`, create a candidate name by stripping the prefix.
-    -   If a package name contains hyphens (`-`), create a candidate name by removing them.
-    -   The final package name should be a valid Go identifier. The logic should sanitize the derived name (e.g., by removing hyphens).
-3.  **Create a New Test File**: Add a new test file, `symgo/symgo_versioned_import_test.go`, to specifically test these new heuristics.
-4.  **Add Test Cases**:
-    -   Create a test case for `"github.com/go-chi/chi/v5"`.
-    -   Create a test case for `"github.com/mattn/go-isatty"`.
-    -   Create a test case for `"github.com/go-chi/chi/v5/middleware"` to ensure no regressions.
-5.  **Iterate and Refine**: Run the tests and refine the implementation until all tests pass and the desired behavior is achieved.
+## 4. Status
 
-## 5. Status
-
--   [ ] **In Progress**
+-   [x] **Completed**

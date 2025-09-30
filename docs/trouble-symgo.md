@@ -1,53 +1,118 @@
-# `symgo` Robustness Report: Identifier Resolution in Test Code
-
-This document details the analysis and resolution of a critical identifier resolution issue within the `symgo` symbolic execution engine, discovered when analyzing test files.
+# `symgo` Fails to Warn on Member Access via Embedded Pointer to Out-of-Policy Type
 
 ## 1. Problem Description
 
-When running `symgo`-based tools like `find-orphans` with test file analysis enabled (`--include-tests`), the evaluator would fail with numerous `identifier not found` errors.
+The `symgo` symbolic execution engine is designed to be resilient to incomplete information, particularly when analyzing code that depends on packages outside the defined scan policy. When a method or field is accessed on a struct that embeds a type from an out-of-policy package, `symgo` should log a `WARN` message and return a symbolic placeholder, allowing analysis to continue.
 
-**Symptom:**
+This mechanism works for directly embedded out-of-policy types but fails for structs that have a chain of embedded types where one in the middle is out-of-policy.
 
-The analysis logs would show many errors similar to the following, originating from various test files across the project:
+### Example Failure Case
+
+Consider the following Go code structure:
+
+```go
+// In-policy package "main"
+package main
+
+import "example.com/out-of-policy/cli"
+
+type Application struct {
+	*cli.Application // Embedded pointer to an out-of-policy type
+}
+
+func NewCLI() *Application {
+	a := &Application{}
+	// This call should produce a warning, not a fatal error.
+	a.UsageTemplate() // UsageTemplate is a method on cli.Application
+	return a
+}
+```
+
+When `symgo` analyzes `NewCLI`, it attempts to resolve `a.UsageTemplate()`. Because `cli.Application` is from an out-of-policy package, its definition is not available. The expected behavior is a warning.
+
+Instead, `symgo` produces a fatal error, halting the analysis:
 
 ```
-level=ERROR msg="identifier not found: sampleAPIPath" in_func=TestDocgen exec_pos=...
-level=ERROR msg="symbolic execution failed for entry point" function=...TestDocgen error="symgo runtime error: identifier not found: sampleAPIPath..."
+level=ERROR msg="undefined method or field: UsageTemplate for pointer type INSTANCE" in_func=NewCLI
 ```
 
-These errors prevented `symgo` from correctly analyzing any test functions that used locally defined constants, significantly limiting its utility for whole-program analysis that includes test code.
+## 2. Root Cause Analysis (Updated)
 
-## 2. Root Cause Analysis
+The initial fix was insufficient. The true root cause lies in how the recursive search functions in `symgo/evaluator/accessor.go` handle errors returned from nested recursive calls.
 
-The investigation revealed that the issue was specific to how the `symgo` evaluator handled declarations within the scope of a function, particularly when that function was an entry point for analysis (as is common for tests).
+1.  **Incomplete Policy Check for Pointers**: The accessor failed to look "through" pointer types (`field.Type.Elem`) to get the correct import path for the policy check. This was addressed in the first attempt.
 
-1.  **Local Constants in Tests:** Go tests frequently define local constants within the test function body for convenience (e.g., `const sampleAPIPath = "..."`).
-2.  **Statement-by-Statement Evaluation:** The `symgo` evaluator processes the statements within a function body sequentially. It does not pre-scan the entire function body to hoist all declarations.
-3.  **Missing `const` Handler:** The core of the bug was a critical omission in the `evalGenDecl` function, which is responsible for handling `var`, `type`, and `const` declarations. While it had logic for `var` and `type`, it was completely missing a `case token.CONST`.
-4.  **The Crash:** Because the `const` handler was missing, any `const` declaration inside a function was simply ignored. When a later statement in the function attempted to use that constant, the `evalIdent` function would look for it in the current environment, fail to find it, and produce the `identifier not found` error, halting the analysis of that function.
+2.  **Premature Termination on Recursive Error**: This is the deeper issue. When `findMethodRecursive` or `findFieldRecursive` makes a recursive call on an embedded field, it checks the returned `err`. The previous fix correctly returned `ErrUnresolvedEmbedded` from the base case. However, the **caller** of the recursive function would see this error and immediately `return foundFn, err`, terminating its own search loop over other embedded fields.
 
-## 3. Solution Implemented
+The correct behavior is to treat `ErrUnresolvedEmbedded` as a signal to continue searching other sibling embedded types, not as a fatal error that should stop the entire lookup process for the current type.
 
-The fix involved implementing the missing logic for constant declarations within the evaluator, making it correctly recognize and process them.
+## 3. Proposed Solution (Revised)
 
--   **File Modified:** `symgo/evaluator/evaluator.go`
--   **Function Modified:** `evalGenDecl`
+The `accessor` logic will be refactored to correctly handle the `ErrUnresolvedEmbedded` signal within its recursive search loops.
 
-A new `case token.CONST` was added to the `switch` statement in `evalGenDecl`. The new logic correctly handles the semantics of constant declarations:
+The `findFieldRecursive` and `findMethodRecursive` functions will be modified as follows:
 
--   It iterates through all constant specifications in a `const (...)` block.
--   It correctly handles value repetition (e.g., `const (a = 1; b; c)` where `b` and `c` inherit the value of `a`).
--   To correctly handle `iota`, it creates a temporary, enclosed environment for each constant's value expression, binding the current `iota` value within it.
--   It uses the evaluator's own `e.Eval` method to evaluate the constant's value expression.
--   Finally, it adds the resulting constant object to the current function's scope using `env.SetLocal()`, ensuring it is available for subsequent statements.
+1.  **Introduce a State Variable**: A boolean variable, `unresolvedEmbeddedEncountered`, will track if an out-of-policy type was seen anywhere in the search tree.
 
-This change ensures that `symgo` correctly processes `const` declarations as it encounters them, making the identifiers available for the rest of the symbolic execution process within that function.
+2.  **Continue on `ErrUnresolvedEmbedded`**: Inside the loop that iterates over embedded fields, the code will check the error returned from the recursive call.
+    - If `err` is `ErrUnresolvedEmbedded`, the loop will **continue** to the next embedded field. It will *not* return immediately.
+    - If `err` is any other non-nil error, it will be returned immediately as it represents an unexpected failure.
 
-## 4. Verification
+3.  **Deferred Error Return**: After the search loop over all embedded fields is complete, the function will check the state. If a matching member was **not** found *and* `unresolvedEmbeddedEncountered` is `true`, only then will it return `nil, ErrUnresolvedEmbedded`.
 
-The fix was validated through two methods:
+This change ensures that `symgo` performs a truly exhaustive search of all resolvable types. It correctly treats `ErrUnresolvedEmbedded` as a non-fatal condition during recursion, propagating it to the top-level caller only when no other resolution is possible. This will restore the desired "warn and continue" behavior.
 
-1.  **New Unit Test:** A new test, `TestSymgo_LocalConstantResolution`, was added in a new file, `symgo/symgo_local_const_test.go`. This test specifically defines a function with a local constant and asserts that `symgo` can correctly resolve and return its value. This test failed before the fix and passed after, confirming the solution's effectiveness and preventing future regressions.
-2.  **End-to-End Test:** The `make -C examples/find-orphans` command was re-run. A review of the generated `find-orphans.out` log confirmed that all `identifier not found` errors related to local constants in test files were successfully eliminated.
+---
 
-While a separate issue causing `not a function: NIL` errors in `minigo` tests remains, the primary bug preventing the analysis of test code with local constants has been resolved.
+## 4. Final Root Cause and Solution (Third Attempt)
+
+The previous fixes to `accessor.go` were necessary pre-conditions but did not solve the problem entirely. The error persisted.
+
+### Final Root Cause
+
+The true root cause was a logical flaw in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function for `*object.Instance` and `*object.Pointer` cases.
+
+The code performed separate checks for errors from method and field lookups:
+
+```go
+// Simplified logic
+method, methodErr := a.accessor.findMethodOnType(...)
+field, fieldErr := a.accessor.findFieldOnType(...)
+
+// ... other checks ...
+
+if fieldErr == ErrUnresolvedEmbedded {
+    // Log warning and return placeholder for field
+}
+if methodErr == ErrUnresolvedEmbedded {
+    // Log warning and return placeholder for method
+}
+
+return e.newError(ctx, n.Pos(), "undefined method or field...")
+```
+
+This is incorrect. If `findMethodOnType` returns `ErrUnresolvedEmbedded` but `findFieldOnType` returns `nil, nil` (as nothing was found), the first `if` is false, the second is true (logging a warning), but execution **continues** and hits the final `newError` line, causing the fatal error.
+
+### Correct Solution
+
+The fix is to restructure the error handling into a mutually exclusive `if-else if` chain. This correctly handles all possibilities:
+
+1.  **Ambiguity**: Both method and field lookups return `ErrUnresolvedEmbedded`.
+2.  **Unresolved Field**: Only the field lookup returns `ErrUnresolvedEmbedded`.
+3.  **Unresolved Method**: Only the method lookup returns `ErrUnresolvedEmbedded`.
+
+The corrected logic looks like this:
+
+```go
+// ...
+if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
+    // Handle ambiguity
+} else if fieldErr == ErrUnresolvedEmbedded {
+    // Handle unresolved field
+} else if methodErr == ErrUnresolvedEmbedded {
+    // Handle unresolved method
+}
+// Only if none of the above are true do we fall through to the fatal error.
+```
+
+This change will be applied to the logic for both `*object.Instance` and `*object.Pointer` receivers within `evalSelectorExpr` to finally resolve the bug.

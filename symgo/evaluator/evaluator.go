@@ -2154,27 +2154,24 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			// If we are here, both lookups failed or were ambiguous.
-			// If both lookups resulted in an unresolved embedded error, we have an ambiguity.
 			// Defer the decision by returning a special object.
 			if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
 				return &object.AmbiguousSelector{
 					Receiver: val,
 					Sel:      n.Sel,
 				}
-			}
-
-			// If only one of them was an unresolved error, we can make a reasonable guess.
-			if fieldErr == ErrUnresolvedEmbedded {
+			} else if fieldErr == ErrUnresolvedEmbedded {
+				// If only the field lookup was unresolved, assume it's a field.
 				e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", val.TypeName)
 				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
-			}
-			if methodErr == ErrUnresolvedEmbedded {
+			} else if methodErr == ErrUnresolvedEmbedded {
+				// If only the method lookup was unresolved, assume it's a method.
 				e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", val.TypeName)
 				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
 			}
 		}
 
-		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
+		return e.newError(ctx, n.Pos(), "undefined method or field: %s for %s", n.Sel.Name, val.TypeName)
 	case *object.Pointer:
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.
@@ -2201,13 +2198,10 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 						Receiver: val,
 						Sel:      n.Sel,
 					}
-				}
-
-				if fieldErr == ErrUnresolvedEmbedded {
+				} else if fieldErr == ErrUnresolvedEmbedded {
 					e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", instance.TypeName)
 					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
-				}
-				if methodErr == ErrUnresolvedEmbedded {
+				} else if methodErr == ErrUnresolvedEmbedded {
 					e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", instance.TypeName)
 					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
 				}

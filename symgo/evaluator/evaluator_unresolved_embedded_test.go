@@ -194,3 +194,110 @@ func (app *Application) Run() {}`,
 		}
 	})
 }
+
+func TestUnresolvedEmbedded_DirectPointer(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/m",
+		"app/app.go": `
+package app
+import "example.com/m/cli"
+func markerFunc() {}
+// Application embeds a pointer to a type from an out-of-policy package.
+type Application struct {
+	*cli.Application
+}
+func DoWork() {
+	app := &Application{}
+	app.Run() // This access should trigger a warning, not an error.
+	markerFunc() // Analysis should continue to this function.
+	return
+}`,
+		"cli/cli.go": `
+package cli
+type Application struct {
+	Name string
+}
+func (app *Application) Run() {}`,
+	}
+
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	t.Run("access method on directly embedded pointer to out-of-policy type", func(t *testing.T) {
+		var buf bytes.Buffer
+		h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+		calledFunctions := make(map[string]bool)
+
+		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+			mainPkg := pkgs[0]
+			var fnDef *goscan.FunctionInfo
+			for _, fn := range mainPkg.Functions {
+				if fn.Name == "DoWork" {
+					fnDef = fn
+					break
+				}
+			}
+			if fnDef == nil {
+				return fmt.Errorf("function DoWork not found")
+			}
+
+			tracker := func(ctx context.Context, args ...object.Object) object.Object {
+				if len(args) > 0 {
+					if fn, ok := args[0].(*object.Function); ok {
+						if fn.Def != nil {
+							key := fn.Def.PkgPath + "." + fn.Def.Name
+							calledFunctions[key] = true
+						}
+					}
+				}
+				return nil
+			}
+
+			// The 'cli' package is out-of-policy
+			evaluator := New(s, slog.New(h), nil, func(path string) bool {
+				return path != "example.com/m/cli"
+			})
+			evaluator.RegisterDefaultIntrinsic(tracker)
+
+			appPkgObj, err := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
+			if err != nil {
+				return fmt.Errorf("could not load package: %w", err)
+			}
+			fnObj := evaluator.GetOrResolveFunctionForTest(ctx, appPkgObj, fnDef)
+
+			result := evaluator.Apply(ctx, fnObj, nil, mainPkg)
+			if err, ok := result.(*object.Error); ok {
+				return fmt.Errorf("got unexpected error, but want success: %+v", err.Error())
+			}
+
+			var logEntry map[string]any
+			logOutput := buf.String()
+			if logOutput == "" {
+				return fmt.Errorf("expected a WARN log message, but got no log output")
+			}
+			if err := json.Unmarshal([]byte(logOutput), &logEntry); err != nil {
+				return fmt.Errorf("failed to unmarshal log output: %v\noutput: %s", err, logOutput)
+			}
+
+			expectedMsg := "assuming method exists on unresolved embedded type"
+			if msg, _ := logEntry["msg"].(string); msg != expectedMsg {
+				return fmt.Errorf("unexpected log message: got %q, want %q", msg, expectedMsg)
+			}
+
+			expectedMethodName := "Run"
+			if name, _ := logEntry["method_name"].(string); name != expectedMethodName {
+				return fmt.Errorf("unexpected method_name: got %q, want %q", name, expectedMethodName)
+			}
+
+			if !calledFunctions["example.com/m/app.markerFunc"] {
+				return fmt.Errorf("expected markerFunc to be called, but it was not")
+			}
+			return nil
+		}
+
+		_, err := scantest.Run(t, t.Context(), dir, []string{"example.com/m/app"}, action, scantest.WithModuleRoot(dir))
+		if err != nil {
+			t.Fatalf("scantest.Run() failed: %v", err)
+		}
+	})
+}

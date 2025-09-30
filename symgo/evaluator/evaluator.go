@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"regexp"
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
@@ -20,6 +21,27 @@ import (
 	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
+
+// versionSuffixRegex matches a trailing /vN path segment.
+var versionSuffixRegex = regexp.MustCompile(`^v[0-9]+$`)
+
+// guessPackageNameFromImportPath provides a heuristic to determine a package's
+// name from its import path. It handles common versioning schemes like
+// "github.com/go-chi/chi/v5", which should resolve to "chi".
+func guessPackageNameFromImportPath(path string) string {
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+
+	last := parts[len(parts)-1]
+	if versionSuffixRegex.MatchString(last) {
+		if len(parts) > 1 {
+			return parts[len(parts)-2]
+		}
+	}
+	return last
+}
 
 // MaxCallStackDepth is the maximum depth of the call stack to prevent excessive recursion.
 const MaxCallStackDepth = 4096
@@ -3146,11 +3168,8 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 						}
 					} else {
 						// If the package is just a placeholder (not scanned due to policy),
-						// we can't know its real name for sure. As a strong heuristic for
-						// packages without an alias, we assume the identifier name matches
-						// the base of the import path. This works for `fmt`, `os`, etc.
-						parts := strings.Split(importPath, "/")
-						assumedName := parts[len(parts)-1]
+						// we can't know its real name for sure. Use our heuristic to guess it.
+						assumedName := guessPackageNameFromImportPath(importPath)
 						if n.Name == assumedName {
 							return pkgObj
 						}

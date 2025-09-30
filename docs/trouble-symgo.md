@@ -61,3 +61,58 @@ The `findFieldRecursive` and `findMethodRecursive` functions will be modified as
 3.  **Deferred Error Return**: After the search loop over all embedded fields is complete, the function will check the state. If a matching member was **not** found *and* `unresolvedEmbeddedEncountered` is `true`, only then will it return `nil, ErrUnresolvedEmbedded`.
 
 This change ensures that `symgo` performs a truly exhaustive search of all resolvable types. It correctly treats `ErrUnresolvedEmbedded` as a non-fatal condition during recursion, propagating it to the top-level caller only when no other resolution is possible. This will restore the desired "warn and continue" behavior.
+
+---
+
+## 4. Final Root Cause and Solution (Third Attempt)
+
+The previous fixes to `accessor.go` were necessary pre-conditions but did not solve the problem entirely. The error persisted.
+
+### Final Root Cause
+
+The true root cause was a logical flaw in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function for `*object.Instance` and `*object.Pointer` cases.
+
+The code performed separate checks for errors from method and field lookups:
+
+```go
+// Simplified logic
+method, methodErr := a.accessor.findMethodOnType(...)
+field, fieldErr := a.accessor.findFieldOnType(...)
+
+// ... other checks ...
+
+if fieldErr == ErrUnresolvedEmbedded {
+    // Log warning and return placeholder for field
+}
+if methodErr == ErrUnresolvedEmbedded {
+    // Log warning and return placeholder for method
+}
+
+return e.newError(ctx, n.Pos(), "undefined method or field...")
+```
+
+This is incorrect. If `findMethodOnType` returns `ErrUnresolvedEmbedded` but `findFieldOnType` returns `nil, nil` (as nothing was found), the first `if` is false, the second is true (logging a warning), but execution **continues** and hits the final `newError` line, causing the fatal error.
+
+### Correct Solution
+
+The fix is to restructure the error handling into a mutually exclusive `if-else if` chain. This correctly handles all possibilities:
+
+1.  **Ambiguity**: Both method and field lookups return `ErrUnresolvedEmbedded`.
+2.  **Unresolved Field**: Only the field lookup returns `ErrUnresolvedEmbedded`.
+3.  **Unresolved Method**: Only the method lookup returns `ErrUnresolvedEmbedded`.
+
+The corrected logic looks like this:
+
+```go
+// ...
+if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
+    // Handle ambiguity
+} else if fieldErr == ErrUnresolvedEmbedded {
+    // Handle unresolved field
+} else if methodErr == ErrUnresolvedEmbedded {
+    // Handle unresolved method
+}
+// Only if none of the above are true do we fall through to the fatal error.
+```
+
+This change will be applied to the logic for both `*object.Instance` and `*object.Pointer` receivers within `evalSelectorExpr` to finally resolve the bug.

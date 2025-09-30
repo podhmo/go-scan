@@ -56,6 +56,7 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 	}
 
 	// 2. If not found, search in embedded structs.
+	var encounteredUnresolved bool
 	for _, field := range typeInfo.Struct.Fields {
 		if field.Embedded {
 			// If the embedded field itself has the name we're looking for (promoted field)
@@ -63,22 +64,36 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 				return field, nil
 			}
 
-			// If the embedded type is from a package outside the scan policy, we cannot resolve it.
-			// Return a special error to signal this to the caller.
+			// Check if the embedded type is from an out-of-policy package.
 			if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-				return nil, ErrUnresolvedEmbedded
+				encounteredUnresolved = true
+				continue // Don't stop; continue searching other embedded fields.
 			}
 
 			embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 			if embeddedTypeInfo != nil {
-				if foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited); err != nil || foundField != nil {
-					return foundField, err
+				foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited)
+				if err != nil {
+					// If the recursive call returned an unresolved error, propagate that fact.
+					if err == ErrUnresolvedEmbedded {
+						encounteredUnresolved = true
+					} else {
+						return nil, err // Propagate other, unexpected errors.
+					}
+				}
+				if foundField != nil {
+					return foundField, nil // Found it, we're done.
 				}
 			}
 		}
 	}
 
-	return nil, nil // Not found
+	// 3. If we finish the loop without finding the field, check if we hit an unresolved path.
+	if encounteredUnresolved {
+		return nil, ErrUnresolvedEmbedded
+	}
+
+	return nil, nil // Not found and no unresolved paths encountered.
 }
 
 // findMethodOnType recursively finds a method on a type or its embedded types.
@@ -111,25 +126,40 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	}
 
 	// 2. If not found, search in embedded structs.
+	var encounteredUnresolved bool
 	if typeInfo.Struct != nil {
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
 				if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-					return nil, ErrUnresolvedEmbedded
+					encounteredUnresolved = true
+					continue // Don't stop; continue searching other embedded fields.
 				}
 
 				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 				if embeddedTypeInfo != nil {
 					// Recursive call, passing the original receiver.
-					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited); err != nil || foundFn != nil {
-						return foundFn, err
+					foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited)
+					if err != nil {
+						if err == ErrUnresolvedEmbedded {
+							encounteredUnresolved = true
+						} else {
+							return nil, err // Propagate other, unexpected errors.
+						}
+					}
+					if foundFn != nil {
+						return foundFn, nil // Found it.
 					}
 				}
 			}
 		}
 	}
 
-	return nil, nil // Not found
+	// 3. If we finish the loop without finding the method, check if we hit an unresolved path.
+	if encounteredUnresolved {
+		return nil, ErrUnresolvedEmbedded
+	}
+
+	return nil, nil // Not found and no unresolved paths encountered.
 }
 
 func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos) (*object.Function, error) {

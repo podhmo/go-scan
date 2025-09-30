@@ -27,20 +27,40 @@ var versionSuffixRegex = regexp.MustCompile(`^v[0-9]+$`)
 
 // guessPackageNameFromImportPath provides a heuristic to determine a package's
 // name from its import path. It handles common versioning schemes like
-// "github.com/go-chi/chi/v5", which should resolve to "chi".
+// "github.com/go-chi/chi/v5" (-> "chi") and prefixes like "github.com/mattn/go-isatty" (-> "isatty").
 func guessPackageNameFromImportPath(path string) string {
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 {
 		return ""
 	}
 
-	last := parts[len(parts)-1]
-	if versionSuffixRegex.MatchString(last) {
-		if len(parts) > 1 {
-			return parts[len(parts)-2]
+	// Start with the last path segment.
+	name := parts[len(parts)-1]
+
+	// Handle gopkg.in/some-pkg.vN by splitting on the dot.
+	if strings.HasPrefix(path, "gopkg.in/") {
+		if dotIndex := strings.LastIndex(name, "."); dotIndex > 0 {
+			name = name[:dotIndex]
 		}
 	}
-	return last
+
+	// If the last segment is a version suffix (e.g., "v5"), use the segment before it.
+	if versionSuffixRegex.MatchString(name) {
+		if len(parts) > 1 {
+			name = parts[len(parts)-2]
+		}
+	}
+
+	// Remove ".git" suffix if present
+	name = strings.TrimSuffix(name, ".git")
+
+	// Remove "go-" prefix if it exists.
+	name = strings.TrimPrefix(name, "go-")
+
+	// Remove all hyphens.
+	name = strings.ReplaceAll(name, "-", "")
+
+	return name
 }
 
 // MaxCallStackDepth is the maximum depth of the call stack to prevent excessive recursion.

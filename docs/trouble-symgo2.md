@@ -1,58 +1,69 @@
-# Trouble with Method Values as Higher-Order Function Arguments
+# `symgo`: Method Call on Pointer Return Value Fails
 
-This document details the investigation into a bug where `symgo` fails to resolve an identifier within a method that is passed as a value to a higher-order function.
+This document outlines a bug in the `symgo` evaluator where it fails to resolve method calls on pointer types returned directly from functions.
 
-## 1. Symptom
+## 1. Problem
 
-When running `goinspect` on the `net/http/httptest` package, the analysis fails with an "identifier not found" error.
+The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer that was returned from a function.
 
-```sh
-$ goinspect -pkg net/http/httptest > /dev/null
-
-level=ERROR msg="identifier not found: s" \
-  symgo.in_func=Close \
-  symgo.pos=/opt/homebrew/Cellar/go/1.24.3/libexec/src/net/http/httptest/server.go:255:2
+**Error Log:**
+```
+level=ERROR msg="undefined method or field: String for pointer type RETURN_VALUE"
 ```
 
-The error occurs within the `(*Server).Close` method, which contains the following code:
-
+**Example Go Code:**
 ```go
-// /opt/homebrew/Cellar/go/1.24.3/libexec/src/net/http/httptest/server.go
+// timeutil/date.go
+package timeutil
 
-func (s *Server) Close() {
-    // ...
-    t := time.AfterFunc(5*time.Second, s.logCloseHangDebugInfo)
-    // ...
+type Date string
+
+func (d Date) String() string {
+    return string(d)
 }
 
-func (s *Server) logCloseHangDebugInfo() {
-	s.mu.Lock() // ERROR: identifier not found: s
-    // ...
+// main.go
+package main
+
+func GetDate() *timeutil.Date {
+    d := timeutil.Date("2024-01-01")
+    return &d
+}
+
+func main() {
+    // This call fails during symgo analysis
+    s := GetDate().String()
 }
 ```
-
-The issue is triggered when `symgo` attempts to analyze the body of `logCloseHangDebugInfo`, which was passed as an argument to `time.AfterFunc`.
+In standard Go, this is perfectly valid. The `String()` method, which has a value receiver `(d Date)`, is correctly called on the pointer `*timeutil.Date` via automatic pointer dereferencing. The `symgo` engine fails to replicate this behavior.
 
 ## 2. Root Cause Analysis
 
-Analysis of the debug logs (`-log-level debug`) revealed the precise mechanism of the failure.
+The issue lies in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function, which handles expressions like `x.y`.
 
-1.  **`evalCallExpr` Heuristic**: The `symgo` evaluator's `evalCallExpr` function contains a heuristic to proactively discover function calls within arguments. When it sees a call like `time.AfterFunc(..., s.logCloseHangDebugInfo)`, it identifies `s.logCloseHangDebugInfo` as a function-like argument.
+1.  **Function Call Evaluation:** The call to `GetDate()` is evaluated first. The `symgo` engine correctly determines it returns a pointer to a `Date` object. The result is wrapped in an `*object.ReturnValue`.
+2.  **Selector Expression Evaluation:** The `evalSelectorExpr` function is then called to resolve `.String()`.
+    -   It correctly unwraps the `*object.ReturnValue` at the beginning of the function, so the expression it analyzes (`left`) becomes an `*object.Pointer`.
+    -   It enters the `case *object.Pointer:` block.
+    -   Inside this block, it inspects the pointer's `Value` (the `pointee`).
+3.  **The Failure:** The `pointee` in this scenario is an `*object.Instance` of `Date`. However, the logic inside the `case *object.Pointer:` block does not check for registered intrinsics, which are essential for testing and for handling certain standard library functions. It attempts to resolve the method directly from type information, but because the test relies on an intrinsic, the call is never registered.
 
-2.  **`scanFunctionLiteral` is Triggered**: This heuristic immediately invokes `scanFunctionLiteral` on the `object.Function` representing `s.logCloseHangDebugInfo`. The purpose of this scan is to trace any calls *inside* the function body without fully evaluating the higher-order function (`time.AfterFunc`) it is passed to.
+As a result, the test assertion fails. The original user-reported error was slightly different but stemmed from the same core issue: incomplete logic for handling pointer receivers.
 
-3.  **The Flaw: Missing Receiver Context**: The core of the problem lies in `scanFunctionLiteral`. This function creates a new, temporary environment to symbolically execute the function's body. It correctly populates this environment with symbolic placeholders for the function's *parameters*. However, it **does not account for the function's receiver**.
+## 3. Proposed Solution
 
-4.  **Execution Failure**: When `scanFunctionLiteral` begins evaluating the body of `logCloseHangDebugInfo`, its environment is missing the receiver `s`. The first statement it encounters is `s.mu.Lock()`. The evaluator looks for `s` in the current (temporary) environment, cannot find it, and throws the "identifier not found: s" error.
+The fix is to enhance the `case *object.Pointer:` block in `evalSelectorExpr`.
 
-The `object.Function` created for the method value correctly contains the receiver instance in its `Receiver` field. The failure is that `scanFunctionLiteral` does not utilize this information when constructing the evaluation environment.
+1.  **Unwrap ReturnValue:** Add a check to see if the `pointee` is of type `*object.ReturnValue` and unwrap it. This handles cases where a function returns a pointer to a pointer.
+2.  **Add Intrinsic Checks:** Before resolving the method from type info, add checks for registered intrinsics for both pointer (`(*T).Method`) and value (`(T).Method`) receivers, mirroring the logic that already exists for `*object.Instance` receivers.
 
-## 3. Path to Resolution
+This change will make the symbolic evaluator correctly model Go's automatic pointer dereferencing for method calls and ensure that intrinsics for pointer types are correctly resolved.
 
-The fix requires modifying `scanFunctionLiteral` in `symgo/evaluator/evaluator.go`. The function must be updated to check if the `object.Function` it is scanning has a non-nil `Receiver`.
+## 4. Plan
 
-If a receiver exists, `scanFunctionLiteral` must:
-1.  Identify the receiver's name from the function's AST declaration (`fn.Decl.Recv`).
-2.  Bind the `fn.Receiver` object to that name within the new, temporary environment before evaluating the function body.
-
-This will mirror the logic already present in `extendFunctionEnv` for regular function calls, ensuring that the method's receiver is correctly in scope during the symbolic scan.
+1.  **[COMPLETED]** Create this document (`docs/trouble-symgo2.md`).
+2.  **[PENDING]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
+3.  **[PENDING]** Run tests to confirm the failure.
+4.  **[PENDING]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
+5.  **[PENDING]** Run tests to verify the fix and check for regressions.
+6.  **[PENDING]** Update `TODO.md`.

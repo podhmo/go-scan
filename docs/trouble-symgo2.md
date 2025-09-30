@@ -62,8 +62,8 @@ This change will make the symbolic evaluator correctly model Go's automatic poin
 ## 4. Plan
 
 1.  **[COMPLETED]** Create this document (`docs/trouble-symgo2.md`).
-2.  **[PENDING]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
-3.  **[PENDING]** Run tests to confirm the failure.
-4.  **[PENDING]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
-5.  **[PENDING]** Run tests to verify the fix and check for regressions.
-6.  **[PENDING]** Update `TODO.md`.
+2.  **[COMPLETED]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
+3.  **[COMPLETED]** Run tests to confirm the failure.
+4.  **[COMPLETED]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
+5.  **[COMPLETED]** Run tests to verify the fix and check for regressions.
+6.  **[COMPLETED]** Update `TODO.md`.

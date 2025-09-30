@@ -64,8 +64,11 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 				return field, nil
 			}
 
-			// Check if the embedded type is from an out-of-policy package.
-			if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
+			// An embedded field is considered "unresolved" if its import path is missing
+			// (indicating incomplete type info from the scanner) or if it's explicitly
+			// outside the scan policy.
+			isUnresolved := field.Type.FullImportPath == "" || !a.eval.resolver.ScanPolicy(field.Type.FullImportPath)
+			if isUnresolved {
 				encounteredUnresolved = true
 				continue // Don't stop; continue searching other embedded fields.
 			}
@@ -74,9 +77,8 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 			if embeddedTypeInfo != nil {
 				foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited)
 				if err != nil {
-					// If the recursive call returned an unresolved error, propagate that fact.
 					if err == ErrUnresolvedEmbedded {
-						encounteredUnresolved = true
+						encounteredUnresolved = true // Propagate unresolved status from deeper calls.
 					} else {
 						return nil, err // Propagate other, unexpected errors.
 					}
@@ -130,7 +132,11 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	if typeInfo.Struct != nil {
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
-				if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
+				// An embedded field is considered "unresolved" if its import path is missing
+				// (indicating incomplete type info from the scanner) or if it's explicitly
+				// outside the scan policy.
+				isUnresolved := field.Type.FullImportPath == "" || !a.eval.resolver.ScanPolicy(field.Type.FullImportPath)
+				if isUnresolved {
 					encounteredUnresolved = true
 					continue // Don't stop; continue searching other embedded fields.
 				}
@@ -141,7 +147,7 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 					foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited)
 					if err != nil {
 						if err == ErrUnresolvedEmbedded {
-							encounteredUnresolved = true
+							encounteredUnresolved = true // Propagate unresolved status from deeper calls.
 						} else {
 							return nil, err // Propagate other, unexpected errors.
 						}

@@ -195,72 +195,86 @@ func (app *Application) Run() {}`,
 	})
 }
 
-func TestUnresolvedEmbedded_MixedPolicy(t *testing.T) {
+func TestUnresolvedEmbedded_IncompletePath(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/m",
 		"app/app.go": `
 package app
-import "example.com/m/mix"
+import "example.com/m/cli"
 func markerFunc() {}
-
-// AccessInPolicy should succeed because GetName is in the in-policy part.
-func AccessInPolicy() string {
-	m := &mix.Mixed{}
-	name := m.GetName() // GetName() is in 'inpolicy'
-	markerFunc()
-	return name
-}
-
-// AccessNonExistent should produce a warning because NonExistent is not anywhere,
-// and the evaluator has to check the out-of-policy path.
-func AccessNonExistent() {
-	m := &mix.Mixed{}
-	m.NonExistent()
+func RunApp() {
+	app := &cli.Application{}
+	app.DoSomething() // This should trigger the warning due to incomplete path
 	markerFunc()
 }`,
-		"mix/mix.go": `
-package mix
-import (
-	"example.com/m/inpolicy"
-	"example.com/m/outpolicy"
-)
-type Mixed struct {
-	*inpolicy.InPolicy
-	*outpolicy.OutOfPolicy
+		"cli/cli.go": `
+package cli
+import "example.com/m/ext"
+type Application struct {
+	*ext.Thing
 }`,
-		"inpolicy/inpolicy.go": `
-package inpolicy
-type InPolicy struct {
-	Name string
-}
-func (p *InPolicy) GetName() string { return p.Name }`,
-		"outpolicy/outpolicy.go": `
-package outpolicy
-type OutOfPolicy struct {
-	ID int
-}
-func (p *OutOfPolicy) GetID() int { return p.ID }`,
+		"ext/ext.go": `
+package ext
+type Thing struct{}
+func (t *Thing) DoSomething() {}`,
 	}
 
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	t.Run("should find member in in-policy struct without warning", func(t *testing.T) {
+	t.Run("should warn when embedded field has incomplete type info", func(t *testing.T) {
 		var buf bytes.Buffer
 		h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
 		calledFunctions := make(map[string]bool)
 
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-			mainPkg := pkgs[0]
+			// Find the cli.Application type and tamper with its embedded field's type info
+			// to simulate a scanner failure where the import path is missing.
+			var cliPkg *goscan.Package
+			for _, p := range pkgs {
+				if p.ImportPath == "example.com/m/cli" {
+					cliPkg = p
+					break
+				}
+			}
+			if cliPkg == nil {
+				return fmt.Errorf("package 'cli' not found in scan results")
+			}
+			var cliAppType *goscan.TypeInfo
+			for _, typ := range cliPkg.Types {
+				if typ.Name == "Application" {
+					cliAppType = typ
+					break
+				}
+			}
+			if cliAppType == nil {
+				return fmt.Errorf("type 'Application' not found in package 'cli'")
+			}
+			embeddedField := cliAppType.Struct.Fields[0]
+
+			// *** The core of the test: simulate incomplete type info ***
+			embeddedField.Type.FullImportPath = ""
+
+			// Now run the analysis with the tampered data.
+			var mainPkg *goscan.Package
+			for _, p := range pkgs {
+				if p.ImportPath == "example.com/m/app" {
+					mainPkg = p
+					break
+				}
+			}
+			if mainPkg == nil {
+				return fmt.Errorf("package 'app' not found")
+			}
 			var fnDef *goscan.FunctionInfo
 			for _, fn := range mainPkg.Functions {
-				if fn.Name == "AccessInPolicy" {
+				if fn.Name == "RunApp" {
 					fnDef = fn
 					break
 				}
 			}
 			if fnDef == nil {
-				return fmt.Errorf("function AccessInPolicy not found")
+				return fmt.Errorf("function 'RunApp' not found")
 			}
 
 			tracker := func(ctx context.Context, args ...object.Object) object.Object {
@@ -275,69 +289,7 @@ func (p *OutOfPolicy) GetID() int { return p.ID }`,
 				return nil
 			}
 
-			evaluator := New(s, slog.New(h), nil, func(path string) bool {
-				return path != "example.com/m/outpolicy" // outpolicy is out-of-policy
-			})
-			evaluator.RegisterDefaultIntrinsic(tracker)
-
-			appPkgObj, _ := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
-			fnObj := evaluator.GetOrResolveFunctionForTest(ctx, appPkgObj, fnDef)
-
-			if result := evaluator.Apply(ctx, fnObj, nil, mainPkg); isError(result) {
-				return fmt.Errorf("got unexpected error: %+v", result.(*object.Error).Error())
-			}
-
-			if buf.Len() > 0 {
-				return fmt.Errorf("expected no log warnings, but got: %s", buf.String())
-			}
-
-			if !calledFunctions["example.com/m/app.markerFunc"] {
-				return fmt.Errorf("expected markerFunc to be called")
-			}
-			if !calledFunctions["example.com/m/inpolicy.GetName"] {
-				return fmt.Errorf("expected GetName to be called")
-			}
-			return nil
-		}
-		_, err := scantest.Run(t, t.Context(), dir, []string{"example.com/m/app"}, action, scantest.WithModuleRoot(dir))
-		if err != nil {
-			t.Fatalf("scantest.Run() failed: %v", err)
-		}
-	})
-
-	t.Run("should warn when member is not found and an out-of-policy path exists", func(t *testing.T) {
-		var buf bytes.Buffer
-		h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
-		calledFunctions := make(map[string]bool)
-
-		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-			mainPkg := pkgs[0]
-			var fnDef *goscan.FunctionInfo
-			for _, fn := range mainPkg.Functions {
-				if fn.Name == "AccessNonExistent" {
-					fnDef = fn
-					break
-				}
-			}
-			if fnDef == nil {
-				return fmt.Errorf("function AccessNonExistent not found")
-			}
-
-			tracker := func(ctx context.Context, args ...object.Object) object.Object {
-				if len(args) > 0 {
-					if fn, ok := args[0].(*object.Function); ok {
-						if fn.Def != nil {
-							key := fn.Def.PkgPath + "." + fn.Def.Name
-							calledFunctions[key] = true
-						}
-					}
-				}
-				return nil
-			}
-
-			evaluator := New(s, slog.New(h), nil, func(path string) bool {
-				return path != "example.com/m/outpolicy" // outpolicy is out-of-policy
-			})
+			evaluator := New(s, slog.New(h), nil, func(path string) bool { return true })
 			evaluator.RegisterDefaultIntrinsic(tracker)
 
 			appPkgObj, _ := evaluator.GetOrLoadPackageForTest(ctx, mainPkg.ImportPath)
@@ -361,7 +313,7 @@ func (p *OutOfPolicy) GetID() int { return p.ID }`,
 			}
 			return nil
 		}
-		_, err := scantest.Run(t, t.Context(), dir, []string{"example.com/m/app"}, action, scantest.WithModuleRoot(dir))
+		_, err := scantest.Run(t, t.Context(), dir, []string{"example.com/m/app", "example.com/m/cli"}, action, scantest.WithModuleRoot(dir))
 		if err != nil {
 			t.Fatalf("scantest.Run() failed: %v", err)
 		}

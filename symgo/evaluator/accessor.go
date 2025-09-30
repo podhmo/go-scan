@@ -240,10 +240,14 @@ func (a *accessor) findDirectMethodInfoOnType(ctx context.Context, typeInfo *sca
 
 	pkgObj, err := a.eval.getOrLoadPackage(ctx, typeInfo.PkgPath)
 	if err != nil || pkgObj.ScannedInfo == nil {
+		if pkgObj.ScannedInfo == nil {
+			a.eval.logc(ctx, slog.LevelDebug, "could not get or load package for method resolution", "package", typeInfo.PkgPath)
+			return nil, nil
+		}
 		if err != nil && strings.Contains(err.Error(), "cannot find package") {
 			return nil, nil
 		}
-		a.eval.logc(ctx, slog.LevelWarn, "could not get or load package for method resolution", "package", typeInfo.PkgPath, "error", err)
+		a.eval.logc(ctx, slog.LevelWarn, "unexpected error for method resolution", "package", typeInfo.PkgPath, "error", err)
 		return nil, nil
 	}
 	methodPkg := pkgObj.ScannedInfo

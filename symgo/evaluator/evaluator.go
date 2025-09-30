@@ -2264,6 +2264,17 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("selection from unresolved type %s.%s", val.PkgPath, val.TypeName),
 		}
+
+	// Add robust handling for types that don't support selection. Instead of
+	// erroring out and halting analysis, return a symbolic placeholder. This allows
+	// analysis to continue even with unusual or unexpected code patterns.
+	case *object.Function, *object.Map, *object.Slice, *object.String, *object.Intrinsic, *object.PanicError:
+		e.logc(ctx, slog.LevelDebug,
+			"selector expression on unsupported type, returning placeholder",
+			"type", val.Type(), "selector", n.Sel.Name,
+		)
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("selector on unsupported type %s", val.Type())}
+
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}

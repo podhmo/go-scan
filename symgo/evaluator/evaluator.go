@@ -1030,6 +1030,11 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		return rightObj
 	}
 
+	// If the expression was a function call, unwrap the return value.
+	if ret, ok := rightObj.(*object.ReturnValue); ok {
+		rightObj = ret.Value
+	}
+
 	// For most unary operations, we need the concrete value.
 	// But for the address-of operator (&), we must NOT evaluate, because we need
 	// the variable/expression itself, not its value.
@@ -1125,22 +1130,38 @@ func (e *Evaluator) evalNumericUnaryExpression(ctx context.Context, op token.Tok
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of unary operator %s on symbolic value", op)}
 	}
 
-	if right.Type() != object.INTEGER_OBJ {
-		// Allow unary minus on floats and complex numbers later if needed.
-		return e.newError(ctx, token.NoPos, "unary operator %s not supported for type %s", op, right.Type())
-	}
-	value := right.(*object.Integer).Value
-
-	switch op {
-	case token.SUB:
-		return &object.Integer{Value: -value}
-	case token.ADD:
-		return &object.Integer{Value: value} // Unary plus is a no-op.
-	case token.XOR:
-		return &object.Integer{Value: ^value} // Bitwise NOT.
+	switch val := right.(type) {
+	case *object.Integer:
+		switch op {
+		case token.SUB:
+			return &object.Integer{Value: -val.Value}
+		case token.ADD:
+			return &object.Integer{Value: val.Value} // Unary plus is a no-op.
+		case token.XOR:
+			return &object.Integer{Value: ^val.Value} // Bitwise NOT.
+		default:
+			return e.newError(ctx, token.NoPos, "unhandled numeric unary operator for INTEGER: %s", op)
+		}
+	case *object.Float:
+		switch op {
+		case token.SUB:
+			return &object.Float{Value: -val.Value}
+		case token.ADD:
+			return &object.Float{Value: val.Value}
+		default:
+			return e.newError(ctx, token.NoPos, "unhandled numeric unary operator for FLOAT: %s", op)
+		}
+	case *object.Complex:
+		switch op {
+		case token.SUB:
+			return &object.Complex{Value: -val.Value}
+		case token.ADD:
+			return &object.Complex{Value: val.Value}
+		default:
+			return e.newError(ctx, token.NoPos, "unhandled numeric unary operator for COMPLEX: %s", op)
+		}
 	default:
-		// This case should be unreachable due to the switch in evalUnaryExpr.
-		return e.newError(ctx, token.NoPos, "unhandled numeric unary operator: %s", op)
+		return e.newError(ctx, token.NoPos, "unary operator %s not supported for type %s", op, right.Type())
 	}
 }
 

@@ -72,6 +72,11 @@ func TestGuessPackageNameFromImportPath(t *testing.T) {
 			importPath: "foobar",
 			want:       []string{"foobar"},
 		},
+		{
+			msg:        "go- suffix and version",
+			importPath: "github.com/stripe/stripe-go/v79",
+			want:       []string{"stripe", "stripego"},
+		},
 	}
 
 	for _, tc := range testcases {

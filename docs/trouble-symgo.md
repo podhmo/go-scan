@@ -51,3 +51,44 @@ The fix was validated through two methods:
 2.  **End-to-End Test:** The `make -C examples/find-orphans` command was re-run. A review of the generated `find-orphans.out` log confirmed that all `identifier not found` errors related to local constants in test files were successfully eliminated.
 
 While a separate issue causing `not a function: NIL` errors in `minigo` tests remains, the primary bug preventing the analysis of test code with local constants has been resolved.
+
+---
+
+# `symgo` Robustness Report: Selector Expression on Non-Struct Types
+
+This document details the analysis and resolution of a class of errors in the `symgo` symbolic execution engine where a selector expression (e.g., `X.Y`) was used on an object `X` that was not a struct, pointer to a struct, or package.
+
+## 1. Problem Description
+
+When analyzing certain codebases, the `symgo` evaluator would crash with errors indicating that it could not perform a selection on various built-in or fundamental types.
+
+**Symptoms:**
+
+The analysis logs showed errors such as:
+
+-   `expected a package, instance, or pointer on the left side of selector, but got FUNCTION`
+-   `undefined method or field: Has for pointer type MAP`
+-   `expected a package, instance, or pointer on the left side of selector, but got PANIC`
+-   `expected a package, instance, or pointer on the left side of selector, but got SLICE`
+-   `expected a package, instance, or pointer on the left side of selector, but got STRING`
+
+These errors occurred in `evalSelectorExpr` within `symgo/evaluator/evaluator.go`. The core issue was that the evaluator's logic for handling `ast.SelectorExpr` was not robust enough. It assumed the left-hand side would always be a type that could contain fields or methods (like a struct or a package). When it encountered other types (functions, maps, slices, strings, etc.), it would halt the analysis by returning an error. This behavior is too brittle for a static analysis tool, which should be able to gracefully handle such cases and continue its analysis.
+
+## 2. Root Cause Analysis
+
+The root cause was an incomplete `switch` statement over the type of the left-hand side object (`left`) in the `evalSelectorExpr` function. The function had explicit cases for `*object.Package`, `*object.Instance` (structs), and pointers to them. However, it lacked handling for many other possible `object.Object` types that can appear as the result of expression evaluation. When `left` was one of these unhandled types, the function would fall through to a default error case, terminating the analysis of the current path.
+
+For a robust symbolic execution engine, the desired behavior in these cases is not to fail, but to assume the access might be valid in some context (perhaps via a yet-to-be-analyzed type conversion or generic) and return a `SymbolicPlaceholder`. This allows the analysis to continue down the code path, which is crucial for tools like `find-orphans` that need to traverse the entire call graph.
+
+## 3. Solution Implemented
+
+The fix involved making `evalSelectorExpr` more robust by adding handlers for the problematic types.
+
+-   **File Modified:** `symgo/evaluator/evaluator.go`
+-   **Function Modified:** `evalSelectorExpr`
+
+A new `case` was added to the `switch` statement over the left-hand side object's type. This new case handles `*object.Function`, `*object.Map`, `*object.Slice`, `*object.String`, `*object.Intrinsic`, and `*object.PanicError`. When a selector expression is used on an object of one of these types, the evaluator now logs a debug message and returns a `*object.SymbolicPlaceholder` instead of an error. This prevents the analysis from halting and aligns with `symgo`'s design philosophy of prioritizing robustness.
+
+## 4. Verification
+
+The fix was validated by adding a new test file, `symgo/evaluator/evaluator_selector_robustness_test.go`. This file contains specific test cases for selector expressions on each of the newly supported types. The tests confirm that the evaluator no longer returns an error for these cases and that the analysis can proceed. The entire test suite was run via `make test` to ensure no regressions were introduced.

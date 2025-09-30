@@ -78,10 +78,14 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 
 			embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 			if embeddedTypeInfo != nil {
-				// Pass the pointer to the state variable down the recursive call.
-				if foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited, unresolvedEmbeddedEncountered); err != nil || foundField != nil {
-					return foundField, err
+				foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited, unresolvedEmbeddedEncountered)
+				if err != nil && err != ErrUnresolvedEmbedded {
+					return nil, err // A real error occurred, propagate it.
 				}
+				if foundField != nil {
+					return foundField, nil // Found it.
+				}
+				// If err is ErrUnresolvedEmbedded or nil, continue searching other fields.
 			}
 		}
 	}
@@ -142,10 +146,14 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 
 				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 				if embeddedTypeInfo != nil {
-					// Recursive call, passing the pointer to the state variable.
-					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited, unresolvedEmbeddedEncountered); err != nil || foundFn != nil {
-						return foundFn, err
+					foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited, unresolvedEmbeddedEncountered)
+					if err != nil && err != ErrUnresolvedEmbedded {
+						return nil, err // A real error occurred, propagate it.
 					}
+					if foundFn != nil {
+						return foundFn, nil // Found it.
+					}
+					// If err is ErrUnresolvedEmbedded or nil, continue searching other fields.
 				}
 			}
 		}

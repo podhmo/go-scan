@@ -4,7 +4,7 @@
 
 The `symgo` symbolic execution engine is designed to be resilient to incomplete information, particularly when analyzing code that depends on packages outside the defined scan policy. When a method or field is accessed on a struct that embeds a type from an out-of-policy package, `symgo` should log a `WARN` message and return a symbolic placeholder, allowing analysis to continue.
 
-This mechanism works correctly for directly embedded types but fails for **embedded pointers** to out-of-policy types.
+This mechanism works for directly embedded out-of-policy types but fails for structs that have a chain of embedded types where one in the middle is out-of-policy.
 
 ### Example Failure Case
 
@@ -28,7 +28,7 @@ func NewCLI() *Application {
 }
 ```
 
-When `symgo` analyzes `NewCLI`, it attempts to resolve `a.UsageTemplate()`. Because `cli.Application` is from an out-of-policy package (`example.com/out-of-policy/cli`), its definition is not available. The expected behavior is a warning.
+When `symgo` analyzes `NewCLI`, it attempts to resolve `a.UsageTemplate()`. Because `cli.Application` is from an out-of-policy package, its definition is not available. The expected behavior is a warning.
 
 Instead, `symgo` produces a fatal error, halting the analysis:
 
@@ -36,31 +36,28 @@ Instead, `symgo` produces a fatal error, halting the analysis:
 level=ERROR msg="undefined method or field: UsageTemplate for pointer type INSTANCE" in_func=NewCLI
 ```
 
-## 2. Root Cause Analysis
+## 2. Root Cause Analysis (Updated)
 
-The root cause of this bug lies in the `accessor` component (`symgo/evaluator/accessor.go`), which is responsible for resolving method and field lookups. The current implementation has two key flaws:
+The initial fix was insufficient. The true root cause lies in how the recursive search functions in `symgo/evaluator/accessor.go` handle errors returned from nested recursive calls.
 
-1.  **Incomplete Policy Check for Pointers**: When checking an embedded field, the accessor inspects `field.Type.FullImportPath`. However, if the embedded field is a pointer (e.g., `*cli.Application`), the `FullImportPath` on the pointer type itself is often empty. The accessor fails to look "through" the pointer to the element type (`field.Type.Elem`) to get the correct import path for the policy check.
+1.  **Incomplete Policy Check for Pointers**: The accessor failed to look "through" pointer types (`field.Type.Elem`) to get the correct import path for the policy check. This was addressed in the first attempt.
 
-2.  **Premature Termination**: The accessor's recursive search for a member uses a "fail-fast" approach. The moment it encounters an out-of-policy embedded type, it immediately returns `ErrUnresolvedEmbedded`. If a struct embeds multiple types, and the out-of-policy one is checked first, the search terminates before checking other, potentially valid, in-policy embedded types. The correct behavior is to exhaust all in-policy options before concluding that the member might exist on an unresolved type.
+2.  **Premature Termination on Recursive Error**: This is the deeper issue. When `findMethodRecursive` or `findFieldRecursive` makes a recursive call on an embedded field, it checks the returned `err`. The previous fix correctly returned `ErrUnresolvedEmbedded` from the base case. However, the **caller** of the recursive function would see this error and immediately `return foundFn, err`, terminating its own search loop over other embedded fields.
 
-Because of these issues, the accessor returns `nil, nil` (member not found, no error) instead of the expected `nil, ErrUnresolvedEmbedded`. The `evaluator` then receives this result and correctly, but undesirably, concludes that the member is truly undefined, leading to the fatal error.
+The correct behavior is to treat `ErrUnresolvedEmbedded` as a signal to continue searching other sibling embedded types, not as a fatal error that should stop the entire lookup process for the current type.
 
-## 3. Proposed Solution
+## 3. Proposed Solution (Revised)
 
-The `accessor` logic will be refactored to be more robust and exhaustive. The "fail-fast" logic will be replaced with a "search-and-record" strategy.
+The `accessor` logic will be refactored to correctly handle the `ErrUnresolvedEmbedded` signal within its recursive search loops.
 
-The `findFieldRecursive` and `findMethodRecursive` functions in `symgo/evaluator/accessor.go` will be modified as follows:
+The `findFieldRecursive` and `findMethodRecursive` functions will be modified as follows:
 
-1.  **Introduce a State Variable**: A new boolean variable, `unresolvedEmbeddedEncountered`, will be added to the recursive search functions. This flag will be set to `true` whenever the search encounters an embedded type that is out of policy.
+1.  **Introduce a State Variable**: A boolean variable, `unresolvedEmbeddedEncountered`, will track if an out-of-policy type was seen anywhere in the search tree.
 
-2.  **Enhance Policy Check**: The policy check will be updated to correctly handle pointers. It will check `field.Type.FullImportPath` for non-pointers and `field.Type.Elem.FullImportPath` for pointers.
+2.  **Continue on `ErrUnresolvedEmbedded`**: Inside the loop that iterates over embedded fields, the code will check the error returned from the recursive call.
+    - If `err` is `ErrUnresolvedEmbedded`, the loop will **continue** to the next embedded field. It will *not* return immediately.
+    - If `err` is any other non-nil error, it will be returned immediately as it represents an unexpected failure.
 
-3.  **Exhaustive Search**: The search will no longer return immediately upon finding an out-of-policy type. Instead, it will:
-    a.  Set `unresolvedEmbeddedEncountered = true`.
-    b.  Skip the recursive search on that specific out-of-policy type.
-    c.  Continue searching through the remaining embedded fields.
+3.  **Deferred Error Return**: After the search loop over all embedded fields is complete, the function will check the state. If a matching member was **not** found *and* `unresolvedEmbeddedEncountered` is `true`, only then will it return `nil, ErrUnresolvedEmbedded`.
 
-4.  **Deferred Error Return**: After the search loop over all embedded fields is complete, the function will check the state variable. If a matching member was **not** found during the entire search, *and* `unresolvedEmbeddedEncountered` is `true`, only then will it return `nil, ErrUnresolvedEmbedded`.
-
-This change ensures that `symgo` performs a complete search of all resolvable types first. It correctly signals the "unresolved" condition to the evaluator only when the member is not found in any in-policy type but could potentially exist on an out-of-policy one. This will restore the desired "warn and continue" behavior for these cases.
+This change ensures that `symgo` performs a truly exhaustive search of all resolvable types. It correctly treats `ErrUnresolvedEmbedded` as a non-fatal condition during recursion, propagating it to the top-level caller only when no other resolution is possible. This will restore the desired "warn and continue" behavior.

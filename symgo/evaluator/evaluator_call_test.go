@@ -60,6 +60,93 @@ func main() { add(1, 2) }
 	}
 }
 
+func TestEvalCallExpr_MethodOnPointerReturnValue(t *testing.T) {
+	// This test reproduces a bug where a method call on a pointer that is
+	// directly returned from a function would fail.
+	// e.g., GetPointer().Method()
+	// The evaluator was not correctly unwrapping the object.ReturnValue
+	// from within the object.Pointer before attempting to find the method.
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"models/models.go": `
+package models
+type Data struct {}
+func (d *Data) IsValid() bool { return true }
+`,
+		"main.go": `
+package main
+import "example.com/me/models"
+
+func GetData() *models.Data {
+	return &models.Data{}
+}
+
+func main() {
+	_ = GetData().IsValid()
+}`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var isValidCalled bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		if mainPkg.Name != "main" {
+			for _, p := range pkgs {
+				if p.Name == "main" {
+					mainPkg = p
+					break
+				}
+			}
+		}
+
+		eval := New(s, s.Logger, nil, func(pkgPath string) bool { return true }) // Scan all
+
+		// Register an intrinsic to see if IsValid is successfully called.
+		eval.RegisterIntrinsic("(*example.com/me/models.Data).IsValid", func(ctx context.Context, args ...object.Object) object.Object {
+			isValidCalled = true
+			return object.TRUE
+		})
+
+		// Evaluate all files in the main package to populate the environment.
+		for _, file := range mainPkg.AstFiles {
+			if res := eval.Eval(ctx, file, nil, mainPkg); res != nil && isError(res) {
+				return fmt.Errorf("evaluation of file failed: %v", res)
+			}
+		}
+
+		// Find the main function to start execution.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, but %T", mainFuncObj)
+		}
+
+		// Before the fix, this applyFunction call would return an error:
+		// "undefined method or field: IsValid for pointer type RETURN_VALUE"
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, token.NoPos)
+		if result != nil && isError(result) {
+			return fmt.Errorf("applyFunction failed with an unexpected error: %v", result)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if !isValidCalled {
+		t.Error("expected IsValid method to be called, but it was not")
+	}
+}
+
 func TestEvalCallExpr_MethodValueAsArgument(t *testing.T) {
 	// This test reproduces a bug where passing a method value (e.g., `instance.myMethod`)
 	// to a higher-order function would cause an "identifier not found" error for the receiver.

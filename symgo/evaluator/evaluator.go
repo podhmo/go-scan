@@ -2186,7 +2186,34 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// When we have a selector on a pointer, we look for the method on the
 		// type of the object the pointer points to.
 		pointee := val.Value
+
+		// NEW: Unwrap ReturnValue if present. This handles method calls on pointers
+		// returned directly from functions, e.g., `getPtr().Method()`.
+		if ret, ok := pointee.(*object.ReturnValue); ok {
+			pointee = ret.Value
+		}
+
 		if instance, ok := pointee.(*object.Instance); ok {
+			// First, check for intrinsics on both pointer and value receivers.
+			// Go allows calling a value-receiver method on a pointer.
+			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
+			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+				self := val // Receiver is the pointer itself
+				fn := func(ctx context.Context, args ...object.Object) object.Object {
+					return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+				}
+				return &object.Intrinsic{Fn: fn}
+			}
+			key = fmt.Sprintf("(%s).%s", instance.TypeName, n.Sel.Name)
+			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+				self := val // Receiver is still the pointer
+				fn := func(ctx context.Context, args ...object.Object) object.Object {
+					return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+				}
+				return &object.Intrinsic{Fn: fn}
+			}
+
+			// If no intrinsic, resolve the method/field from type info.
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
 				method, methodErr := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())

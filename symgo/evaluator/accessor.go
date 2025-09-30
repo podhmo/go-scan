@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"go/ast"
 	"go/token"
 	"log/slog"
 	"strings"
@@ -66,6 +67,16 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 			}
 
 			if embeddedTypeInfo != nil {
+				if embeddedTypeInfo.Unresolved {
+					a.eval.logc(ctx, slog.LevelWarn, "assuming field exists on out-of-policy embedded type", "field_name", fieldName, "type_name", fmt.Sprintf("%s.%s", embeddedTypeInfo.PkgPath, embeddedTypeInfo.Name))
+					// Create a synthetic field. The type is unknown, so we can't fill it in.
+					return &scanner.FieldInfo{
+						Name: fieldName,
+						Type: &scanner.FieldType{
+							Name: "any", // Placeholder type
+						},
+					}, nil
+				}
 				if foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited); err != nil || foundField != nil {
 					return foundField, err
 				}
@@ -121,7 +132,19 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 					// as Unresolved. We should not attempt to find methods on it, as we don't have
 					// the source code.
 					if embeddedTypeInfo.Unresolved {
-						continue
+						a.eval.logc(ctx, slog.LevelWarn, "assuming method exists on out-of-policy embedded type", "method_name", methodName, "type_name", fmt.Sprintf("%s.%s", embeddedTypeInfo.PkgPath, embeddedTypeInfo.Name))
+						// Create a synthetic function object to represent the unresolved method call.
+						syntheticFuncInfo := &scanner.FunctionInfo{
+							Name: methodName,
+							// Parameters and Results are unknown.
+						}
+						syntheticFn := &object.Function{
+							Name:    &ast.Ident{Name: methodName},
+							Def:     syntheticFuncInfo,
+							Package: &scanner.PackageInfo{ImportPath: embeddedTypeInfo.PkgPath},
+							Env:     env, // Inherit the current environment
+						}
+						return syntheticFn.WithReceiver(receiver, receiverPos), nil
 					}
 
 					// Recursive call, passing the original receiver.

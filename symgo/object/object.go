@@ -50,6 +50,7 @@ const (
 	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
 	UNRESOLVED_TYPE_OBJ       ObjectType = "UNRESOLVED_TYPE"
 	PANIC_OBJ                 ObjectType = "PANIC"
+	AMBIGUOUS_SELECTOR_OBJ    ObjectType = "AMBIGUOUS_SELECTOR"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -1010,3 +1011,22 @@ var (
 	// FALLTHROUGH is the singleton fallthrough value.
 	FALLTHROUGH = &Fallthrough{}
 )
+
+// --- AmbiguousSelector Object ---
+
+// AmbiguousSelector represents a selector expression (e.g., `x.Y`) where it's
+// unclear if `Y` is a field or a method, typically due to unresolved embedded types.
+// The resolution is deferred to the caller (e.g., a CallExpr or AssignStmt).
+type AmbiguousSelector struct {
+	BaseObject
+	Receiver Object
+	Sel      *ast.Ident
+}
+
+// Type returns the type of the AmbiguousSelector object.
+func (as *AmbiguousSelector) Type() ObjectType { return AMBIGUOUS_SELECTOR_OBJ }
+
+// Inspect returns a string representation of the ambiguous selector.
+func (as *AmbiguousSelector) Inspect() string {
+	return fmt.Sprintf("<Ambiguous Selector: %s.%s>", as.Receiver.Inspect(), as.Sel.Name)
+}

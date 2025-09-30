@@ -11,6 +11,11 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
+// ErrUnresolvedEmbedded is a sentinel error returned when a method or field
+// search fails because it traverses into an embedded type from a package
+// that is out of the scan policy.
+var ErrUnresolvedEmbedded = fmt.Errorf("unresolved embedded type")
+
 // accessor provides methods for finding fields and methods on types,
 // handling embedded structs and method resolution.
 type accessor struct {
@@ -58,13 +63,13 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 				return field, nil
 			}
 
-			var embeddedTypeInfo *scanner.TypeInfo
+			// If the embedded type is from a package outside the scan policy, we cannot resolve it.
+			// Return a special error to signal this to the caller.
 			if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-				embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
-			} else {
-				embeddedTypeInfo, _ = field.Type.Resolve(ctx)
+				return nil, ErrUnresolvedEmbedded
 			}
 
+			embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 			if embeddedTypeInfo != nil {
 				if foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited); err != nil || foundField != nil {
 					return foundField, err
@@ -109,21 +114,12 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	if typeInfo.Struct != nil {
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
-				var embeddedTypeInfo *scanner.TypeInfo
 				if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-					embeddedTypeInfo = scanner.NewUnresolvedTypeInfo(field.Type.FullImportPath, field.Type.TypeName)
-				} else {
-					embeddedTypeInfo, _ = field.Type.Resolve(ctx)
+					return nil, ErrUnresolvedEmbedded
 				}
 
+				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 				if embeddedTypeInfo != nil {
-					// If the embedded type is from a package outside the scan policy, it will be marked
-					// as Unresolved. We should not attempt to find methods on it, as we don't have
-					// the source code.
-					if embeddedTypeInfo.Unresolved {
-						continue
-					}
-
 					// Recursive call, passing the original receiver.
 					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited); err != nil || foundFn != nil {
 						return foundFn, err
@@ -203,10 +199,6 @@ func (a *accessor) findMethodInfoRecursive(ctx context.Context, typeInfo *scanne
 
 func (a *accessor) findDirectMethodInfoOnType(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string) (*scanner.FunctionInfo, error) {
 	if typeInfo == nil || typeInfo.PkgPath == "" {
-		return nil, nil
-	}
-
-	if !a.eval.resolver.ScanPolicy(typeInfo.PkgPath) {
 		return nil, nil
 	}
 

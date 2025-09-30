@@ -2117,18 +2117,39 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		}
 
 		// Fallback to searching for methods and fields via static type info.
-		// This handles method calls and access to fields (including embedded ones)
-		// that might not be present in the concrete Fields map of the object.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
+			method, methodErr := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
+			if methodErr == nil && method != nil {
 				return method
 			}
-			// If not a method, check if it's a field on the struct (including embedded).
+
+			var field *scan.FieldInfo
+			var fieldErr error
 			if typeInfo.Struct != nil {
-				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-					// We need to resolve the field against the instance `val`, not the underlying struct.
+				field, fieldErr = e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
+				if fieldErr == nil && field != nil {
 					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
+			}
+
+			// If we are here, both lookups failed or were ambiguous.
+			// If both lookups resulted in an unresolved embedded error, we have an ambiguity.
+			// Defer the decision by returning a special object.
+			if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
+				return &object.AmbiguousSelector{
+					Receiver: val,
+					Sel:      n.Sel,
+				}
+			}
+
+			// If only one of them was an unresolved error, we can make a reasonable guess.
+			if fieldErr == ErrUnresolvedEmbedded {
+				e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", val.TypeName)
+				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
+			}
+			if methodErr == ErrUnresolvedEmbedded {
+				e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", val.TypeName)
+				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
 			}
 		}
 
@@ -2140,14 +2161,34 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
 				// The receiver for the method call is the pointer itself, not the instance.
-				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
+				method, methodErr := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
+				if methodErr == nil && method != nil {
 					return method
 				}
-				// If not a method, check for a field on the underlying struct.
+
+				var field *scan.FieldInfo
+				var fieldErr error
 				if typeInfo.Struct != nil {
-					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+					field, fieldErr = e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
+					if fieldErr == nil && field != nil {
 						return e.resolver.ResolveSymbolicField(ctx, field, instance)
 					}
+				}
+
+				if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
+					return &object.AmbiguousSelector{
+						Receiver: val,
+						Sel:      n.Sel,
+					}
+				}
+
+				if fieldErr == ErrUnresolvedEmbedded {
+					e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", instance.TypeName)
+					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
+				}
+				if methodErr == ErrUnresolvedEmbedded {
+					e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", instance.TypeName)
+					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
 				}
 			}
 		}
@@ -3089,19 +3130,32 @@ func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Ob
 	}
 }
 
-// forceEval recursively evaluates an object until it is no longer a variable.
-// This is crucial for handling variables whose initializers are other variables.
+// forceEval recursively evaluates an object until it is no longer a variable or ambiguous selector.
+// This is crucial for handling variables whose initializers are other variables and for resolving ambiguity.
 func (e *Evaluator) forceEval(ctx context.Context, obj object.Object, pkg *scan.PackageInfo) object.Object {
 	for i := 0; i < 100; i++ { // Add a loop limit to prevent infinite loops in weird cases
-		v, ok := obj.(*object.Variable)
-		if !ok {
-			return obj // Not a variable, return as is.
-		}
-		obj = e.evalVariable(ctx, v, pkg)
-		if isError(obj) {
+		switch o := obj.(type) {
+		case *object.Variable:
+			obj = e.evalVariable(ctx, o, pkg)
+			if isError(obj) {
+				return obj
+			}
+			// Loop again in case the result is another variable.
+			continue
+		case *object.AmbiguousSelector:
+			// If forceEval encounters an ambiguous selector, it means the expression
+			// is being used in a context where a value is expected (e.g., assignment,
+			// variable access). We resolve the ambiguity by assuming it's a field.
+			var typeName string
+			if typeInfo := o.Receiver.TypeInfo(); typeInfo != nil {
+				typeName = typeInfo.Name
+			}
+			e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", o.Sel.Name, "type_name", typeName)
+			return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", o.Sel.Name)}
+		default:
+			// Not a variable or ambiguous selector, return as is.
 			return obj
 		}
-		// Loop again in case the result of evaluating a variable is another variable.
 	}
 	return e.newError(ctx, token.NoPos, "evaluation depth limit exceeded, possible variable evaluation loop")
 }
@@ -3646,6 +3700,18 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 	}
 
 	switch fn := fn.(type) {
+	case *object.AmbiguousSelector:
+		// If applyFunction encounters an ambiguous selector, it means the expression
+		// is being used in a call context `expr()`. We resolve the ambiguity
+		// by assuming it's a method call.
+		var typeName string
+		if typeInfo := fn.Receiver.TypeInfo(); typeInfo != nil {
+			typeName = typeInfo.Name
+		}
+		e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", fn.Sel.Name, "type_name", typeName)
+		placeholder := &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", fn.Sel.Name)}
+		// The placeholder is now the function, so we recursively call applyFunction with it.
+		return e.applyFunction(ctx, placeholder, args, pkg, callPos)
 	case *object.InstantiatedFunction:
 		// This is the new logic for handling calls to generic functions.
 		extendedEnv := object.NewEnclosedEnvironment(fn.Function.Env)

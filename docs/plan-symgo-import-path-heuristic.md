@@ -2,29 +2,49 @@
 
 ## 1. Objective
 
-Improve the heuristic in `symgo` for guessing package names from import paths to handle more complex cases, such as versioned paths and paths with prefixes or hyphens. This ensures that the symbolic execution engine can correctly resolve identifiers from unscanned packages.
+Improve the heuristic in `symgo` for guessing package names from import paths to handle more complex cases, such as versioned paths and paths with prefixes or hyphens.
 
 ## 2. Background
 
-The `symgo` engine sometimes fails to resolve the correct package name from an import path, leading to `identifier not found` errors. This was observed with packages like `github.com/mattn/go-isatty`.
+The current symbolic execution engine (`symgo`) sometimes fails to resolve the correct package name from an import path. This leads to `identifier not found` errors when analyzing code that uses certain libraries. For example, the user reported an error `level=ERROR msg="identifier not found: isatty"` when analyzing a dependency on `github.com/mattn/go-isatty`.
 
-The initial approach of creating a single "perfect" heuristic proved too rigid, as different conventions exist (e.g., `go-isatty` becomes `isatty`, but `go-scan` becomes `goscan`). The final, more robust approach is to generate multiple likely candidates for the package name and try each one.
+The current heuristic needs to be enhanced to correctly infer the package name in such scenarios.
 
-## 3. Final Implementation
+## 3. Requirements
+
+The improved heuristic should correctly handle the following cases:
+
+-   **Versioned Paths**:
+    -   `"github.com/go-chi/chi/v5"` -> `chi`
+-   **Prefixed and Hyphenated Paths**:
+    -   `"github.com/mattn/go-isatty"` -> `isatty` (or `goisatty`)
+-   **Subpackages (No Change)**: The existing behavior for subpackages should be preserved.
+    -   `"github.com/go-chi/chi/v5/middleware"` -> `middleware`
+
+## 4. Initial Implementation Plan
+
+1.  **Locate the Heuristic Logic**: Identify the code in the `symgo` package (likely within the resolver or package loading components) that is responsible for converting an import path to a package name.
+2.  **Enhance the Heuristic**: Modify the logic to incorporate new rules.
+3.  **Create a New Test File**: Add a new test file, `symgo/evaluator/guess_package_name_test.go`, to specifically test these new heuristics.
+4.  **Add Test Cases** for various import path styles.
+5.  **Iterate and Refine**: Run the tests and refine the implementation until all tests pass.
+
+## 5. Final Implementation Details
+
+The initial plan to produce a single "perfect" package name proved too rigid for real-world cases like `go-isatty` (package `isatty`) vs. `go-scan` (package `goscan`). Based on user feedback, the approach was revised to generate multiple likely candidates.
 
 1.  **Generate Multiple Candidates**:
-    -   The `guessPackageNameFromImportPath` function in `symgo/evaluator/evaluator.go` was modified to return a slice of strings (`[]string`) instead of a single string.
-    -   For an import path like `github.com/mattn/go-isatty`, it now generates a list of potential candidates, such as `["goisatty", "isatty"]`.
-    -   The heuristic handles various patterns, including version suffixes (`/v5`), `gopkg.in` style paths, `.git` suffixes, and hyphens.
+    -   The `guessPackageNameFromImportPath` function in `symgo/evaluator/evaluator.go` was modified to return a slice of strings (`[]string`).
+    -   For an import path like `github.com/mattn/go-isatty`, it now generates `["goisatty", "isatty"]`.
+    -   For `github.com/podhmo/go-scan`, it generates `["goscan", "scan"]`.
 
 2.  **Iterative Checking**:
-    -   The `evalIdent` function, which is responsible for resolving identifiers, was updated to handle the slice of candidates.
-    -   It now iterates through the list of guessed names and checks if any of them match the identifier being used in the code. This makes the resolution process more flexible and resilient to different package naming conventions.
+    -   The `evalIdent` function, which resolves identifiers, was updated to iterate through the slice of candidates returned by `guessPackageNameFromImportPath`, checking each one against the identifier used in the code.
 
-3.  **Comprehensive Testing**:
+3.  **Testing**:
     -   A dedicated unit test file, `symgo/evaluator/guess_package_name_test.go`, was created to validate the multi-candidate generation logic.
-    -   Test cases were added to cover a wide range of import path styles and ensure the correct set of candidates is generated for each.
+    -   The tests were updated to assert against the expected slice of candidates for various import path styles.
 
-## 4. Status
+## 6. Status
 
 -   [x] **Completed**

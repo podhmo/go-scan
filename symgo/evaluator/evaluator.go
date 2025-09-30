@@ -2088,33 +2088,30 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// This handles method calls and access to fields (including embedded ones)
 		// that might not be present in the concrete Fields map of the object.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			// 1. Try to find a method.
+			// First, try to find a method.
 			method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
 			if err != nil {
 				if err == ErrUnresolvedEmbedded {
-					// Method search failed because of an unresolved type. Assume it's a method and warn.
 					e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", val.TypeName)
 					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
 				}
-				// For other errors during method search, we fall through to the field search,
-				// and then to the final error if the field is also not found.
+				// For other errors during method search, we continue to check for fields.
 			}
 			if method != nil {
-				return method // Method found successfully.
+				return method
 			}
 
-			// 2. If no method was found, try to find a field.
+			// If no method was found, check for a field.
 			if typeInfo.Struct != nil {
 				field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
 				if err != nil {
 					if err == ErrUnresolvedEmbedded {
-						// Field search also failed because of an unresolved type. Assume it's a field and warn.
 						e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", val.TypeName)
 						return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
 					}
 				}
 				if field != nil {
-					return e.resolver.ResolveSymbolicField(ctx, field, val) // Field found successfully.
+					return e.resolver.ResolveSymbolicField(ctx, field, val)
 				}
 			}
 		}
@@ -2126,11 +2123,11 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		pointee := val.Value
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
-				// 1. Try to find a method.
+				// The receiver for the method call is the pointer itself, not the instance.
 				method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
 				if err != nil {
 					if err == ErrUnresolvedEmbedded {
-						e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", typeInfo.Name)
+						e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", instance.TypeName)
 						return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
 					}
 				}
@@ -2138,12 +2135,12 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 					return method
 				}
 
-				// 2. If no method, try to find a field.
+				// If not a method, check for a field on the underlying struct.
 				if typeInfo.Struct != nil {
 					field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
 					if err != nil {
 						if err == ErrUnresolvedEmbedded {
-							e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", typeInfo.Name)
+							e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", instance.TypeName)
 							return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
 						}
 					}

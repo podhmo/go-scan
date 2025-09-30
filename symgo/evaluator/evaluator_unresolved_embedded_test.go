@@ -3,156 +3,119 @@ package evaluator_test
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
 
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo"
+	"github.com/podhmo/go-scan/symgo/evaluator"
 	"github.com/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
-// splitQualifiedName splits a name like "pkg/path.Name" into "pkg/path" and "Name".
-func splitQualifiedName(name string) (pkgPath, typeName string) {
-	lastDot := strings.LastIndex(name, ".")
-	if lastDot == -1 {
-		return "", name
-	}
-	return name[:lastDot], name[lastDot+1:]
+func TestUnresolvedEmbedded(t *testing.T) {
+	t.Run("access method on embedded struct from out-of-policy package", func(t *testing.T) {
+		r := symgotest.NewRunner()
+		pkg := r.Scanned.RequirePackage("example.com/m/app")
+		fnInfo := pkg.RequireFunction("NewAppMethod")
+
+		var buf bytes.Buffer
+		h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+		evaluator := evaluator.New(r.Scanner, slog.New(h), nil, func(path string) bool {
+			return path != "example.com/m/ext" // ext is out-of-policy
+		})
+
+		ctx := context.Background()
+		appPkgObj, err := evaluator.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			t.Fatalf("could not load package: %v", err)
+		}
+		fnObj := evaluator.GetOrResolveFunctionForTest(ctx, appPkgObj, fnInfo)
+
+		result := evaluator.Apply(ctx, fnObj, nil, pkg)
+		if err, ok := result.(*object.Error); ok {
+			t.Fatalf("got unexpected error, but want success: %+v", err)
+		}
+
+		// check for warning log
+		wantLog := `level=WARN msg="assuming method exists on unresolved embedded type" method_name=Run type_name=Application`
+		if !strings.Contains(buf.String(), wantLog) {
+			t.Errorf("did not find log entry\n  want: %q\n  logs:\n%s", wantLog, buf.String())
+		}
+	})
+
+	t.Run("access field on embedded struct from out-of-policy package", func(t *testing.T) {
+		r := symgotest.NewRunner()
+		pkg := r.Scanned.RequirePackage("example.com/m/app")
+		fnInfo := pkg.RequireFunction("NewAppField")
+
+		var buf bytes.Buffer
+		h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+		evaluator := evaluator.New(r.Scanner, slog.New(h), nil, func(path string) bool {
+			return path != "example.com/m/ext" // ext is out-of-policy
+		})
+
+		ctx := context.Background()
+		appPkgObj, err := evaluator.GetOrLoadPackageForTest(ctx, pkg.ImportPath)
+		if err != nil {
+			t.Fatalf("could not load package: %v", err)
+		}
+		fnObj := evaluator.GetOrResolveFunctionForTest(ctx, appPkgObj, fnInfo)
+
+		result := evaluator.Apply(ctx, fnObj, nil, pkg)
+		if err, ok := result.(*object.Error); ok {
+			t.Fatalf("got unexpected error, but want success: %+v", err)
+		}
+
+		// check for warning log
+		wantLog := `level=WARN msg="assuming field exists on unresolved embedded type" field_name=Name type_name=Application`
+		if !strings.Contains(buf.String(), wantLog) {
+			t.Errorf("did not find log entry\n  want: %q\n  logs:\n%s", wantLog, buf.String())
+		}
+	})
 }
 
-func TestUnresolvedEmbedded(t *testing.T) {
-	cases := []struct {
-		msg         string
-		source      map[string]string
-		entrypoint  string
-		wantLogs    []string
-	}{
-		{
-			msg: "access field on embedded struct from out-of-policy package",
-			source: map[string]string{
-				"go.mod": "module example.com/m",
-				"app/app.go": `
+func init() {
+	symgotest.AddPkg(
+		"example.com/m/app",
+		`
 package app
-import "example.com/m/lib"
-type Application struct {
-	*lib.CLI
+
+import "example.com/m/cli"
+
+func NewAppMethod() {
+	app := &cli.Application{}
+	app.Run()
+	return
 }
-func NewApp() *Application {
-	app := &Application{}
-	_ = app.Name // access embedded field
-	return app
+
+func NewAppField() string {
+	app := &cli.Application{}
+	return app.Name
 }
 `,
-				"lib/lib.go": `
-package lib
-type CLI struct {
+	)
+	symgotest.AddPkg(
+		"example.com/m/cli",
+		`
+package cli
+
+import "example.com/m/ext"
+
+type Application struct {
+	*ext.Application
+}
+`,
+	)
+	symgotest.AddPkg(
+		"example.com/m/ext",
+		`
+package ext
+
+type Application struct {
 	Name string
 }
+
+func (app *Application) Run() {}
 `,
-			},
-			entrypoint:  "example.com/m/app.NewApp",
-			wantLogs: []string{
-				`level=WARN msg="assuming field exists on unresolved embedded type" field_name=Name type_name=Application`,
-			},
-		},
-		{
-			msg: "access method on embedded struct from out-of-policy package",
-			source: map[string]string{
-				"go.mod": "module example.com/m",
-				"app/app.go": `
-package app
-import "example.com/m/lib"
-type Application struct {
-	*lib.CLI
-}
-func NewApp() *Application {
-	app := &Application{}
-	app.Run() // access embedded method
-	return app
-}
-`,
-				"lib/lib.go": `
-package lib
-type CLI struct {}
-func (c *CLI) Run() {}
-`,
-			},
-			entrypoint:  "example.com/m/app.NewApp",
-			wantLogs: []string{
-				`level=WARN msg="assuming method exists on unresolved embedded type" method_name=Run type_name=Application`,
-			},
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.msg, func(t *testing.T) {
-			dir, cleanup := scantest.WriteFiles(t, c.source)
-			defer cleanup()
-
-			var logBuf bytes.Buffer
-			logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-			scanPolicy := func(path string) bool {
-				return path == "example.com/m/app"
-			}
-
-			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-				pkgPath, fnName := splitQualifiedName(c.entrypoint)
-				if pkgPath == "" {
-					return fmt.Errorf("invalid entrypoint: %s", c.entrypoint)
-				}
-
-				interp, err := symgo.NewInterpreter(s, symgo.WithLogger(logger), symgo.WithScanPolicy(scanPolicy))
-				if err != nil {
-					return fmt.Errorf("NewInterpreter failed: %w", err)
-				}
-
-				fnObj, ok := interp.FindObjectInPackage(ctx, pkgPath, fnName)
-				if !ok {
-					return fmt.Errorf("entry point function %q not found in package %q", fnName, pkgPath)
-				}
-
-				var entryPointPkg *goscan.Package
-				for _, p := range pkgs {
-					if p.ImportPath == pkgPath {
-						entryPointPkg = p
-						break
-					}
-				}
-				if entryPointPkg == nil {
-					return fmt.Errorf("entry point package %q not found", pkgPath)
-				}
-
-				result := interp.EvaluatorForTest().Apply(ctx, fnObj, nil, entryPointPkg)
-
-				if result != nil {
-					var err *object.Error
-					if ret, ok := result.(*object.ReturnValue); ok {
-						err, _ = ret.Value.(*object.Error)
-					} else {
-						err, _ = result.(*object.Error)
-					}
-					if err != nil {
-						t.Errorf("got unexpected error, but want success: %v", err)
-					}
-				}
-
-				logs := logBuf.String()
-				for _, want := range c.wantLogs {
-					if !strings.Contains(logs, want) {
-						t.Errorf("did not find log entry\n  want: %q\n  logs:\n%s", want, logs)
-					}
-				}
-				return nil
-			}
-
-			_, err := scantest.Run(t, context.Background(), dir, []string{"./..."}, action)
-			if err != nil {
-				t.Fatalf("scantest.Run() failed unexpectedly: %+v", err)
-			}
-		})
-	}
+	)
 }

@@ -18,6 +18,8 @@ The improved heuristic should correctly handle the following cases:
     -   `"github.com/go-chi/chi/v5"` -> `chi`
 -   **Prefixed and Hyphenated Paths**:
     -   `"github.com/mattn/go-isatty"` -> `isatty` (or `goisatty`)
+-   **Suffixed and Versioned Paths**:
+    -   `"github.com/stripe/stripe-go/v79"` -> `stripe`
 -   **Subpackages (No Change)**: The existing behavior for subpackages should be preserved.
     -   `"github.com/go-chi/chi/v5/middleware"` -> `middleware`
 

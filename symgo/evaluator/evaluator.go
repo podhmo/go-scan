@@ -67,6 +67,13 @@ func guessPackageNameFromImportPath(path string) []string {
 		candidates[strippedAndSanitized] = struct{}{}
 	}
 
+	// Candidate 3: strip "-go" suffix and then sanitize
+	if strings.HasSuffix(baseName, "-go") {
+		stripped := strings.TrimSuffix(baseName, "-go")
+		strippedAndSanitized := strings.ReplaceAll(stripped, "-", "")
+		candidates[strippedAndSanitized] = struct{}{}
+	}
+
 	// Convert map to slice to return a stable (though unordered) list of unique names.
 	result := make([]string, 0, len(candidates))
 	for name := range candidates {

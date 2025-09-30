@@ -2088,14 +2088,33 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		// This handles method calls and access to fields (including embedded ones)
 		// that might not be present in the concrete Fields map of the object.
 		if typeInfo := val.TypeInfo(); typeInfo != nil {
-			if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
-				return method
+			// 1. Try to find a method.
+			method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
+			if err != nil {
+				if err == ErrUnresolvedEmbedded {
+					// Method search failed because of an unresolved type. Assume it's a method and warn.
+					e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", val.TypeName)
+					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
+				}
+				// For other errors during method search, we fall through to the field search,
+				// and then to the final error if the field is also not found.
 			}
-			// If not a method, check if it's a field on the struct (including embedded).
+			if method != nil {
+				return method // Method found successfully.
+			}
+
+			// 2. If no method was found, try to find a field.
 			if typeInfo.Struct != nil {
-				if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
-					// We need to resolve the field against the instance `val`, not the underlying struct.
-					return e.resolver.ResolveSymbolicField(ctx, field, val)
+				field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
+				if err != nil {
+					if err == ErrUnresolvedEmbedded {
+						// Field search also failed because of an unresolved type. Assume it's a field and warn.
+						e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", val.TypeName)
+						return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
+					}
+				}
+				if field != nil {
+					return e.resolver.ResolveSymbolicField(ctx, field, val) // Field found successfully.
 				}
 			}
 		}
@@ -2107,13 +2126,28 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		pointee := val.Value
 		if instance, ok := pointee.(*object.Instance); ok {
 			if typeInfo := instance.TypeInfo(); typeInfo != nil {
-				// The receiver for the method call is the pointer itself, not the instance.
-				if method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos()); err == nil && method != nil {
+				// 1. Try to find a method.
+				method, err := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
+				if err != nil {
+					if err == ErrUnresolvedEmbedded {
+						e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", typeInfo.Name)
+						return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
+					}
+				}
+				if method != nil {
 					return method
 				}
-				// If not a method, check for a field on the underlying struct.
+
+				// 2. If no method, try to find a field.
 				if typeInfo.Struct != nil {
-					if field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name); err == nil && field != nil {
+					field, err := e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
+					if err != nil {
+						if err == ErrUnresolvedEmbedded {
+							e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", typeInfo.Name)
+							return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
+						}
+					}
+					if field != nil {
 						return e.resolver.ResolveSymbolicField(ctx, field, instance)
 					}
 				}

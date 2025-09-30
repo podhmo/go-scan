@@ -36,7 +36,7 @@ func TestUnresolvedEmbedded(t *testing.T) {
 				"go.mod": "module example.com/m",
 				"app/app.go": `
 package app
-import "lib"
+import "example.com/m/lib"
 type Application struct {
 	*lib.CLI
 }
@@ -55,7 +55,7 @@ type CLI struct {
 			},
 			entrypoint:  "example.com/m/app.NewApp",
 			wantLogs: []string{
-				`"msg":"assuming field exists on out-of-policy embedded type","field_name":"Name","type_name":"lib.CLI"`,
+				`level=WARN msg="assuming field exists on unresolved embedded type" field_name=Name type_name=Application`,
 			},
 		},
 		{
@@ -64,7 +64,7 @@ type CLI struct {
 				"go.mod": "module example.com/m",
 				"app/app.go": `
 package app
-import "lib"
+import "example.com/m/lib"
 type Application struct {
 	*lib.CLI
 }
@@ -82,7 +82,7 @@ func (c *CLI) Run() {}
 			},
 			entrypoint:  "example.com/m/app.NewApp",
 			wantLogs: []string{
-				`"msg":"assuming method exists on out-of-policy embedded type","method_name":"Run","type_name":"lib.CLI"`,
+				`level=WARN msg="assuming method exists on unresolved embedded type" method_name=Run type_name=Application`,
 			},
 		},
 	}
@@ -129,13 +129,14 @@ func (c *CLI) Run() {}
 				result := interp.EvaluatorForTest().Apply(ctx, fnObj, nil, entryPointPkg)
 
 				if result != nil {
-					if err, ok := result.(*object.Error); ok {
-						t.Errorf("got unexpected error, but want success: %v", err)
-					}
+					var err *object.Error
 					if ret, ok := result.(*object.ReturnValue); ok {
-						if err, ok := ret.Value.(*object.Error); ok {
-							t.Errorf("got unexpected error, but want success: %v", err)
-						}
+						err, _ = ret.Value.(*object.Error)
+					} else {
+						err, _ = result.(*object.Error)
+					}
+					if err != nil {
+						t.Errorf("got unexpected error, but want success: %v", err)
 					}
 				}
 

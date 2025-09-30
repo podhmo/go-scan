@@ -26,41 +26,53 @@ import (
 var versionSuffixRegex = regexp.MustCompile(`^v[0-9]+$`)
 
 // guessPackageNameFromImportPath provides a heuristic to determine a package's
-// name from its import path. It handles common versioning schemes like
-// "github.com/go-chi/chi/v5" (-> "chi") and prefixes like "github.com/mattn/go-isatty" (-> "isatty").
-func guessPackageNameFromImportPath(path string) string {
-	parts := strings.Split(path, "/")
-	if len(parts) == 0 {
-		return ""
+// potential names from its import path. It returns a slice of candidates.
+func guessPackageNameFromImportPath(path string) []string {
+	if path == "" {
+		return nil
 	}
+	parts := strings.Split(path, "/")
 
 	// Start with the last path segment.
-	name := parts[len(parts)-1]
+	baseName := parts[len(parts)-1]
 
 	// Handle gopkg.in/some-pkg.vN by splitting on the dot.
 	if strings.HasPrefix(path, "gopkg.in/") {
-		if dotIndex := strings.LastIndex(name, "."); dotIndex > 0 {
-			name = name[:dotIndex]
+		if dotIndex := strings.LastIndex(baseName, "."); dotIndex > 0 {
+			baseName = baseName[:dotIndex]
 		}
 	}
 
 	// If the last segment is a version suffix (e.g., "v5"), use the segment before it.
-	if versionSuffixRegex.MatchString(name) {
+	if versionSuffixRegex.MatchString(baseName) {
 		if len(parts) > 1 {
-			name = parts[len(parts)-2]
+			baseName = parts[len(parts)-2]
 		}
 	}
 
 	// Remove ".git" suffix if present
-	name = strings.TrimSuffix(name, ".git")
+	baseName = strings.TrimSuffix(baseName, ".git")
 
-	// Remove "go-" prefix if it exists.
-	name = strings.TrimPrefix(name, "go-")
+	// Now generate candidates based on the cleaned baseName.
+	candidates := make(map[string]struct{})
 
-	// Remove all hyphens.
-	name = strings.ReplaceAll(name, "-", "")
+	// Candidate 1: a direct sanitization (e.g., "go-isatty" -> "goisatty")
+	sanitized := strings.ReplaceAll(baseName, "-", "")
+	candidates[sanitized] = struct{}{}
 
-	return name
+	// Candidate 2: strip "go-" prefix and then sanitize
+	if strings.HasPrefix(baseName, "go-") {
+		stripped := strings.TrimPrefix(baseName, "go-")
+		strippedAndSanitized := strings.ReplaceAll(stripped, "-", "")
+		candidates[strippedAndSanitized] = struct{}{}
+	}
+
+	// Convert map to slice to return a stable (though unordered) list of unique names.
+	result := make([]string, 0, len(candidates))
+	for name := range candidates {
+		result = append(result, name)
+	}
+	return result
 }
 
 // MaxCallStackDepth is the maximum depth of the call stack to prevent excessive recursion.
@@ -3189,9 +3201,11 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 					} else {
 						// If the package is just a placeholder (not scanned due to policy),
 						// we can't know its real name for sure. Use our heuristic to guess it.
-						assumedName := guessPackageNameFromImportPath(importPath)
-						if n.Name == assumedName {
-							return pkgObj
+						assumedNames := guessPackageNameFromImportPath(importPath)
+						for _, assumedName := range assumedNames {
+							if n.Name == assumedName {
+								return pkgObj
+							}
 						}
 					}
 				}

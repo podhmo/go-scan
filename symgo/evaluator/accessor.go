@@ -34,10 +34,11 @@ func (a *accessor) findFieldOnType(ctx context.Context, typeInfo *scanner.TypeIn
 	}
 
 	visited := make(map[string]bool)
-	return a.findFieldRecursive(ctx, typeInfo, fieldName, visited)
+	unresolvedEmbeddedEncountered := false
+	return a.findFieldRecursive(ctx, typeInfo, fieldName, visited, &unresolvedEmbeddedEncountered)
 }
 
-func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, fieldName string, visited map[string]bool) (*scanner.FieldInfo, error) {
+func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, fieldName string, visited map[string]bool, unresolvedEmbeddedEncountered *bool) (*scanner.FieldInfo, error) {
 	if typeInfo == nil || typeInfo.Struct == nil {
 		return nil, nil
 	}
@@ -63,19 +64,31 @@ func (a *accessor) findFieldRecursive(ctx context.Context, typeInfo *scanner.Typ
 				return field, nil
 			}
 
-			// If the embedded type is from a package outside the scan policy, we cannot resolve it.
-			// Return a special error to signal this to the caller.
-			if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-				return nil, ErrUnresolvedEmbedded
+			// Check if the embedded type is from a package outside the scan policy.
+			// This check now correctly handles pointers by inspecting the element type.
+			importPath := field.Type.FullImportPath
+			if field.Type.IsPointer && field.Type.Elem != nil {
+				importPath = field.Type.Elem.FullImportPath
+			}
+
+			if importPath != "" && !a.eval.resolver.ScanPolicy(importPath) {
+				*unresolvedEmbeddedEncountered = true
+				continue // Don't search this path, but continue with other embedded fields.
 			}
 
 			embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 			if embeddedTypeInfo != nil {
-				if foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited); err != nil || foundField != nil {
+				// Pass the pointer to the state variable down the recursive call.
+				if foundField, err := a.findFieldRecursive(ctx, embeddedTypeInfo, fieldName, visited, unresolvedEmbeddedEncountered); err != nil || foundField != nil {
 					return foundField, err
 				}
 			}
 		}
+	}
+
+	// 3. After checking all fields, if we encountered an unresolved type and found no field, return the special error.
+	if *unresolvedEmbeddedEncountered {
+		return nil, ErrUnresolvedEmbedded
 	}
 
 	return nil, nil // Not found
@@ -90,10 +103,11 @@ func (a *accessor) findMethodOnType(ctx context.Context, typeInfo *scanner.TypeI
 
 	// Use a map to track visited types and prevent infinite recursion.
 	visited := make(map[string]bool)
-	return a.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, receiverPos, visited)
+	unresolvedEmbeddedEncountered := false
+	return a.findMethodRecursive(ctx, typeInfo, methodName, env, receiver, receiverPos, visited, &unresolvedEmbeddedEncountered)
 }
 
-func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos, visited map[string]bool) (*object.Function, error) {
+func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.TypeInfo, methodName string, env *object.Environment, receiver object.Object, receiverPos token.Pos, visited map[string]bool, unresolvedEmbeddedEncountered *bool) (*object.Function, error) {
 	if typeInfo == nil {
 		return nil, nil
 	}
@@ -114,19 +128,32 @@ func (a *accessor) findMethodRecursive(ctx context.Context, typeInfo *scanner.Ty
 	if typeInfo.Struct != nil {
 		for _, field := range typeInfo.Struct.Fields {
 			if field.Embedded {
-				if field.Type.FullImportPath != "" && !a.eval.resolver.ScanPolicy(field.Type.FullImportPath) {
-					return nil, ErrUnresolvedEmbedded
+				// Check if the embedded type is from a package outside the scan policy.
+				// This check now correctly handles pointers by inspecting the element type.
+				importPath := field.Type.FullImportPath
+				if field.Type.IsPointer && field.Type.Elem != nil {
+					importPath = field.Type.Elem.FullImportPath
+				}
+
+				if importPath != "" && !a.eval.resolver.ScanPolicy(importPath) {
+					*unresolvedEmbeddedEncountered = true
+					continue // Don't search this path, but continue with other embedded fields.
 				}
 
 				embeddedTypeInfo, _ := field.Type.Resolve(ctx)
 				if embeddedTypeInfo != nil {
-					// Recursive call, passing the original receiver.
-					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited); err != nil || foundFn != nil {
+					// Recursive call, passing the pointer to the state variable.
+					if foundFn, err := a.findMethodRecursive(ctx, embeddedTypeInfo, methodName, env, receiver, receiverPos, visited, unresolvedEmbeddedEncountered); err != nil || foundFn != nil {
 						return foundFn, err
 					}
 				}
 			}
 		}
+	}
+
+	// 3. After checking all paths, if we encountered an unresolved type and found no method, return the special error.
+	if *unresolvedEmbeddedEncountered {
+		return nil, ErrUnresolvedEmbedded
 	}
 
 	return nil, nil // Not found

@@ -1,53 +1,76 @@
-# `symgo` Robustness Report: Identifier Resolution in Test Code
+# Undefined Method on Pointer to Named Map Type
 
-This document details the analysis and resolution of a critical identifier resolution issue within the `symgo` symbolic execution engine, discovered when analyzing test files.
+This document outlines the analysis and resolution plan for a bug in the `symgo` symbolic execution engine where it fails to resolve a method call on a pointer to a named type that is based on a map.
 
 ## 1. Problem Description
 
-When running `symgo`-based tools like `find-orphans` with test file analysis enabled (`--include-tests`), the evaluator would fail with numerous `identifier not found` errors.
+The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer to a named map type. The method is defined on the value receiver of the type, a pattern that the standard Go compiler handles transparently via automatic dereferencing.
 
-**Symptom:**
-
-The analysis logs would show many errors similar to the following, originating from various test files across the project:
+### Example Log Output
 
 ```
-level=ERROR msg="identifier not found: sampleAPIPath" in_func=TestDocgen exec_pos=...
-level=ERROR msg="symbolic execution failed for entry point" function=...TestDocgen error="symgo runtime error: identifier not found: sampleAPIPath..."
+level=ERROR msg="undefined method or field: Has for pointer type MAP" \
+in_func=ExtractEmailNotificationSettingDisableTopic \
+exec_pos=.../symgo/evaluator/evaluator.go:2261 \
+pos=.../mail/extract.go:8:5
 ```
 
-These errors prevented `symgo` from correctly analyzing any test functions that used locally defined constants, significantly limiting its utility for whole-program analysis that includes test code.
+### Example Code That Fails
 
-## 2. Root Cause Analysis
+```go
+// mail/model.go
+type UnsubscribedGroups map[Group]bool
 
-The investigation revealed that the issue was specific to how the `symgo` evaluator handled declarations within the scope of a function, particularly when that function was an entry point for analysis (as is common for tests).
+func (s UnsubscribedGroups) Has(group Group) bool { // Method on VALUE receiver
+	return s[group]
+}
 
-1.  **Local Constants in Tests:** Go tests frequently define local constants within the test function body for convenience (e.g., `const sampleAPIPath = "..."`).
-2.  **Statement-by-Statement Evaluation:** The `symgo` evaluator processes the statements within a function body sequentially. It does not pre-scan the entire function body to hoist all declarations.
-3.  **Missing `const` Handler:** The core of the bug was a critical omission in the `evalGenDecl` function, which is responsible for handling `var`, `type`, and `const` declarations. While it had logic for `var` and `type`, it was completely missing a `case token.CONST`.
-4.  **The Crash:** Because the `const` handler was missing, any `const` declaration inside a function was simply ignored. When a later statement in the function attempted to use that constant, the `evalIdent` function would look for it in the current environment, fail to find it, and produce the `identifier not found` error, halting the analysis of that function.
+func NewUnsubscribedGroups(tags []string) *UnsubscribedGroups { // Returns POINTER
+	result := UnsubscribedGroups{}
+	// ... logic to populate map ...
+	return &result
+}
 
-## 3. Solution Implemented
+// mail/extract.go
+func ExtractEmailNotificationSettingDisableTopic(tags []string) {
+	unsubscribe := NewUnsubscribedGroups(tags) // unsubscribe is *UnsubscribedGroups
+	if unsubscribe.Has(GroupTopic) { // ERROR: symgo fails to find .Has
+		// ...
+	}
+}
+```
 
-The fix involved implementing the missing logic for constant declarations within the evaluator, making it correctly recognize and process them.
+## 2. Analysis
 
--   **File Modified:** `symgo/evaluator/evaluator.go`
--   **Function Modified:** `evalGenDecl`
+The error message `undefined method or field: Has for pointer type MAP` is the key.
 
-A new `case token.CONST` was added to the `switch` statement in `evalGenDecl`. The new logic correctly handles the semantics of constant declarations:
+1.  **Type Information Loss**: The evaluator correctly identifies that `unsubscribe` is a pointer. However, instead of seeing it as a pointer to the named type `*UnsubscribedGroups`, it seems to resolve it to a generic `pointer type MAP`. It loses the specific type name (`UnsubscribedGroups`).
+2.  **Incorrect Method Set**: Because the specific type information is lost, `symgo` looks for the `Has` method on the method set of a generic `*MAP`. This method set is empty.
+3.  **Missing Automatic Dereference**: The Go compiler would handle this by checking the method set of the pointer type `*UnsubscribedGroups`, not finding `Has`, and then automatically checking the method set of the value type `UnsubscribedGroups`, where it would find it. `symgo`'s logic is failing to perform this second step, likely because it has already lost the type name.
 
--   It iterates through all constant specifications in a `const (...)` block.
--   It correctly handles value repetition (e.g., `const (a = 1; b; c)` where `b` and `c` inherit the value of `a`).
--   To correctly handle `iota`, it creates a temporary, enclosed environment for each constant's value expression, binding the current `iota` value within it.
--   It uses the evaluator's own `e.Eval` method to evaluate the constant's value expression.
--   Finally, it adds the resulting constant object to the current function's scope using `env.SetLocal()`, ensuring it is available for subsequent statements.
+The root cause is likely in how the evaluator handles method calls (`evalSelectorExpr`) on pointer objects, especially when the pointer's underlying element is a named type wrapping a built-in like a map. The type information is not being preserved or accessed correctly during method resolution.
 
-This change ensures that `symgo` correctly processes `const` declarations as it encounters them, making the identifiers available for the rest of the symbolic execution process within that function.
+## 3. Plan for Resolution
 
-## 4. Verification
+1.  **Create a Failing Test Case**:
+    *   Add a new test file in the `symgo/` directory.
+    *   This test will define a self-contained Go program as a string that replicates the bug pattern:
+        *   A named type based on `map`.
+        *   A method on the value receiver of that type.
+        *   A function returning a pointer to that type.
+        *   A call to the method on the pointer.
+    *   The test will use `symgo` to analyze this code and assert that the analysis completes without error and correctly identifies the function calls.
 
-The fix was validated through two methods:
+2.  **Implement the Fix in the Evaluator**:
+    *   The primary location for the fix is the `evalSelectorExpr` function in `symgo/evaluator/evaluator.go`.
+    *   The logic must be updated to handle method calls on `object.Pointer` types.
+    *   When a method is not found on the pointer's direct method set, the evaluator must look at the `Value` the pointer points to.
+    *   It must then correctly retrieve the method set from that underlying value type, even if it's a named map or other named built-in. This means ensuring the full `object.Type` (including its name) is preserved and inspected.
 
-1.  **New Unit Test:** A new test, `TestSymgo_LocalConstantResolution`, was added in a new file, `symgo/symgo_local_const_test.go`. This test specifically defines a function with a local constant and asserts that `symgo` can correctly resolve and return its value. This test failed before the fix and passed after, confirming the solution's effectiveness and preventing future regressions.
-2.  **End-to-End Test:** The `make -C examples/find-orphans` command was re-run. A review of the generated `find-orphans.out` log confirmed that all `identifier not found` errors related to local constants in test files were successfully eliminated.
+3.  **Verify the Fix**:
+    *   Run the newly created test to confirm it passes.
+    *   Run the entire `symgo` test suite (`go test ./...`) to ensure no regressions have been introduced.
 
-While a separate issue causing `not a function: NIL` errors in `minigo` tests remains, the primary bug preventing the analysis of test code with local constants has been resolved.
+4.  **Update `TODO.md`**:
+    *   Once the fix is verified, update the main `TODO.md` file to reflect that this task has been completed.
+    *   Add a new entry under an appropriate "Implemented" section detailing the fix.

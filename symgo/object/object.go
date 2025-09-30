@@ -596,6 +596,10 @@ func (m *Map) Type() ObjectType { return MAP_OBJ }
 
 // Inspect returns a string representation of the map type.
 func (m *Map) Inspect() string {
+	// If we have full TypeInfo for a named type, use that.
+	if ti := m.TypeInfo(); ti != nil && ti.Name != "" {
+		return ti.Name
+	}
 	if m.MapFieldType != nil {
 		return m.MapFieldType.String()
 	}

@@ -681,22 +681,24 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 
 	var fieldType *scan.FieldType
 	var resolvedType *scan.TypeInfo
+	var aliasTypeInfo *scan.TypeInfo // To hold the original alias type
 
 	// First, try to resolve the type from the local environment. This handles locally defined type aliases.
 	if node.Type != nil {
 		typeObj := e.Eval(ctx, node.Type, env, pkg)
 
 		if t, ok := typeObj.(*object.Type); ok && t.ResolvedType != nil {
-			aliasTypeInfo := t.ResolvedType
-			if aliasTypeInfo.Kind == scan.AliasKind && aliasTypeInfo.Underlying != nil {
+			originalTypeInfo := t.ResolvedType
+			if originalTypeInfo.Kind == scan.AliasKind && originalTypeInfo.Underlying != nil {
+				aliasTypeInfo = originalTypeInfo // Capture the alias type info
 				// It's an alias. fieldType represents the alias itself.
 				fieldType = &scan.FieldType{
-					Name:           aliasTypeInfo.Name,
-					FullImportPath: aliasTypeInfo.PkgPath,
-					Definition:     aliasTypeInfo,
+					Name:           originalTypeInfo.Name,
+					FullImportPath: originalTypeInfo.PkgPath,
+					Definition:     originalTypeInfo,
 				}
 				// Copy structural info from underlying type to the alias's FieldType
-				underlying := aliasTypeInfo.Underlying
+				underlying := originalTypeInfo.Underlying
 				fieldType.IsSlice = underlying.IsSlice
 				fieldType.IsMap = underlying.IsMap
 				fieldType.IsPointer = underlying.IsPointer
@@ -706,7 +708,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 				resolvedType = e.resolver.ResolveType(ctx, underlying)
 			} else {
 				// It's a regular type resolved from env.
-				resolvedType = aliasTypeInfo
+				resolvedType = originalTypeInfo
 			}
 		}
 	}
@@ -787,6 +789,13 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 	if fieldType != nil && fieldType.IsMap {
 		mapObj := &object.Map{MapFieldType: fieldType}
 		mapObj.SetFieldType(fieldType)
+		if aliasTypeInfo != nil {
+			// If it was a named map type, attach the alias's TypeInfo.
+			// This is crucial for method lookups.
+			mapObj.SetTypeInfo(aliasTypeInfo)
+		} else {
+			mapObj.SetTypeInfo(resolvedType)
+		}
 		return mapObj
 	}
 
@@ -2194,10 +2203,14 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			pointee = ret.Value
 		}
 
-		if instance, ok := pointee.(*object.Instance); ok {
+		// Generalize pointer method lookup. The pointee can be an Instance, a Map, etc.
+		// As long as it has TypeInfo, we can find its methods.
+		if typeInfo := pointee.TypeInfo(); typeInfo != nil {
+			typeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+
 			// First, check for intrinsics on both pointer and value receivers.
 			// Go allows calling a value-receiver method on a pointer.
-			key := fmt.Sprintf("(*%s).%s", instance.TypeName, n.Sel.Name)
+			key := fmt.Sprintf("(*%s).%s", typeName, n.Sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 				self := val // Receiver is the pointer itself
 				fn := func(ctx context.Context, args ...object.Object) object.Object {
@@ -2205,7 +2218,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 				return &object.Intrinsic{Fn: fn}
 			}
-			key = fmt.Sprintf("(%s).%s", instance.TypeName, n.Sel.Name)
+			key = fmt.Sprintf("(%s).%s", typeName, n.Sel.Name)
 			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
 				self := val // Receiver is still the pointer
 				fn := func(ctx context.Context, args ...object.Object) object.Object {
@@ -2215,37 +2228,37 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			}
 
 			// If no intrinsic, resolve the method/field from type info.
-			if typeInfo := instance.TypeInfo(); typeInfo != nil {
-				// The receiver for the method call is the pointer itself, not the instance.
-				method, methodErr := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
-				if methodErr == nil && method != nil {
-					return method
-				}
+			// The receiver for the method call is the pointer itself (`val`), not the pointee.
+			method, methodErr := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
+			if methodErr == nil && method != nil {
+				return method
+			}
 
-				var field *scan.FieldInfo
-				var fieldErr error
-				if typeInfo.Struct != nil {
-					field, fieldErr = e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
-					if fieldErr == nil && field != nil {
-						return e.resolver.ResolveSymbolicField(ctx, field, instance)
-					}
+			// Also check for fields if the underlying type is a struct.
+			var field *scan.FieldInfo
+			var fieldErr error
+			if typeInfo.Struct != nil {
+				field, fieldErr = e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
+				if fieldErr == nil && field != nil {
+					// When accessing a field via a pointer, the receiver is the pointee.
+					return e.resolver.ResolveSymbolicField(ctx, field, pointee)
 				}
+			}
 
-				if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
-					return &object.AmbiguousSelector{
-						Receiver: val,
-						Sel:      n.Sel,
-					}
+			if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
+				return &object.AmbiguousSelector{
+					Receiver: val,
+					Sel:      n.Sel,
 				}
+			}
 
-				if fieldErr == ErrUnresolvedEmbedded {
-					e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", instance.TypeName)
-					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
-				}
-				if methodErr == ErrUnresolvedEmbedded {
-					e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", instance.TypeName)
-					return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
-				}
+			if fieldErr == ErrUnresolvedEmbedded {
+				e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", typeName)
+				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
+			}
+			if methodErr == ErrUnresolvedEmbedded {
+				e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", typeName)
+				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
 			}
 		}
 

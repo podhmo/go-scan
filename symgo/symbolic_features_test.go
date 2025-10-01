@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgotest"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
 func TestSymbolic_IfElse(t *testing.T) {

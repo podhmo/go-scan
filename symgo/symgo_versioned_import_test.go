@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/podhmo/go-scan/symgotest"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
 func TestSymgoVersionedImport(t *testing.T) {

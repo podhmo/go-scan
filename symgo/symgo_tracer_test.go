@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgotest"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
 // recordingTracer is a simple implementation of symgo.Tracer that records the

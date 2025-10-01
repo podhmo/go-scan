@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo/object"
-	"github.com/podhmo/go-scan/symgotest"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
 func TestSymgo_ExtraModule_ConstantResolution(t *testing.T) {

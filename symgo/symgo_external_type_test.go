@@ -3,7 +3,7 @@ package symgo_test
 import (
 	"testing"
 
-	"github.com/podhmo/go-scan/symgotest"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
 func TestInterpreter_MethodCallOnExternalPointerType(t *testing.T) {

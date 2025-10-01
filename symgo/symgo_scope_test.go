@@ -8,7 +8,7 @@ import (
 	"github.com/podhmo/go-scan/scantest"
 	"github.com/podhmo/go-scan/symgo"
 	"github.com/podhmo/go-scan/symgo/object"
-	"github.com/podhmo/go-scan/symgotest"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
 // NOTE: This test cannot be easily refactored with symgotest, because it inspects

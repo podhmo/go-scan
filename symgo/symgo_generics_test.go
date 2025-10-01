@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/symgo/object"
-	"github.com/podhmo/go-scan/symgotest"
+	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
 func TestGenericFunctionCall(t *testing.T) {

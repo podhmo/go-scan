@@ -10,10 +10,10 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
-	"regexp"
 	"sync"
 
 	goscan "github.com/podhmo/go-scan"
@@ -309,19 +309,20 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 		})
 	}
 	if e.logger.Enabled(ctx, slog.LevelDebug) {
-		var buf bytes.Buffer
-		fset := e.scanner.Fset()
-		if fset != nil && node != nil && node.Pos().IsValid() {
-			printer.Fprint(&buf, fset, node)
-		} else if node != nil {
-			printer.Fprint(&buf, nil, node)
-		}
+		// var buf bytes.Buffer
+		// fset := e.scanner.Fset()
+		// if fset != nil && node != nil && node.Pos().IsValid() {
+		// 	printer.Fprint(&buf, fset, node)
+		// } else if node != nil {
+		// 	printer.Fprint(&buf, nil, node)
+		// }
+		// source := buf.String()
 
 		if pkg != nil && pkg.Fset != nil && node != nil && node.Pos().IsValid() {
 			e.logger.DebugContext(ctx, "evaluating node",
 				"type", fmt.Sprintf("%T", node),
 				"pos", pkg.Fset.Position(node.Pos()),
-				// "source", buf.String(),
+				// "source", source,
 			)
 		}
 	}

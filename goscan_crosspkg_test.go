@@ -65,9 +65,9 @@ type C struct {
 	}
 
 	// 5. We start by scanning package 'a' to find type 'A'.
-	pkgA, err := s.ScanPackageByImport(context.Background(), testModulePath+"/a")
+	pkgA, err := s.ScanPackageFromImportPath(context.Background(), testModulePath+"/a")
 	if err != nil {
-		t.Fatalf("ScanPackageByImport('a') failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath('a') failed: %v", err)
 	}
 
 	typeA := pkgA.Lookup("A")

@@ -34,12 +34,15 @@ func main() { add(1, 2) }
 		pkg := pkgs[0]
 
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
 		}
@@ -52,6 +55,182 @@ func main() { add(1, 2) }
 		return nil
 	}
 
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+}
+
+func TestEvalCallExpr_MethodOnPointerReturnValue(t *testing.T) {
+	// This test reproduces a bug where a method call on a pointer that is
+	// directly returned from a function would fail.
+	// e.g., GetPointer().Method()
+	// The evaluator was not correctly unwrapping the object.ReturnValue
+	// from within the object.Pointer before attempting to find the method.
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"models/models.go": `
+package models
+type Data struct {}
+func (d *Data) IsValid() bool { return true }
+`,
+		"main.go": `
+package main
+import "example.com/me/models"
+
+func GetData() *models.Data {
+	return &models.Data{}
+}
+
+func main() {
+	_ = GetData().IsValid()
+}`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var isValidCalled bool
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		if mainPkg.Name != "main" {
+			for _, p := range pkgs {
+				if p.Name == "main" {
+					mainPkg = p
+					break
+				}
+			}
+		}
+
+		eval := New(s, s.Logger, nil, func(pkgPath string) bool { return true }) // Scan all
+
+		// Register an intrinsic to see if IsValid is successfully called.
+		eval.RegisterIntrinsic("(*example.com/me/models.Data).IsValid", func(ctx context.Context, args ...object.Object) object.Object {
+			isValidCalled = true
+			return object.TRUE
+		})
+
+		// Evaluate all files in the main package to populate the environment.
+		for _, file := range mainPkg.AstFiles {
+			if res := eval.Eval(ctx, file, nil, mainPkg); res != nil && isError(res) {
+				return fmt.Errorf("evaluation of file failed: %v", res)
+			}
+		}
+
+		// Find the main function to start execution.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, but %T", mainFuncObj)
+		}
+
+		// Before the fix, this applyFunction call would return an error:
+		// "undefined method or field: IsValid for pointer type RETURN_VALUE"
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, token.NoPos)
+		if result != nil && isError(result) {
+			return fmt.Errorf("applyFunction failed with an unexpected error: %v", result)
+		}
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if !isValidCalled {
+		t.Error("expected IsValid method to be called, but it was not")
+	}
+}
+
+func TestEvalCallExpr_MethodValueAsArgument(t *testing.T) {
+	// This test reproduces a bug where passing a method value (e.g., `instance.myMethod`)
+	// to a higher-order function would cause an "identifier not found" error for the receiver.
+	// The `scanFunctionLiteral` heuristic was not correctly setting up the receiver's
+	// context in its temporary evaluation environment.
+	files := map[string]string{
+		"go.mod": "module example.com/me",
+		"main.go": `
+package main
+
+type MyType struct {
+	field int
+}
+
+// myMethod accesses the receiver's field.
+func (m *MyType) myMethod() {
+	_ = m.field
+}
+
+// higherOrder takes a function and calls it.
+func higherOrder(f func()) {
+	f()
+}
+
+func main() {
+	instance := &MyType{field: 42}
+	higherOrder(instance.myMethod)
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+
+		// Use a logger to see potential errors during development.
+		handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+		logger := slog.New(handler)
+
+		// The scan policy should scan everything for this test.
+		scanPolicy := func(pkgPath string) bool { return true }
+		eval := New(s, logger, nil, scanPolicy)
+
+		// A default intrinsic is required to trigger the `scanFunctionLiteral` heuristic
+		// which was the source of the bug.
+		eval.RegisterDefaultIntrinsic(func(ctx context.Context, args ...object.Object) object.Object {
+			// This intrinsic doesn't need to do anything for this test.
+			// Its presence is enough to trigger the code path.
+			return nil
+		})
+
+		// Evaluate the package to populate top-level definitions.
+		for _, file := range mainPkg.AstFiles {
+			if res := eval.Eval(ctx, file, nil, mainPkg); res != nil && isError(res) {
+				return fmt.Errorf("evaluation of file failed: %v", res)
+			}
+		}
+
+		// Find and execute the main function.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, got %T", mainFuncObj)
+		}
+
+		// Apply the main function. The test passes if this doesn't return an error.
+		// Before the fix, this would trigger the bug and return an "identifier not found: m" error.
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, token.NoPos)
+		if result != nil && isError(result) {
+			return fmt.Errorf("applyFunction failed with an unexpected error: %v", result)
+		}
+
+		return nil
+	}
+
+	// The test runs against the 'main' package.
 	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
@@ -109,8 +288,12 @@ func useGetter(g PairGetter) {
 		// 2. Create a symbolic placeholder for the function call itself.
 		// This simulates what `evalSelectorExpr` would create for `g.GetPair()`.
 		fnPlaceholder := &object.SymbolicPlaceholder{
-			Reason:           "interface method call GetPair",
-			UnderlyingMethod: getPairMethod,
+			Reason: "interface method call GetPair",
+			UnderlyingFunc: &scanner.FunctionInfo{
+				Name:       getPairMethod.Name,
+				Parameters: getPairMethod.Parameters,
+				Results:    getPairMethod.Results,
+			},
 			// The receiver would be another placeholder for `g`.
 			Receiver: &object.SymbolicPlaceholder{Reason: "variable g"},
 		}
@@ -252,9 +435,8 @@ func main() { fmt.Println("hello") }
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("fmt.Println", func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 0 {
 				if s, ok := args[0].(*object.String); ok {
 					got = s.Value
@@ -264,10 +446,14 @@ func main() { fmt.Println("hello") }
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFuncObj, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 
@@ -303,10 +489,9 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		const serveMuxTypeName = "net/http.ServeMux"
-		eval.RegisterIntrinsic("net/http.NewServeMux", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("net/http.NewServeMux", func(ctx context.Context, args ...object.Object) object.Object {
 			// Create a fake TypeInfo for ServeMux. In unit tests, we can't easily
 			// scan external packages. This provides the minimum information needed
 			// by the evaluator to resolve method calls on the variable.
@@ -321,7 +506,7 @@ func main() {
 			}
 		})
 
-		eval.RegisterIntrinsic(fmt.Sprintf("(*%s).HandleFunc", serveMuxTypeName), func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic(fmt.Sprintf("(*%s).HandleFunc", serveMuxTypeName), func(ctx context.Context, args ...object.Object) object.Object {
 			handleFuncCalled = true
 			if len(args) > 1 { // self, pattern, handler
 				if s, ok := args[1].(*object.String); ok {
@@ -332,10 +517,14 @@ func main() {
 		})
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFuncObj, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, _ := pkgEnv.Get("main")
 		mainFunc := mainFuncObj.(*object.Function)
 		eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 		return nil
@@ -374,19 +563,22 @@ func main() {
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
 			eval := New(s, logger, nil, nil)
-			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 			key := fmt.Sprintf("(%s.S).Do", pkg.ImportPath)
-			eval.RegisterIntrinsic(key, func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(key, func(ctx context.Context, args ...object.Object) object.Object {
 				doCalled = true
 				return nil
 			})
 
 			for _, file := range pkg.AstFiles {
-				eval.Eval(ctx, file, env, pkg)
+				eval.Eval(ctx, file, nil, pkg)
 			}
 
-			mainFuncObj, _ := env.Get("main")
+			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+			if !ok {
+				return fmt.Errorf("could not get package env for 'example.com/me'")
+			}
+			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
 			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
@@ -425,14 +617,13 @@ func main() {
 			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 			logger := slog.New(handler)
 			eval := New(s, logger, nil, nil)
-			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 			greeterTypeName := fmt.Sprintf("%s.Greeter", pkg.ImportPath)
-			eval.RegisterIntrinsic(fmt.Sprintf("%s.NewGreeter", pkg.ImportPath), func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(fmt.Sprintf("%s.NewGreeter", pkg.ImportPath), func(ctx context.Context, args ...object.Object) object.Object {
 				name := args[0].(*object.String).Value
 				return &object.Instance{TypeName: fmt.Sprintf("*%s", greeterTypeName), State: map[string]object.Object{"name": &object.String{Value: name}}}
 			})
-			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).WithName", greeterTypeName), func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).WithName", greeterTypeName), func(ctx context.Context, args ...object.Object) object.Object {
 				g := args[0].(*object.Instance)
 				name := args[1].(*object.String).Value
 				if g.State == nil {
@@ -441,22 +632,26 @@ func main() {
 				g.State["name"] = &object.String{Value: name}
 				return g
 			})
-			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).Greet", greeterTypeName), func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(fmt.Sprintf("(*%s).Greet", greeterTypeName), func(ctx context.Context, args ...object.Object) object.Object {
 				greetCalled = true
 				g := args[0].(*object.Instance)
 				name, _ := g.State["name"].(*object.String)
 				finalName = name.Value
 				return &object.String{Value: "Hello, " + finalName}
 			})
-			eval.RegisterIntrinsic("fmt.Println", func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic("fmt.Println", func(ctx context.Context, args ...object.Object) object.Object {
 				return nil
 			})
 
 			for _, file := range pkg.AstFiles {
-				eval.Eval(ctx, file, env, pkg)
+				eval.Eval(ctx, file, nil, pkg)
 			}
 
-			mainFuncObj, _ := env.Get("main")
+			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+			if !ok {
+				return fmt.Errorf("could not get package env for 'example.com/me'")
+			}
+			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
 			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
@@ -491,9 +686,8 @@ func main() {
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
 			eval := New(s, s.Logger, nil, nil)
-			env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-			eval.RegisterIntrinsic(fmt.Sprintf("%s.add", pkg.ImportPath), func(args ...object.Object) object.Object {
+			eval.RegisterIntrinsic(fmt.Sprintf("%s.add", pkg.ImportPath), func(ctx context.Context, args ...object.Object) object.Object {
 				callCount++
 				a := args[0].(*object.Integer).Value
 				b := args[1].(*object.Integer).Value
@@ -505,10 +699,14 @@ func main() {
 			})
 
 			for _, file := range pkg.AstFiles {
-				eval.Eval(ctx, file, env, pkg)
+				eval.Eval(ctx, file, nil, pkg)
 			}
 
-			mainFuncObj, _ := env.Get("main")
+			pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+			if !ok {
+				return fmt.Errorf("could not get package env for 'example.com/me'")
+			}
+			mainFuncObj, _ := pkgEnv.Get("main")
 			mainFunc := mainFuncObj.(*object.Function)
 			eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, token.NoPos)
 			return nil
@@ -575,18 +773,17 @@ func main() {
 		}
 
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Register intrinsics to track calls
-		eval.RegisterIntrinsic("example.com/me/lib.DoSomething", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/me/lib.DoSomething", func(ctx context.Context, args ...object.Object) object.Object {
 			doSomethingCalled = true
 			return nil
 		})
-		eval.RegisterIntrinsic("example.com/me/lib.Cleanup", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/me/lib.Cleanup", func(ctx context.Context, args ...object.Object) object.Object {
 			cleanupCalled = true
 			return nil
 		})
-		eval.RegisterIntrinsic("example.com/me/lib.GetPair", func(args ...object.Object) object.Object {
+		eval.RegisterIntrinsic("example.com/me/lib.GetPair", func(ctx context.Context, args ...object.Object) object.Object {
 			// Simulate multi-value return
 			return &object.MultiReturn{Values: []object.Object{
 				&object.Integer{Value: 1},
@@ -596,11 +793,15 @@ func main() {
 
 		// Evaluate all files in the main package to populate the environment.
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
 		// Find the main function to start execution.
-		mainFuncObj, ok := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
 		}
@@ -662,16 +863,15 @@ func main() {
 		}
 
 		eval := New(s, s.Logger, nil, scanPolicy)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// Evaluate main package to populate env
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
 		// Manually create the placeholder for the external function call
 		// This simulates what would happen inside the evaluator when it encounters helper.GetPair
-		helperPkg, err := s.ScanPackageByImport(ctx, "example.com/me/helper")
+		helperPkg, err := s.ScanPackageFromImportPath(ctx, "example.com/me/helper")
 		if err != nil {
 			return fmt.Errorf("failed to scan helper package: %w", err)
 		}
@@ -687,7 +887,7 @@ func main() {
 		}
 
 		// The resolver creates a placeholder because the helper package is out of policy.
-		fnPlaceholder := eval.resolver.ResolveFunction(&object.Package{
+		fnPlaceholder := eval.resolver.ResolveFunction(ctx, &object.Package{
 			Path:        helperPkg.ImportPath,
 			ScannedInfo: helperPkg,
 		}, getPairFunc)

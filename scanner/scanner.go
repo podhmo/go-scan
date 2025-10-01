@@ -19,6 +19,24 @@ import (
 // resolutionCacheKey is used to pass a map for tracking in-progress type resolutions.
 type resolutionCacheKey struct{}
 
+// parallelismLimitKey is used to pass the parallelism limit through context.
+type parallelismLimitKey struct{}
+
+// WithParallelismLimit returns a context with the specified parallelism limit.
+// If limit is <= 0, no limit is applied (unlimited concurrency).
+func WithParallelismLimit(ctx context.Context, limit int) context.Context {
+	return context.WithValue(ctx, parallelismLimitKey{}, limit)
+}
+
+// getParallelismLimit extracts the parallelism limit from context.
+// Returns 0 if no limit is set (meaning unlimited concurrency).
+func getParallelismLimit(ctx context.Context) int {
+	if limit, ok := ctx.Value(parallelismLimitKey{}).(int); ok {
+		return limit
+	}
+	return 0 // No limit
+}
+
 // fileParseResult holds the result of parsing a single Go source file.
 type fileParseResult struct {
 	filePath string
@@ -83,12 +101,12 @@ func (s *Scanner) ResolveType(ctx context.Context, fieldType *FieldType) (*TypeI
 	return fieldType.Resolve(ctxWithPath)
 }
 
-// ScanPackageByImport makes scanner.Scanner implement the PackageResolver interface.
-func (s *Scanner) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
+// ScanPackageFromImportPath makes scanner.Scanner implement the PackageResolver interface.
+func (s *Scanner) ScanPackageFromImportPath(ctx context.Context, importPath string) (*PackageInfo, error) {
 	if s.resolver == nil {
 		return nil, fmt.Errorf("scanner's internal resolver is not set, cannot scan by import path %q", importPath)
 	}
-	return s.resolver.ScanPackageByImport(ctx, importPath)
+	return s.resolver.ScanPackageFromImportPath(ctx, importPath)
 }
 
 // ScanFiles parses a specific list of .go files and returns PackageInfo.
@@ -118,8 +136,8 @@ func (s *Scanner) ScanFilesWithKnownImportPath(ctx context.Context, filePaths []
 	return s.scanGoFiles(ctx, filePaths, pkgDirPath, canonicalImportPath)
 }
 
-// ScanPackageImports parses only the import declarations from a set of Go files.
-func (s *Scanner) ScanPackageImports(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageImports, error) {
+// ScanPackageFromFilePathImports parses only the import declarations from a set of Go files.
+func (s *Scanner) ScanPackageFromFilePathImports(ctx context.Context, filePaths []string, pkgDirPath string, canonicalImportPath string) (*PackageImports, error) {
 	info := &PackageImports{
 		ImportPath:  canonicalImportPath,
 		FileImports: make(map[string][]string),
@@ -240,7 +258,12 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 
 	// Stage 1: Parallel Parsing
 	results := make(chan fileParseResult, len(filePaths))
-	g, ctx := errgroup.WithContext(ctx)
+	g, gCtx := errgroup.WithContext(ctx)
+
+	// Apply parallelism limit if specified in context
+	if limit := getParallelismLimit(ctx); limit > 0 {
+		g.SetLimit(limit)
+	}
 
 	for _, filePath := range filePaths {
 		fp := filePath // create a new variable for the closure
@@ -257,14 +280,11 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			if content == nil {
 				content, err = os.ReadFile(fp)
 				if err != nil {
-					// Send error to the channel and exit goroutine
 					results <- fileParseResult{filePath: fp, err: fmt.Errorf("reading file: %w", err)}
 					return nil
 				}
 			}
 
-			// Lock the mutex to ensure that parser.ParseFile, which modifies the shared
-			// token.FileSet, is not called concurrently.
 			s.mu.Lock()
 			fileAst, err := parser.ParseFile(s.fset, fp, content, parser.ParseComments)
 			s.mu.Unlock()
@@ -272,8 +292,8 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			select {
 			case results <- fileParseResult{filePath: fp, fileAst: fileAst, err: err}:
 				return nil
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-gCtx.Done():
+				return gCtx.Err()
 			}
 		})
 	}
@@ -296,12 +316,11 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		parsedFileResults = append(parsedFileResults, result)
 	}
 
-	// Stage 3: Sequential Processing
+	// Stage 3: Filter files by dominant package name
 	var dominantPackageName string
 	var parsedFiles []*ast.File
 	var filePathsForDominantPkg []string
 
-	// First pass over results to determine dominant package name
 	for _, result := range parsedFileResults {
 		currentPackageName := result.fileAst.Name.Name
 
@@ -314,33 +333,31 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 			baseCurrent := strings.TrimSuffix(currentPackageName, "_test")
 
 			if dominantPackageName == "main" && currentPackageName != "main" {
-				// The real package is `currentPackageName`. Discard previous `main` files.
 				dominantPackageName = currentPackageName
 				var newParsedFiles []*ast.File
 				var newFilePaths []string
-				// Note: we don't need to re-filter parsedFiles because they were all `main` anyway.
+				for i, p := range parsedFiles {
+					if strings.TrimSuffix(p.Name.Name, "_test") != baseDominant {
+						newParsedFiles = append(newParsedFiles, p)
+						newFilePaths = append(newFilePaths, filePathsForDominantPkg[i])
+					}
+				}
 				parsedFiles = newParsedFiles
 				filePathsForDominantPkg = newFilePaths
 				parsedFiles = append(parsedFiles, result.fileAst)
 				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 			} else if dominantPackageName != "main" && currentPackageName == "main" {
-				// The real package is `dominantPackageName`. Ignore the `main` file.
 				continue
 			} else if baseDominant == baseCurrent {
-				// This is `pkg` and `pkg_test`, which is allowed.
-				// If the test package was found first, make the non-test package dominant.
 				if strings.HasSuffix(dominantPackageName, "_test") && !strings.HasSuffix(currentPackageName, "_test") {
 					dominantPackageName = currentPackageName
 				}
-				// Add the file to the list.
 				parsedFiles = append(parsedFiles, result.fileAst)
 				filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 			} else {
-				// Two different non-main packages. This is a real error.
 				return nil, fmt.Errorf("mismatched package names: %s and %s in directory %s", dominantPackageName, currentPackageName, pkgDirPath)
 			}
 		} else {
-			// Package names match, just add the file.
 			parsedFiles = append(parsedFiles, result.fileAst)
 			filePathsForDominantPkg = append(filePathsForDominantPkg, result.filePath)
 		}
@@ -349,7 +366,43 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 	info.Name = dominantPackageName
 	info.Files = filePathsForDominantPkg
 
-	// Second pass: Process declarations from the final list of valid ASTs
+	// Pass 1: Create placeholders for all type declarations from the filtered files.
+	for i, fileAst := range parsedFiles {
+		filePath := info.Files[i]
+		info.AstFiles[filePath] = fileAst
+		for _, decl := range fileAst.Decls {
+			if d, ok := decl.(*ast.GenDecl); ok && d.Tok == token.TYPE {
+				for _, spec := range d.Specs {
+					if ts, ok := spec.(*ast.TypeSpec); ok {
+						typeInfo := &TypeInfo{
+							Name:     ts.Name.Name,
+							PkgPath:  info.ImportPath,
+							FilePath: filePath,
+							Doc:      commentText(ts.Doc),
+							Node:     ts,
+							Inspect:  s.inspect,
+							Logger:   s.logger,
+							Fset:     info.Fset,
+						}
+						if typeInfo.Doc == "" && d.Doc != nil {
+							typeInfo.Doc = commentText(d.Doc)
+						}
+						info.Types = append(info.Types, typeInfo)
+					}
+				}
+			}
+		}
+	}
+
+	// Pass 2: Fill in the details for all collected types.
+	for _, typeInfo := range info.Types {
+		if ts, ok := typeInfo.Node.(*ast.TypeSpec); ok {
+			importLookup := s.BuildImportLookup(info.AstFiles[typeInfo.FilePath])
+			s.fillTypeInfoFromSpec(ctx, typeInfo, ts, info, importLookup)
+		}
+	}
+
+	// Pass 3: Process all other declarations (consts, vars, funcs).
 	isDeclarationsOnly := false
 	for _, pattern := range s.DeclarationsOnlyPackages {
 		if matches(pattern, canonicalImportPath) {
@@ -360,8 +413,6 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 
 	for i, fileAst := range parsedFiles {
 		filePath := info.Files[i]
-
-		// If this package is marked for declarations-only scanning, nil out all function bodies.
 		if isDeclarationsOnly {
 			for _, decl := range fileAst.Decls {
 				if f, ok := decl.(*ast.FuncDecl); ok {
@@ -369,14 +420,13 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 				}
 			}
 		}
-
-		info.AstFiles[filePath] = fileAst
 		importLookup := s.BuildImportLookup(fileAst)
-
 		for _, decl := range fileAst.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
-				s.parseGenDecl(ctx, d, info, filePath, importLookup)
+				if d.Tok != token.TYPE { // Types are already detailed, just do const/var
+					s.parseGenDecl(ctx, d, info, filePath, importLookup)
+				}
 			case *ast.FuncDecl:
 				info.Functions = append(info.Functions, s.parseFuncDecl(ctx, d, filePath, info, importLookup))
 			}
@@ -387,9 +437,7 @@ func (s *Scanner) scanGoFiles(ctx context.Context, filePaths []string, pkgDirPat
 		return nil, fmt.Errorf("could not determine package name from scanned files in %s", pkgDirPath)
 	}
 
-	// Third pass: Evaluate all collected constants
 	s.evaluateAllConstants(ctx, info)
-
 	s.resolveEnums(info)
 	return info, nil
 }
@@ -507,6 +555,7 @@ func (s *Scanner) parseGenDecl(ctx context.Context, decl *ast.GenDecl, info *Pac
 						Type:       varType,
 						IsExported: name.IsExported(),
 						Node:       name,
+						GenDecl:    decl,
 					}
 					info.Variables = append(info.Variables, varInfo)
 				}
@@ -678,7 +727,11 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 		Logger:   s.logger,
 		Fset:     info.Fset,
 	}
+	s.fillTypeInfoFromSpec(ctx, typeInfo, sp, info, importLookup)
+	return typeInfo
+}
 
+func (s *Scanner) fillTypeInfoFromSpec(ctx context.Context, typeInfo *TypeInfo, sp *ast.TypeSpec, info *PackageInfo, importLookup map[string]string) {
 	// Set up the initial resolution context for this type.
 	// Any types resolved from this type's fields will have this type's identifier in their path.
 	typeIdentifier := info.ImportPath + "." + sp.Name.Name
@@ -691,24 +744,23 @@ func (s *Scanner) parseTypeSpec(ctx context.Context, sp *ast.TypeSpec, info *Pac
 	typeInfo.ResolutionContext = childCtx
 
 	if sp.TypeParams != nil {
-		typeInfo.TypeParams = s.parseTypeParamList(ctx, sp.TypeParams.List, info, importLookup)
+		typeInfo.TypeParams = s.parseTypeParamList(childCtx, sp.TypeParams.List, info, importLookup)
 	}
 
 	switch t := sp.Type.(type) {
 	case *ast.StructType:
 		typeInfo.Kind = StructKind
-		typeInfo.Struct = s.parseStructType(ctx, t, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Struct = s.parseStructType(childCtx, t, typeInfo.TypeParams, info, importLookup)
 	case *ast.InterfaceType:
 		typeInfo.Kind = InterfaceKind
-		typeInfo.Interface = s.parseInterfaceType(ctx, t, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Interface = s.parseInterfaceType(childCtx, t, typeInfo.TypeParams, info, importLookup)
 	case *ast.FuncType:
 		typeInfo.Kind = FuncKind
-		typeInfo.Func = s.parseFuncType(ctx, t, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Func = s.parseFuncType(childCtx, t, typeInfo.TypeParams, info, importLookup)
 	default:
 		typeInfo.Kind = AliasKind
-		typeInfo.Underlying = s.TypeInfoFromExpr(ctx, sp.Type, typeInfo.TypeParams, info, importLookup)
+		typeInfo.Underlying = s.TypeInfoFromExpr(childCtx, sp.Type, typeInfo.TypeParams, info, importLookup)
 	}
-	return typeInfo
 }
 
 func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast.Field, info *PackageInfo, importLookup map[string]string) []*TypeParamInfo {
@@ -734,31 +786,63 @@ func (s *Scanner) parseTypeParamList(ctx context.Context, typeParamFields []*ast
 	return params
 }
 
+// collectUnionTypes recursively traverses a binary expression representing a type union
+// (e.g., *Foo | *Bar) and collects all constituent types.
+func (s *Scanner) collectUnionTypes(ctx context.Context, expr ast.Expr, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) []*FieldType {
+	if binExpr, ok := expr.(*ast.BinaryExpr); ok && binExpr.Op == token.OR {
+		// This is a union type, e.g., `A | B`. Recursively collect from both sides.
+		leftTypes := s.collectUnionTypes(ctx, binExpr.X, currentTypeParams, info, importLookup)
+		rightTypes := s.collectUnionTypes(ctx, binExpr.Y, currentTypeParams, info, importLookup)
+		return append(leftTypes, rightTypes...)
+	}
+	// This is a single type (a leaf in the union expression tree).
+	return []*FieldType{s.TypeInfoFromExpr(ctx, expr, currentTypeParams, info, importLookup)}
+}
+
 func (s *Scanner) parseInterfaceType(ctx context.Context, it *ast.InterfaceType, currentTypeParams []*TypeParamInfo, info *PackageInfo, importLookup map[string]string) *InterfaceInfo {
-	if it.Methods == nil || len(it.Methods.List) == 0 {
-		return &InterfaceInfo{Methods: []*MethodInfo{}}
+	if it.Methods == nil {
+		return &InterfaceInfo{}
 	}
 	interfaceInfo := &InterfaceInfo{
-		Methods: make([]*MethodInfo, 0, len(it.Methods.List)),
+		Methods:  make([]*MethodInfo, 0),
+		Embedded: make([]*FieldType, 0),
+		Union:    make([]*FieldType, 0),
 	}
+
+	// First pass: determine if this interface uses union syntax at all.
+	// The presence of '|' makes it a type set.
+	isUnionInterface := false
 	for _, field := range it.Methods.List {
-		if len(field.Names) > 0 {
+		if len(field.Names) == 0 {
+			if _, ok := field.Type.(*ast.BinaryExpr); ok {
+				isUnionInterface = true
+				break
+			}
+		}
+	}
+
+	for _, field := range it.Methods.List {
+		if len(field.Names) > 0 { // This is a method definition
 			methodName := field.Names[0].Name
 			funcType, ok := field.Type.(*ast.FuncType)
 			if !ok {
-				continue
+				continue // Should not happen in a valid interface
 			}
 			methodInfo := &MethodInfo{Name: methodName}
 			parsedFuncDetails := s.parseFuncType(ctx, funcType, currentTypeParams, info, importLookup)
 			methodInfo.Parameters = parsedFuncDetails.Parameters
 			methodInfo.Results = parsedFuncDetails.Results
 			interfaceInfo.Methods = append(interfaceInfo.Methods, methodInfo)
-		} else {
-			embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
-			interfaceInfo.Methods = append(interfaceInfo.Methods, &MethodInfo{
-				Name:    fmt.Sprintf("embedded_%s", embeddedType.String()),
-				Results: []*FieldInfo{{Type: embeddedType}},
-			})
+		} else { // This is an embedded type or a union term
+			if isUnionInterface {
+				// If we determined this is a union interface, all non-method fields are terms.
+				terms := s.collectUnionTypes(ctx, field.Type, currentTypeParams, info, importLookup)
+				interfaceInfo.Union = append(interfaceInfo.Union, terms...)
+			} else {
+				// Otherwise, it's a regular embedded interface.
+				embeddedType := s.TypeInfoFromExpr(ctx, field.Type, currentTypeParams, info, importLookup)
+				interfaceInfo.Embedded = append(interfaceInfo.Embedded, embeddedType)
+			}
 		}
 	}
 	return interfaceInfo
@@ -807,10 +891,50 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 
 	funcInfo := s.parseFuncType(ctx, f.Type, funcOwnTypeParams, pkgInfo, importLookup)
 	funcInfo.Name = f.Name.Name
+	funcInfo.PkgPath = pkgInfo.ImportPath
 	funcInfo.FilePath = absFilePath
 	funcInfo.Doc = commentText(f.Doc)
 	funcInfo.AstDecl = f
 	funcInfo.TypeParams = funcOwnTypeParams
+	funcInfo.Pkg = pkgInfo // Set the back-reference to the package
+
+	// After parsing the function signature, walk its body to find and resolve local type declarations.
+	if f.Body != nil {
+		ast.Inspect(f.Body, func(n ast.Node) bool {
+			gd, ok := n.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				return true // Continue traversal for non-type declarations.
+			}
+
+			// We found a local type declaration block (e.g., `type (...)`).
+			// Process it now and perform the special local-alias resolution.
+			for _, spec := range gd.Specs {
+				if ts, ok := spec.(*ast.TypeSpec); ok {
+					typeInfo := s.parseTypeSpec(ctx, ts, pkgInfo, absFilePath, importLookup)
+					if typeInfo.Doc == "" && gd.Doc != nil {
+						typeInfo.Doc = commentText(gd.Doc)
+					}
+
+					// This is the special logic that only runs for local types.
+					// Try to link the underlying type's definition immediately.
+					if typeInfo.Kind == AliasKind && typeInfo.Underlying != nil && typeInfo.Underlying.PkgName == "" {
+						underlyingName := typeInfo.Underlying.TypeName
+						if def := pkgInfo.Lookup(underlyingName); def != nil {
+							typeInfo.Underlying.Definition = def
+							// Also link the element's definition for pointers
+							if typeInfo.Underlying.IsPointer && typeInfo.Underlying.Elem != nil {
+								if elemDef := pkgInfo.Lookup(typeInfo.Underlying.Elem.TypeName); elemDef != nil {
+									typeInfo.Underlying.Elem.Definition = elemDef
+								}
+							}
+						}
+					}
+					pkgInfo.Types = append(pkgInfo.Types, typeInfo)
+				}
+			}
+			return false // Stop traversal within this GenDecl, as we've processed it.
+		})
+	}
 
 	if f.Recv != nil && len(f.Recv.List) > 0 {
 		recvField := f.Recv.List[0]

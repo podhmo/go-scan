@@ -263,7 +263,7 @@ func resolveType(ctx context.Context, s *goscan.Scanner, info *model.ParsedInfo,
 	}
 
 	if resolvedTypeInfo != nil && resolvedTypeInfo.PkgPath != "" && resolvedTypeInfo.PkgPath != p.ImportPath {
-		resolvedPkgInfo, err := s.ScanPackageByImport(ctx, resolvedTypeInfo.PkgPath)
+		resolvedPkgInfo, err := s.ScanPackageFromImportPath(ctx, resolvedTypeInfo.PkgPath)
 		if err != nil {
 			return nil, fmt.Errorf("could not scan package %q for resolved type %s: %w", resolvedTypeInfo.PkgPath, resolvedTypeInfo.Name, err)
 		}
@@ -297,7 +297,7 @@ func collectFields(ctx context.Context, s *goscan.Scanner, info *model.ParsedInf
 			}
 
 			if fieldTypeInfo != nil && fieldTypeInfo.PkgPath != "" && fieldTypeInfo.PkgPath != p.ImportPath && !f.Type.IsResolvedByConfig {
-				fieldPkgInfo, err := s.ScanPackageByImport(ctx, fieldTypeInfo.PkgPath)
+				fieldPkgInfo, err := s.ScanPackageFromImportPath(ctx, fieldTypeInfo.PkgPath)
 				if err != nil {
 					return nil, fmt.Errorf("could not scan package for field type %s: %w", fieldTypeInfo.Name, err)
 				}
@@ -317,7 +317,7 @@ func collectFields(ctx context.Context, s *goscan.Scanner, info *model.ParsedInf
 				slog.WarnContext(ctx, "Resolved embedded type is not a struct, skipping", "type", f.Type.String())
 				continue
 			}
-			embeddedPkgInfo, err := s.ScanPackageByImport(ctx, fieldTypeInfo.PkgPath)
+			embeddedPkgInfo, err := s.ScanPackageFromImportPath(ctx, fieldTypeInfo.PkgPath)
 			if err != nil {
 				return nil, fmt.Errorf("could not scan package for embedded struct %s: %w", fieldTypeInfo.Name, err)
 			}

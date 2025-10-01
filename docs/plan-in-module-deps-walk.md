@@ -59,17 +59,17 @@ To build this tool, we must first analyze the capabilities of the existing `go-s
 
 The `go-scan` library is built on a foundation of parsing Go files directly using `go/ast`, deliberately avoiding `go/packages`. Its dependency resolution is "lazy" and works as follows:
 
-1.  A call to `goscan.Scanner.ScanPackageByImport()` triggers a scan of a package.
+1.  A call to `goscan.Scanner.ScanPackageFromImportPath()` triggers a scan of a package.
 2.  The `locator` finds the package's directory on disk.
 3.  The `scanner` parses all the `.go` files in that directory into a full AST.
 4.  The scanner extracts type, function, and constant information. When it encounters a type from another package (e.g., `anotherpkg.MyType`), it creates a `FieldType` struct containing the import path of that package (`"github.com/my-org/anotherpkg"`).
-5.  The dependency is not immediately parsed. Only when a user of the library calls `FieldType.Resolve()` does `go-scan` recursively call `ScanPackageByImport()` on the dependency's import path.
+5.  The dependency is not immediately parsed. Only when a user of the library calls `FieldType.Resolve()` does `go-scan` recursively call `ScanPackageFromImportPath()` on the dependency's import path.
 
 ### 3.2. Suitability for Dependency Walking
 
-This architecture can be used to build the dependency graph. The walker tool would start with a package, call `ScanPackageByImport`, and inspect the `ast.File.Imports` list for each parsed file to find its direct dependencies. It would then recursively call `ScanPackageByImport` on those dependencies.
+This architecture can be used to build the dependency graph. The walker tool would start with a package, call `ScanPackageFromImportPath`, and inspect the `ast.File.Imports` list for each parsed file to find its direct dependencies. It would then recursively call `ScanPackageFromImportPath` on those dependencies.
 
-However, there is a major performance issue: `ScanPackageByImport` **always performs a full AST parse**. For building a dependency graph, where we only need the `import` statements, this is highly inefficient.
+However, there is a major performance issue: `ScanPackageFromImportPath` **always performs a full AST parse**. For building a dependency graph, where we only need the `import` statements, this is highly inefficient.
 
 ## 4. Gap Analysis: Missing Features in `go-scan`
 
@@ -95,7 +95,7 @@ The most critical missing piece is an efficient way to get a package's imports w
     }
     ```
 
-3.  **New `goscan` Method:** Create a new public method `goscan.Scanner.ScanPackageImports(ctx, importPath)`. This method will orchestrate the process, using the `locator` to find the package and the new `scanner.ScanImportsOnly` to parse it. It should also have its own in-memory cache to avoid re-processing packages during a single walk.
+3.  **New `goscan` Method:** Create a new public method `goscan.Scanner.ScanPackageFromFilePathImports(ctx, importPath)`. This method will orchestrate the process, using the `locator` to find the package and the new `scanner.ScanImportsOnly` to parse it. It should also have its own in-memory cache to avoid re-processing packages during a single walk.
 
 ### 4.2. A Generic Graph Traversal Utility
 
@@ -119,7 +119,7 @@ Every tool that needs to walk the dependency graph will have to re-implement the
     }
     ```
 
-2.  **New `Walk` Method:** Create a new public method `goscan.Scanner.Walk(ctx, rootImportPath, visitor)`. This function will perform a breadth-first or depth-first search of the dependency graph. It will handle the queue, manage the `visited` set, and call the new `ScanPackageImports` method to get dependencies. At each package, it will invoke the `visitor.Visit` method, giving the calling tool control over the process, including implementing hop limits and ignore lists.
+2.  **New `Walk` Method:** Create a new public method `goscan.Scanner.Walk(ctx, rootImportPath, visitor)`. This function will perform a breadth-first or depth-first search of the dependency graph. It will handle the queue, manage the `visited` set, and call the new `ScanPackageFromFilePathImports` method to get dependencies. At each package, it will invoke the `visitor.Visit` method, giving the calling tool control over the process, including implementing hop limits and ignore lists.
 
 ## 5. Further Considerations
 

@@ -46,11 +46,16 @@ const (
 // PackageResolver is an interface that can resolve an import path to a package definition.
 // It is implemented by the top-level typescanner.Scanner to enable lazy, cached lookups.
 type PackageResolver interface {
-	ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error)
+	ScanPackageFromImportPath(ctx context.Context, importPath string) (*PackageInfo, error)
 }
 
 // PackageInfo holds all the extracted information from a single package.
 type PackageInfo struct {
+	// ID is the unique identifier for the package. For most packages, it's the
+	// same as the canonical ImportPath. For `main` packages, it includes a
+	// ".main" suffix (e.g., "example.com/myapp/cmd/server.main") to
+	// disambiguate between multiple main packages in a workspace.
+	ID         string
 	Name       string
 	Path       string
 	ImportPath string // Added: Canonical import path of the package
@@ -209,7 +214,13 @@ func (ti *TypeInfo) searchAnnotation(name string) (value string, ok bool) {
 
 // InterfaceInfo represents an interface type.
 type InterfaceInfo struct {
-	Methods []*MethodInfo
+	Methods []*MethodInfo `json:"methods"`
+	// Embedded stores the field types for embedded interfaces.
+	// The symgo evaluator is responsible for resolving these and collecting
+	// their method sets. Resolution is currently supported for interfaces
+	// within the same package.
+	Embedded []*FieldType `json:"embedded,omitempty"`
+	Union    []*FieldType `json:"union,omitempty"` // For union-type interfaces
 }
 
 // MethodInfo represents a single method in an interface.
@@ -444,7 +455,7 @@ func (ft *FieldType) Resolve(ctx context.Context) (*TypeInfo, error) {
 	}
 
 	// --- Resolve the package ---
-	pkgInfo, err := ft.Resolver.ScanPackageByImport(ctx, ft.FullImportPath)
+	pkgInfo, err := ft.Resolver.ScanPackageFromImportPath(ctx, ft.FullImportPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan package %q for type %q: %w", ft.FullImportPath, ft.TypeName, err)
 	}
@@ -502,11 +513,13 @@ type VariableInfo struct {
 	Type       *FieldType
 	IsExported bool
 	Node       ast.Node
+	GenDecl    *ast.GenDecl // The *ast.GenDecl node for the var declaration
 }
 
 // FunctionInfo represents a single top-level function or method declaration.
 type FunctionInfo struct {
 	Name       string           `json:"name"`
+	PkgPath    string           `json:"pkgPath"`
 	FilePath   string           `json:"filePath"`
 	Doc        string           `json:"doc,omitempty"`
 	Receiver   *FieldInfo       `json:"receiver,omitempty"`
@@ -515,6 +528,7 @@ type FunctionInfo struct {
 	Results    []*FieldInfo     `json:"results,omitempty"`
 	IsVariadic bool             `json:"isVariadic,omitempty"`
 	AstDecl    *ast.FuncDecl    `json:"-"` // Avoid cyclic JSON.
+	Pkg        *PackageInfo     `json:"-"` // Back-reference to the containing package.
 }
 
 // SetResolver is a test helper to overwrite the internal resolver.

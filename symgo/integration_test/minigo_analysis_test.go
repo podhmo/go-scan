@@ -118,7 +118,7 @@ func TestAnalyzeMinigoPackage(t *testing.T) {
 				Fun:  funcDecl.Name,
 				Args: []ast.Expr{},
 			}
-			result := interp.ApplyFunction(dummyCall, fn, nil, fileScope)
+			result := interp.ApplyFunction(ctx, dummyCall, fn, nil, fileScope)
 
 			if err, isErr := result.(*object.Error); isErr {
 				t.Logf("Successfully reproduced analysis failure for function %s: %s", fnName, err.Inspect())

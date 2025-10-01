@@ -34,12 +34,11 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		// We just need to evaluate the file to trigger the composite literal evaluation.
 		// The test is to ensure it doesn't panic and correctly creates slice objects.
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
 		// A more robust test could inspect the environment or returned values,
@@ -70,13 +69,19 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFunc, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
 		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
 
 		if isError(result) {
@@ -110,13 +115,19 @@ func main() {
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 		pkg := pkgs[0]
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
 		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+			eval.Eval(ctx, file, nil, pkg)
 		}
 
-		mainFunc, _ := env.Get("main")
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
 		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
 
 		// The important part is that this doesn't crash. The result of an index
@@ -151,39 +162,33 @@ func main() {
 	defer cleanup()
 
 	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-		pkg := pkgs[0]
+		mainPkg := findPkg(pkgs, "main")
+		if mainPkg == nil {
+			return fmt.Errorf("main package not found")
+		}
 		eval := New(s, s.Logger, nil, nil)
-		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 
-		for _, file := range pkg.AstFiles {
-			eval.Eval(ctx, file, env, pkg)
+		for _, file := range mainPkg.AstFiles {
+			eval.Eval(ctx, file, nil, mainPkg)
 		}
 
-		mainFunc, _ := env.Get("main")
-		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, pkg, 0)
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/me")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/me'")
+		}
+		mainFunc, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, 0)
 
 		if isError(result) {
 			return fmt.Errorf("evaluation failed: %s", result.Inspect())
 		}
 
-		// Check that the slice type was resolved correctly.
-		// items, ok := env.Get("items") // This test doesn't actually assign to `items`
-		// if ok {
-		// 	slice, ok := items.TypeInfo().(*goscan.TypeInfo)
-		// 	if !ok {
-		// 		return fmt.Errorf("expected items to be a slice, but got something else")
-		// 	}
-		// 	if !slice.IsSlice {
-		// 		return fmt.Errorf("expected a slice type")
-		// 	}
-		// 	if diff := cmp.Diff("example.com/me/models.User", slice.Slice.Elt.FullName()); diff != "" {
-		// 		return fmt.Errorf("slice element type mismatch (-want +got):\n%s", diff)
-		// 	}
-		// }
-
 		return nil
 	}
-	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"./..."}, action); err != nil {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 }

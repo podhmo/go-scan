@@ -1,33 +1,25 @@
 package intrinsics
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
 // BuiltinPanic is the intrinsic function for the built-in `panic`.
-func BuiltinPanic(args ...object.Object) object.Object {
+func BuiltinPanic(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{
 			Message: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args)),
 		}
 	}
-	// In symbolic execution, we treat panic as an error that stops execution.
-	// The message of the panic is wrapped in an Error object.
-	var msg string
-	if str, ok := args[0].(*object.String); ok {
-		msg = str.Value
-	} else {
-		msg = args[0].Inspect()
-	}
-	return &object.Error{
-		Message: fmt.Sprintf("panic: %s", msg),
-	}
+	// In symbolic execution, we treat panic as a distinct control flow object.
+	return &object.PanicError{Value: args[0]}
 }
 
 // BuiltinMake is the intrinsic function for the built-in `make`.
-func BuiltinMake(args ...object.Object) object.Object {
+func BuiltinMake(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) < 1 {
 		return &object.Error{
 			Message: fmt.Sprintf("wrong number of arguments. got=%d, want=at least 1", len(args)),
@@ -57,8 +49,31 @@ func BuiltinMake(args ...object.Object) object.Object {
 	}
 
 	if fieldType.IsSlice {
+		var length, capacity int64
+		if len(args) < 2 {
+			return &object.Error{Message: "make for slice expects at least 2 arguments"}
+		}
+		if l, ok := args[1].(*object.Integer); ok {
+			length = l.Value
+		} else {
+			// If length is not a constant, it's symbolic.
+			length = -1 // Use -1 to indicate symbolic length
+		}
+
+		if len(args) >= 3 {
+			if c, ok := args[2].(*object.Integer); ok {
+				capacity = c.Value
+			} else {
+				capacity = -1 // Symbolic capacity
+			}
+		} else {
+			capacity = length // If cap is omitted, it's equal to len.
+		}
+
 		slice := &object.Slice{
 			SliceFieldType: fieldType,
+			Len:            length,
+			Cap:            capacity,
 		}
 		slice.SetFieldType(fieldType)
 		slice.SetTypeInfo(typeArg.TypeInfo())
@@ -79,7 +94,7 @@ func BuiltinMake(args ...object.Object) object.Object {
 }
 
 // BuiltinAppend is the intrinsic function for the built-in `append`.
-func BuiltinAppend(args ...object.Object) object.Object {
+func BuiltinAppend(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) < 1 {
 		return &object.Error{Message: "wrong number of arguments: append needs at least 1"}
 	}
@@ -88,31 +103,137 @@ func BuiltinAppend(args ...object.Object) object.Object {
 }
 
 // BuiltinLen is the intrinsic function for the built-in `len`.
-func BuiltinLen(args ...object.Object) object.Object {
+func BuiltinLen(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: len expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "len(...) call"}
+
+	// If the argument is a return value, unwrap it to get the actual object.
+	if ret, ok := args[0].(*object.ReturnValue); ok {
+		args[0] = ret.Value
+	}
+
+	arg := args[0]
+	// Recursively unwrap variables to get to the underlying object.
+	for {
+		v, ok := arg.(*object.Variable)
+		if !ok {
+			break
+		}
+		arg = v.Value
+	}
+
+	switch arg := arg.(type) {
+	case *object.Slice:
+		// If the slice itself has a concrete length, use it.
+		if arg.Len >= 0 {
+			return &object.Integer{Value: arg.Len}
+		}
+		// Otherwise, it's symbolic.
+		return &object.SymbolicPlaceholder{Reason: "len on symbolic slice"}
+	case *object.String:
+		return &object.Integer{Value: int64(len(arg.Value))}
+	case *object.Map:
+		return &object.Integer{Value: int64(len(arg.Pairs))}
+	case *object.SymbolicPlaceholder:
+		// If we have a symbolic placeholder with length info (e.g., from an out-of-policy `make`), use it.
+		if arg.Len != -1 {
+			return &object.Integer{Value: arg.Len}
+		}
+		return &object.SymbolicPlaceholder{Reason: "len on symbolic value"}
+	case *object.UnresolvedFunction:
+		// This can happen if `len` is called on a variable from an unscanned
+		// package that is mis-identified as a function. Instead of crashing,
+		// return a symbolic placeholder for the length.
+		return &object.SymbolicPlaceholder{Reason: "len on unresolved function"}
+	case *object.Nil:
+		// len(nil) is a valid operation for slices, maps, and channels, and it returns 0.
+		return &object.Integer{Value: 0}
+	default:
+		return &object.Error{Message: fmt.Sprintf("argument to `len` not supported, got %s", arg.Type())}
+	}
 }
 
 // BuiltinCap is the intrinsic function for the built-in `cap`.
-func BuiltinCap(args ...object.Object) object.Object {
+func BuiltinCap(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: cap expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "cap(...) call"}
+	arg := args[0]
+	// Recursively unwrap variables to get to the underlying object.
+	for {
+		v, ok := arg.(*object.Variable)
+		if !ok {
+			break
+		}
+		arg = v.Value
+	}
+
+	switch arg := arg.(type) {
+	case *object.Slice:
+		if arg.Cap >= 0 {
+			return &object.Integer{Value: arg.Cap}
+		}
+		return &object.SymbolicPlaceholder{Reason: "cap on symbolic slice"}
+	case *object.SymbolicPlaceholder:
+		if arg.Cap != -1 {
+			return &object.Integer{Value: arg.Cap}
+		}
+		return &object.SymbolicPlaceholder{Reason: "cap on symbolic value"}
+	default:
+		return &object.Error{Message: fmt.Sprintf("argument to `cap` not supported, got %s", arg.Type())}
+	}
 }
 
 // BuiltinNew is the intrinsic function for the built-in `new`.
-func BuiltinNew(args ...object.Object) object.Object {
+func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: new expects 1"}
 	}
-	return &object.SymbolicPlaceholder{Reason: "new(...) call"}
+
+	typeArg := args[0]
+	var pointee object.Object
+
+	switch t := typeArg.(type) {
+	case *object.Type:
+		// For a resolved type, create a symbolic instance of it.
+		instance := &object.Instance{
+			TypeName: t.TypeName,
+		}
+		instance.SetTypeInfo(t.ResolvedType)
+		pointee = instance
+
+	case *object.UnresolvedType:
+		// For an unresolved type, create a symbolic placeholder for an instance of it.
+		// This placeholder can then be used in subsequent operations.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("instance of unresolved type %s.%s", t.PkgPath, t.TypeName),
+		}
+		pointee = placeholder
+
+	case *object.UnresolvedFunction:
+		// If we try to new an unresolved function type, it's valid. We can't know
+		// the "zero value" but we can return a placeholder for the pointer's pointee.
+		placeholder := &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("instance of unresolved function %s.%s", t.PkgPath, t.FuncName),
+		}
+		pointee = placeholder
+
+	default:
+		// Fallback for other types, like a symbolic placeholder representing a type.
+		if _, ok := typeArg.(*object.SymbolicPlaceholder); ok {
+			// If `new` is called on a placeholder, return a pointer to another placeholder.
+			return &object.Pointer{Value: &object.SymbolicPlaceholder{Reason: "pointer to " + typeArg.Inspect()}}
+		}
+		return &object.Error{Message: fmt.Sprintf("invalid argument for new: expected a type, got %s", typeArg.Type())}
+	}
+
+	// The `new` built-in function returns a pointer to the allocated object.
+	return &object.Pointer{Value: pointee}
 }
 
 // BuiltinCopy is the intrinsic function for the built-in `copy`.
-func BuiltinCopy(args ...object.Object) object.Object {
+func BuiltinCopy(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return &object.Error{Message: "wrong number of arguments: copy expects 2"}
 	}
@@ -120,7 +241,7 @@ func BuiltinCopy(args ...object.Object) object.Object {
 }
 
 // BuiltinDelete is the intrinsic function for the built-in `delete`.
-func BuiltinDelete(args ...object.Object) object.Object {
+func BuiltinDelete(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return &object.Error{Message: "wrong number of arguments: delete expects 2"}
 	}
@@ -128,7 +249,7 @@ func BuiltinDelete(args ...object.Object) object.Object {
 }
 
 // BuiltinClose is the intrinsic function for the built-in `close`.
-func BuiltinClose(args ...object.Object) object.Object {
+func BuiltinClose(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: close expects 1"}
 	}
@@ -136,7 +257,7 @@ func BuiltinClose(args ...object.Object) object.Object {
 }
 
 // BuiltinClear is the intrinsic function for the built-in `clear`.
-func BuiltinClear(args ...object.Object) object.Object {
+func BuiltinClear(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: clear expects 1"}
 	}
@@ -144,7 +265,7 @@ func BuiltinClear(args ...object.Object) object.Object {
 }
 
 // BuiltinComplex is the intrinsic function for the built-in `complex`.
-func BuiltinComplex(args ...object.Object) object.Object {
+func BuiltinComplex(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return &object.Error{Message: "wrong number of arguments: complex expects 2"}
 	}
@@ -152,7 +273,7 @@ func BuiltinComplex(args ...object.Object) object.Object {
 }
 
 // BuiltinReal is the intrinsic function for the built-in `real`.
-func BuiltinReal(args ...object.Object) object.Object {
+func BuiltinReal(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: real expects 1"}
 	}
@@ -160,7 +281,7 @@ func BuiltinReal(args ...object.Object) object.Object {
 }
 
 // BuiltinImag is the intrinsic function for the built-in `imag`.
-func BuiltinImag(args ...object.Object) object.Object {
+func BuiltinImag(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return &object.Error{Message: "wrong number of arguments: imag expects 1"}
 	}
@@ -168,7 +289,7 @@ func BuiltinImag(args ...object.Object) object.Object {
 }
 
 // BuiltinMax is the intrinsic function for the built-in `max`.
-func BuiltinMax(args ...object.Object) object.Object {
+func BuiltinMax(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) == 0 {
 		return &object.Error{Message: "wrong number of arguments: max expects at least 1"}
 	}
@@ -176,7 +297,7 @@ func BuiltinMax(args ...object.Object) object.Object {
 }
 
 // BuiltinMin is the intrinsic function for the built-in `min`.
-func BuiltinMin(args ...object.Object) object.Object {
+func BuiltinMin(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) == 0 {
 		return &object.Error{Message: "wrong number of arguments: min expects at least 1"}
 	}
@@ -184,19 +305,19 @@ func BuiltinMin(args ...object.Object) object.Object {
 }
 
 // BuiltinPrint is the intrinsic function for the built-in `print`.
-func BuiltinPrint(args ...object.Object) object.Object {
+func BuiltinPrint(ctx context.Context, args ...object.Object) object.Object {
 	// In symbolic execution, we can ignore this.
 	return object.NIL
 }
 
 // BuiltinPrintln is the intrinsic function for the built-in `println`.
-func BuiltinPrintln(args ...object.Object) object.Object {
+func BuiltinPrintln(ctx context.Context, args ...object.Object) object.Object {
 	// In symbolic execution, we can ignore this.
 	return object.NIL
 }
 
 // BuiltinRecover is the intrinsic function for the built-in `recover`.
-func BuiltinRecover(args ...object.Object) object.Object {
+func BuiltinRecover(ctx context.Context, args ...object.Object) object.Object {
 	if len(args) != 0 {
 		return &object.Error{Message: "wrong number of arguments: recover expects 0"}
 	}

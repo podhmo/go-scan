@@ -87,9 +87,9 @@ func generate(ctx context.Context, s *goscan.Scanner, outputDir, pkgPath string)
 	var pkgInfo *goscan.Package
 	var err error
 	if strings.HasPrefix(pkgPath, "./") || strings.HasPrefix(pkgPath, "/") {
-		pkgInfo, err = s.ScanPackage(ctx, pkgPath)
+		pkgInfo, err = s.ScanPackageFromFilePath(ctx, pkgPath)
 	} else {
-		pkgInfo, err = s.ScanPackageByImport(ctx, pkgPath)
+		pkgInfo, err = s.ScanPackageFromImportPath(ctx, pkgPath)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to scan package %s: %w", pkgPath, err)

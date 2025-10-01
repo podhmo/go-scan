@@ -9,7 +9,7 @@ This document provides a concrete, step-by-step plan for refactoring the `go-sca
 
 The primary goal is to significantly improve the performance of `go-scan`, especially for large packages or projects with many files. This will be achieved by parallelizing the most CPU-intensive part of the process: parsing individual Go source files.
 
-The secondary goal is to make the top-level `goscan.Scanner` object safe for concurrent use, allowing multiple high-level API calls (e.g., `ScanPackageByImport`) to run in parallel without interfering with each other.
+The secondary goal is to make the top-level `goscan.Scanner` object safe for concurrent use, allowing multiple high-level API calls (e.g., `ScanPackageFromImportPath`) to run in parallel without interfering with each other.
 
 ## 2. Proposed Architecture: Parallel Parse, Sequential Process
 
@@ -27,7 +27,7 @@ A key feature of `go-scan` is its ability to "lazy load" package information. Wh
 
 The proposed architecture inherently solves this problem through the same mechanisms that ensure general thread safety:
 
-*   **Synchronized Cache Access:** All high-level scan functions (e.g., `ScanPackageByImport`) will begin by checking the `packageCache` for the requested package inside a mutex-protected block.
+*   **Synchronized Cache Access:** All high-level scan functions (e.g., `ScanPackageFromImportPath`) will begin by checking the `packageCache` for the requested package inside a mutex-protected block.
 *   **Preventing Redundant Work:**
     1.  The first goroutine to request a scan for a package (e.g., `pkg-C`) will acquire the lock, see that it's not in the cache, and proceed to scan it.
     2.  While the first goroutine is scanning, any other goroutine that requests `pkg-C` will block waiting for the lock.
@@ -50,9 +50,9 @@ The `goscan.Scanner` struct contains shared state that is accessed by multiple m
 
 -   **Action:** Locate every read and write operation on `s.visitedFiles`.
 -   **Reads:** Wrap read operations with `s.mu.RLock()` and `s.mu.RUnlock()`.
-    -   Example locations: `ScanPackage`, `ScanFiles`, `UnscannedGoFiles`, `ScanPackageByImport`.
+    -   Example locations: `ScanPackageFromFilePath`, `ScanFiles`, `UnscannedGoFiles`, `ScanPackageFromImportPath`.
 -   **Writes:** Wrap write operations with `s.mu.Lock()` and `s.mu.Unlock()`.
-    -   Example locations: `ScanPackage`, `ScanFiles`, `ScanPackageByImport`, `FindSymbolInPackage`.
+    -   Example locations: `ScanPackageFromFilePath`, `ScanFiles`, `ScanPackageFromImportPath`, `FindSymbolInPackage`.
 
 **Example Change in `ScanFiles`:**
 ```go

@@ -64,7 +64,7 @@ type NotAnImplementer struct{}
 		var implementers []*scanner.TypeInfo
 		for _, ti := range pkgInfo.Types {
 			if ti.Kind == scanner.StructKind {
-				if goscan.Implements(ti, eventDataInterface, pkgInfo) {
+				if s.Implements(ctx, ti, eventDataInterface) {
 					implementers = append(implementers, ti)
 				}
 			}

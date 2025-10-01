@@ -4,18 +4,21 @@ import (
 	"context"
 	"fmt"
 	"go/token"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // MockResolver is a mock implementation of PackageResolver for tests.
 type MockResolver struct {
-	ScanPackageByImportFunc func(ctx context.Context, importPath string) (*PackageInfo, error)
+	ScanPackageFromImportPathFunc func(ctx context.Context, importPath string) (*PackageInfo, error)
 }
 
-func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath string) (*PackageInfo, error) {
-	if m.ScanPackageByImportFunc != nil {
-		return m.ScanPackageByImportFunc(ctx, importPath)
+func (m *MockResolver) ScanPackageFromImportPath(ctx context.Context, importPath string) (*PackageInfo, error) {
+	if m.ScanPackageFromImportPathFunc != nil {
+		return m.ScanPackageFromImportPathFunc(ctx, importPath)
 	}
 	return nil, nil // Default mock behavior
 }
@@ -64,7 +67,7 @@ func TestNewScanner(t *testing.T) {
 	})
 }
 
-func TestScanPackageFeatures(t *testing.T) {
+func TestScanPackageFromFilePathFeatures(t *testing.T) {
 	testDir := filepath.Join("..", "testdata", "features")
 	absTestDir, _ := filepath.Abs(testDir)
 	s := newTestScanner(t, "example.com/test/features", absTestDir)
@@ -254,7 +257,7 @@ func TestScanFiles(t *testing.T) {
 func TestFieldType_Resolve(t *testing.T) {
 	// Setup a mock resolver that returns a predefined package info
 	resolver := &MockResolver{
-		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
+		ScanPackageFromImportPathFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if importPath == "example.com/models" {
 				return &PackageInfo{
 					Fset: token.NewFileSet(),
@@ -295,7 +298,7 @@ func TestFieldType_Resolve(t *testing.T) {
 	}
 
 	// Second call should use the cache (we can't easily test this, but we can nil out the func)
-	resolver.ScanPackageByImportFunc = nil // To ensure resolver is not called again
+	resolver.ScanPackageFromImportPathFunc = nil // To ensure resolver is not called again
 	def2, err := s.ResolveType(ctx, ft)
 	if err != nil {
 		t.Fatalf("Second ResolveType() call failed: %v", err)
@@ -323,7 +326,7 @@ func TestResolve_DirectRecursion(t *testing.T) {
 	}
 
 	// Set up the mock resolver to return the already scanned package, simulating a cache hit.
-	s.resolver.(*MockResolver).ScanPackageByImportFunc = func(ctx context.Context, importPath string) (*PackageInfo, error) {
+	s.resolver.(*MockResolver).ScanPackageFromImportPathFunc = func(ctx context.Context, importPath string) (*PackageInfo, error) {
 		if importPath == "example.com/test/recursion/direct" {
 			return pkgInfo, nil
 		}
@@ -383,7 +386,7 @@ func TestResolve_MutualRecursion(t *testing.T) {
 	// to prevent re-parsing and creating duplicate TypeInfo objects.
 	pkgCache := make(map[string]*PackageInfo)
 	mockResolver := &MockResolver{
-		ScanPackageByImportFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
+		ScanPackageFromImportPathFunc: func(ctx context.Context, importPath string) (*PackageInfo, error) {
 			if pkg, found := pkgCache[importPath]; found {
 				return pkg, nil
 			}
@@ -408,9 +411,9 @@ func TestResolve_MutualRecursion(t *testing.T) {
 
 	// Start by scanning pkg_a
 	ctx := context.Background()
-	pkgAInfo, err := s.ScanPackageByImport(ctx, "example.com/recursion/mutual/pkg_a")
+	pkgAInfo, err := s.ScanPackageFromImportPath(ctx, "example.com/recursion/mutual/pkg_a")
 	if err != nil {
-		t.Fatalf("ScanPackageByImport for pkg_a failed: %v", err)
+		t.Fatalf("ScanPackageFromImportPath for pkg_a failed: %v", err)
 	}
 
 	typeA := pkgAInfo.Lookup("A")
@@ -581,5 +584,216 @@ type MyStruct struct {
 	expectedErrorMsg := `could not resolve type "NonExistentType" in package "example.com/test"`
 	if err.Error() != expectedErrorMsg {
 		t.Errorf("Expected error message %q, got %q", expectedErrorMsg, err.Error())
+	}
+}
+
+func TestScan_EmbeddedInterface(t *testing.T) {
+	testDir := filepath.Join("testdata", "embeddediface")
+	absTestDir, err := filepath.Abs(testDir)
+	if err != nil {
+		t.Fatalf("Failed to get absolute path for testdata dir: %v", err)
+	}
+	s := newTestScanner(t, "example.com/test/embeddediface", absTestDir)
+
+	filesToScan := []string{
+		filepath.Join(testDir, "iface.go"),
+	}
+
+	ctx := context.Background()
+	pkgInfo, err := s.ScanFiles(ctx, filesToScan, testDir)
+	if err != nil {
+		t.Fatalf("ScanFiles failed: %v", err)
+	}
+
+	// Find the ReadWriter interface
+	var readWriter *TypeInfo
+	for _, typ := range pkgInfo.Types {
+		if typ.Name == "ReadWriter" {
+			readWriter = typ
+			break
+		}
+	}
+	if readWriter == nil {
+		t.Fatal("ReadWriter interface not found")
+	}
+	if readWriter.Kind != InterfaceKind {
+		t.Fatalf("Expected ReadWriter to be an interface, got %v", readWriter.Kind)
+	}
+	if readWriter.Interface == nil {
+		t.Fatal("ReadWriter.Interface is nil")
+	}
+
+	// Check that it has one explicit method, "Close"
+	if len(readWriter.Interface.Methods) != 1 {
+		t.Fatalf("Expected 1 explicit method, got %d", len(readWriter.Interface.Methods))
+	}
+	if readWriter.Interface.Methods[0].Name != "Close" {
+		t.Errorf("Expected method 'Close', got '%s'", readWriter.Interface.Methods[0].Name)
+	}
+
+	// Check that it has two embedded interfaces, "Reader" and "Writer"
+	if len(readWriter.Interface.Embedded) != 2 {
+		t.Fatalf("Expected 2 embedded interfaces, got %d", len(readWriter.Interface.Embedded))
+	}
+	if readWriter.Interface.Embedded[0].TypeName != "Reader" {
+		t.Errorf("Expected first embedded type to be 'Reader', got '%s'", readWriter.Interface.Embedded[0].TypeName)
+	}
+	if readWriter.Interface.Embedded[1].TypeName != "Writer" {
+		t.Errorf("Expected second embedded type to be 'Writer', got '%s'", readWriter.Interface.Embedded[1].TypeName)
+	}
+
+	// Let's resolve one of the embedded interfaces to be sure
+	// Use the ResolutionContext from the parent type for resolving its children.
+	ctx = readWriter.ResolutionContext
+	readerTypeInfo, err := readWriter.Interface.Embedded[0].Resolve(ctx)
+	if err != nil {
+		t.Fatalf("Failed to resolve embedded Reader interface: %v", err)
+	}
+	if readerTypeInfo == nil {
+		t.Fatal("Resolved embedded Reader interface is nil")
+	}
+	if readerTypeInfo.Name != "Reader" {
+		t.Errorf("Expected resolved type name to be 'Reader', got '%s'", readerTypeInfo.Name)
+	}
+	if readerTypeInfo.Interface == nil {
+		t.Fatal("Resolved Reader's Interface field is nil")
+	}
+	if len(readerTypeInfo.Interface.Methods) != 1 {
+		t.Fatalf("Expected Reader to have 1 method, got %d", len(readerTypeInfo.Interface.Methods))
+	}
+	if readerTypeInfo.Interface.Methods[0].Name != "Read" {
+		t.Errorf("Expected Reader method to be 'Read', got '%s'", readerTypeInfo.Interface.Methods[0].Name)
+	}
+}
+
+func TestScanner_LocalTypeAlias(t *testing.T) {
+	// 1. Setup: Create a temporary directory and a .go file with a local type alias.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	code := `
+package main
+type S struct {
+	Name string
+}
+func main() {
+	type Alias S
+}
+`
+	err := os.WriteFile(filePath, []byte(code), 0644)
+	if err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+
+	// 2. Action: Create a scanner and scan the file.
+	// We use newTestScanner from scanner_test.go to simplify setup.
+	s := newTestScanner(t, "example.com/me", dir)
+	pkg, err := s.ScanFiles(context.Background(), []string{filePath}, dir)
+	if err != nil {
+		t.Fatalf("scanning files: %v", err)
+	}
+
+	// 3. Assertions: Check if the scanner correctly parsed the local alias.
+	var aliasTypeInfo *TypeInfo
+	for _, ti := range pkg.Types {
+		if ti.Name == "Alias" {
+			aliasTypeInfo = ti
+			break
+		}
+	}
+
+	if aliasTypeInfo == nil {
+		t.Fatal("TypeInfo for Alias should be found")
+	}
+	if diff := cmp.Diff(AliasKind, aliasTypeInfo.Kind); diff != "" {
+		t.Errorf("Alias kind mismatch (-want +got):\n%s", diff)
+	}
+
+	underlying := aliasTypeInfo.Underlying
+	if underlying == nil {
+		t.Fatal("Alias should have an Underlying type")
+	}
+	if diff := cmp.Diff("S", underlying.Name); diff != "" {
+		t.Errorf("Underlying type name mismatch (-want +got):\n%s", diff)
+	}
+
+	// This is the crucial check: The scanner should resolve the underlying type
+	// and link its full definition.
+	if underlying.Definition == nil {
+		t.Fatal("Underlying.Definition should be resolved by the scanner")
+	}
+	if diff := cmp.Diff("S", underlying.Definition.Name); diff != "" {
+		t.Errorf("Definition name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(StructKind, underlying.Definition.Kind); diff != "" {
+		t.Errorf("Definition kind mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestScanner_LocalTypeAlias_WithPointer(t *testing.T) {
+	// 1. Setup
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	code := `
+package main
+type S struct {
+	Name string
+}
+func main() {
+	type Alias *S
+}
+`
+	err := os.WriteFile(filePath, []byte(code), 0644)
+	if err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+
+	// 2. Action
+	s := newTestScanner(t, "example.com/me", dir)
+	pkg, err := s.ScanFiles(context.Background(), []string{filePath}, dir)
+	if err != nil {
+		t.Fatalf("scanning files: %v", err)
+	}
+
+	// 3. Assertions
+	var aliasTypeInfo *TypeInfo
+	for _, ti := range pkg.Types {
+		if ti.Name == "Alias" {
+			aliasTypeInfo = ti
+			break
+		}
+	}
+
+	if aliasTypeInfo == nil {
+		t.Fatal("TypeInfo for Alias should be found")
+	}
+	if diff := cmp.Diff(AliasKind, aliasTypeInfo.Kind); diff != "" {
+		t.Errorf("Alias kind mismatch (-want +got):\n%s", diff)
+	}
+
+	underlying := aliasTypeInfo.Underlying
+	if underlying == nil {
+		t.Fatal("Alias should have an Underlying type")
+	}
+	if !underlying.IsPointer {
+		t.Error("Underlying type should be a pointer")
+	}
+
+	elem := underlying.Elem
+	if elem == nil {
+		t.Fatal("Underlying pointer should have an element type")
+	}
+	if diff := cmp.Diff("S", elem.Name); diff != "" {
+		t.Errorf("Element type name mismatch (-want +got):\n%s", diff)
+	}
+
+	// Check that the element's definition is resolved
+	if elem.Definition == nil {
+		t.Fatal("Underlying.Elem.Definition should be resolved")
+	}
+	if diff := cmp.Diff("S", elem.Definition.Name); diff != "" {
+		t.Errorf("Element definition name mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(StructKind, elem.Definition.Kind); diff != "" {
+		t.Errorf("Element definition kind mismatch (-want +got):\n%s", diff)
 	}
 }

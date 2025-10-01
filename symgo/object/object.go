@@ -3,11 +3,15 @@ package object
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -33,6 +37,7 @@ const (
 	INSTANCE_OBJ              ObjectType = "INSTANCE"
 	VARIABLE_OBJ              ObjectType = "VARIABLE"
 	POINTER_OBJ               ObjectType = "POINTER"
+	STRUCT_OBJ                ObjectType = "STRUCT"
 	NIL_OBJ                   ObjectType = "NIL"
 	SLICE_OBJ                 ObjectType = "SLICE"
 	MAP_OBJ                   ObjectType = "MAP"
@@ -40,8 +45,12 @@ const (
 	MULTI_RETURN_OBJ          ObjectType = "MULTI_RETURN"
 	BREAK_OBJ                 ObjectType = "BREAK"
 	CONTINUE_OBJ              ObjectType = "CONTINUE"
+	FALLTHROUGH_OBJ           ObjectType = "FALLTHROUGH"
 	VARIADIC_OBJ              ObjectType = "VARIADIC"
 	UNRESOLVED_FUNCTION_OBJ   ObjectType = "UNRESOLVED_FUNCTION"
+	UNRESOLVED_TYPE_OBJ       ObjectType = "UNRESOLVED_TYPE"
+	PANIC_OBJ                 ObjectType = "PANIC"
+	AMBIGUOUS_SELECTOR_OBJ    ObjectType = "AMBIGUOUS_SELECTOR"
 )
 
 // Object is the interface that all value types in our symbolic engine will implement.
@@ -100,6 +109,12 @@ func (s *String) Type() ObjectType { return STRING_OBJ }
 // Inspect returns a string representation of the String's value.
 func (s *String) Inspect() string { return fmt.Sprintf("%q", s.Value) }
 
+// Release returns the String object to the pool.
+func (s *String) Release() {
+	s.Value = ""
+	stringPool.Put(s)
+}
+
 // --- Integer Object ---
 
 // Integer represents an integer value.
@@ -112,7 +127,13 @@ type Integer struct {
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 
 // Inspect returns a string representation of the Integer's value.
-func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
+func (i *Integer) Inspect() string { return strconv.FormatInt(i.Value, 10) }
+
+// Release returns the Integer object to the pool.
+func (i *Integer) Release() {
+	i.Value = 0
+	integerPool.Put(i)
+}
 
 // --- Float Object ---
 
@@ -126,7 +147,13 @@ type Float struct {
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 
 // Inspect returns a string representation of the Float's value.
-func (f *Float) Inspect() string { return fmt.Sprintf("%f", f.Value) }
+func (f *Float) Inspect() string { return strconv.FormatFloat(f.Value, 'f', -1, 64) }
+
+// Release returns the Float object to the pool.
+func (f *Float) Release() {
+	f.Value = 0
+	floatPool.Put(f)
+}
 
 // --- Complex Object ---
 
@@ -154,28 +181,49 @@ type Boolean struct {
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 
 // Inspect returns a string representation of the Boolean's value.
-func (b *Boolean) Inspect() string { return fmt.Sprintf("%t", b.Value) }
+func (b *Boolean) Inspect() string { return strconv.FormatBool(b.Value) }
 
-var (
-	// TRUE is the singleton true value.
-	TRUE = &Boolean{Value: true}
-	// FALSE is the singleton false value.
-	FALSE = &Boolean{Value: false}
-)
+// NewInteger creates a new Integer object from the pool.
+func NewInteger(value int64) *Integer {
+	obj := integerPool.Get().(*Integer)
+	obj.Value = value
+	return obj
+}
+
+// NewString creates a new String object from the pool.
+func NewString(value string) *String {
+	obj := stringPool.Get().(*String)
+	obj.Value = value
+	return obj
+}
+
+// NewFloat creates a new Float object from the pool.
+func NewFloat(value float64) *Float {
+	obj := floatPool.Get().(*Float)
+	obj.Value = value
+	return obj
+}
 
 // --- Function Object ---
 
 // Function represents a user-defined function in the code being analyzed.
 type Function struct {
 	BaseObject
-	Name       *ast.Ident
-	Parameters *ast.FieldList
-	Body       *ast.BlockStmt
-	Env        *Environment
-	Decl       *ast.FuncDecl // The original declaration, for metadata like godoc.
-	Package    *scanner.PackageInfo
-	Receiver   Object // The receiver for a method call ("self" or "this").
-	Def        *scanner.FunctionInfo
+	Name        *ast.Ident
+	Parameters  *ast.FieldList
+	Body        *ast.BlockStmt
+	Env         *Environment
+	Decl        *ast.FuncDecl // The original declaration, for metadata like godoc.
+	Lit         *ast.FuncLit  // The original function literal, for anonymous functions.
+	Package     *scanner.PackageInfo
+	Receiver    Object // The receiver for a method call ("self" or "this").
+	ReceiverPos token.Pos
+	Def         *scanner.FunctionInfo
+
+	// BoundCallStack stores the evaluator's call stack at the point where this
+	// function was passed as an argument. This is used to detect recursion
+	// through higher-order functions.
+	BoundCallStack []*CallFrame
 }
 
 // Type returns the type of the Function object.
@@ -190,13 +238,29 @@ func (f *Function) Inspect() string {
 	return fmt.Sprintf("func %s() { ... }", name)
 }
 
+// WithReceiver creates a new Function object with the receiver and its position bound.
+func (f *Function) WithReceiver(receiver Object, pos token.Pos) *Function {
+	newF := *f // Creates a shallow copy
+	newF.Receiver = receiver
+	newF.ReceiverPos = pos
+	return &newF
+}
+
+// Clone creates a shallow copy of the Function object. This is essential for
+// creating call-site-specific instances of a function (e.g., to bind a call stack)
+// without polluting the globally cached function object.
+func (f *Function) Clone() *Function {
+	newF := *f
+	return &newF
+}
+
 // --- Intrinsic Object ---
 
 // Intrinsic represents a built-in function that is implemented in Go.
 type Intrinsic struct {
 	BaseObject
 	// The Go function that implements the intrinsic's behavior.
-	Fn func(args ...Object) Object
+	Fn func(ctx context.Context, args ...Object) Object
 }
 
 // Type returns the type of the Intrinsic object.
@@ -251,10 +315,13 @@ func (p *Package) Inspect() string {
 
 // --- Error Object ---
 
-// CallFrame represents a single frame in the call stack.
+// CallFrame represents a single frame in the symbolic execution call stack.
 type CallFrame struct {
-	Pos      token.Pos
-	Function string // Name of the function for stack traces
+	Function    string
+	Pos         token.Pos
+	Fn          *Function
+	Args        []Object
+	ReceiverPos token.Pos
 }
 
 // Format formats the call frame into a readable string.
@@ -337,11 +404,17 @@ type SymbolicPlaceholder struct {
 	Package *scanner.PackageInfo
 	// If the placeholder is for an interface method call, this holds the receiver.
 	Receiver Object
-	// If the placeholder is for an interface method call, this holds the method info.
-	UnderlyingMethod *scanner.MethodInfo
 	// For interface method calls, this holds the set of possible concrete field types
 	// that the receiver variable could hold.
 	PossibleConcreteTypes []*scanner.FieldType
+	// Cache for the Inspect() result to avoid repeated string building
+	inspectCache string
+	cacheValid   bool
+
+	// For symbolic slices/maps, we can sometimes know the length and capacity
+	// even if the contents are unknown. -1 indicates unknown.
+	Len int64
+	Cap int64
 }
 
 // Type returns the type of the SymbolicPlaceholder object.
@@ -349,7 +422,17 @@ func (sp *SymbolicPlaceholder) Type() ObjectType { return SYMBOLIC_OBJ }
 
 // Inspect returns a string representation of the symbolic placeholder.
 func (sp *SymbolicPlaceholder) Inspect() string {
-	return fmt.Sprintf("<Symbolic: %s>", sp.Reason)
+	if sp.cacheValid {
+		return sp.inspectCache
+	}
+
+	var builder strings.Builder
+	builder.WriteString("<Symbolic: ")
+	builder.WriteString(sp.Reason)
+	builder.WriteString(">")
+	sp.inspectCache = builder.String()
+	sp.cacheValid = true
+	return sp.inspectCache
 }
 
 // --- ReturnValue Object ---
@@ -373,11 +456,13 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 // It holds a value and its resolved type information.
 type Variable struct {
 	BaseObject
-	Name  string
-	Value Object
-	// PossibleConcreteTypes tracks the set of concrete field types that have been
-	// assigned to this variable. This is used for precise analysis of interface method calls.
-	PossibleConcreteTypes map[*scanner.FieldType]struct{}
+	Name          string
+	Value         Object
+	Initializer   ast.Expr             // For lazy evaluation
+	IsEvaluated   bool                 // For lazy evaluation
+	DeclEnv       *Environment         // Environment where the variable was declared
+	DeclPkg       *scanner.PackageInfo // Package where the variable was declared
+	PossibleTypes map[string]struct{}  // Used for tracking possible types for interface variables
 }
 
 // Type returns the type of the Variable object.
@@ -385,6 +470,9 @@ func (v *Variable) Type() ObjectType { return VARIABLE_OBJ }
 
 // Inspect returns a string representation of the variable's value.
 func (v *Variable) Inspect() string {
+	if v.Value == nil {
+		return "<unevaluated var>"
+	}
 	return v.Value.Inspect()
 }
 
@@ -402,6 +490,54 @@ func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
 // Inspect returns a string representation of the pointer.
 func (p *Pointer) Inspect() string {
 	return fmt.Sprintf("&%s", p.Value.Inspect())
+}
+
+// --- Struct Object ---
+
+// Struct represents a struct instance. Its type is represented by a TypeInfo.
+type Struct struct {
+	BaseObject
+	StructType *scanner.TypeInfo
+	Fields     map[string]Object
+}
+
+// Type returns the type of the Struct object.
+func (s *Struct) Type() ObjectType { return STRUCT_OBJ }
+
+// Inspect returns a string representation of the struct.
+func (s *Struct) Inspect() string {
+	var out bytes.Buffer
+	pairs := []string{}
+	// Sort keys for consistent output
+	keys := make([]string, 0, len(s.Fields))
+	for k := range s.Fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := s.Fields[k]
+		pairs = append(pairs, fmt.Sprintf("%s: %s", k, v.Inspect()))
+	}
+
+	out.WriteString("{")
+	out.WriteString(strings.Join(pairs, ", "))
+	out.WriteString("}")
+	return out.String()
+}
+
+// Get retrieves a field from the struct.
+func (s *Struct) Get(name string) (Object, bool) {
+	val, ok := s.Fields[name]
+	return val, ok
+}
+
+// Set sets a field in the struct.
+func (s *Struct) Set(name string, val Object) {
+	if s.Fields == nil {
+		s.Fields = make(map[string]Object)
+	}
+	s.Fields[name] = val
 }
 
 // --- Nil Object ---
@@ -425,6 +561,8 @@ type Slice struct {
 	BaseObject
 	Elements       []Object
 	SliceFieldType *scanner.FieldType
+	Len            int64
+	Cap            int64
 }
 
 // Type returns the type of the Slice object.
@@ -450,6 +588,7 @@ func (s *Slice) Inspect() string {
 type Map struct {
 	BaseObject
 	MapFieldType *scanner.FieldType
+	Pairs        map[Object]Object // Simplified representation for symbolic analysis
 }
 
 // Type returns the type of the Map object.
@@ -457,6 +596,10 @@ func (m *Map) Type() ObjectType { return MAP_OBJ }
 
 // Inspect returns a string representation of the map type.
 func (m *Map) Inspect() string {
+	// If we have full TypeInfo for a named type, use that.
+	if ti := m.TypeInfo(); ti != nil && ti.Name != "" {
+		return ti.Name
+	}
 	if m.MapFieldType != nil {
 		return m.MapFieldType.String()
 	}
@@ -491,10 +634,42 @@ type Environment struct {
 	outer *Environment
 }
 
+// Object pools for reusing common objects
+var (
+	envPool = sync.Pool{
+		New: func() interface{} {
+			return &Environment{
+				store: make(map[string]Object),
+				outer: nil,
+			}
+		},
+	}
+	integerPool = sync.Pool{
+		New: func() interface{} {
+			return &Integer{}
+		},
+	}
+	stringPool = sync.Pool{
+		New: func() interface{} {
+			return &String{}
+		},
+	}
+	floatPool = sync.Pool{
+		New: func() interface{} {
+			return &Float{}
+		},
+	}
+)
+
 // NewEnvironment creates a new, top-level environment.
 func NewEnvironment() *Environment {
-	s := make(map[string]Object)
-	return &Environment{store: s, outer: nil}
+	env := envPool.Get().(*Environment)
+	// Reset the environment state
+	for k := range env.store {
+		delete(env.store, k)
+	}
+	env.outer = nil
+	return env
 }
 
 // NewEnclosedEnvironment creates a new environment that is enclosed by an outer one.
@@ -563,6 +738,15 @@ func (e *Environment) WalkLocal(fn func(name string, obj Object) bool) {
 	}
 }
 
+// Release returns the environment to the pool for reuse.
+// Only call this on environments that are no longer needed.
+func (e *Environment) Release() {
+	// Only release if this is not an outer environment being used by others
+	if e.outer == nil {
+		envPool.Put(e)
+	}
+}
+
 // --- MultiReturn Object ---
 
 // MultiReturn is a special object type to represent multiple return values from a function.
@@ -618,6 +802,19 @@ func (c *Continue) Inspect() string {
 	}
 	return "continue"
 }
+
+// --- Fallthrough Object ---
+
+// Fallthrough represents a fallthrough statement.
+type Fallthrough struct {
+	BaseObject
+}
+
+// Type returns the type of the Fallthrough object.
+func (f *Fallthrough) Type() ObjectType { return FALLTHROUGH_OBJ }
+
+// Inspect returns a string representation of the fallthrough statement.
+func (f *Fallthrough) Inspect() string { return "fallthrough" }
 
 // --- Variadic Object ---
 
@@ -692,22 +889,30 @@ func (t *Type) Inspect() string {
 
 // --- Tracer Interface ---
 
+// TraceEvent represents a single event in the evaluation trace.
+type TraceEvent struct {
+	Step int
+	Node ast.Node
+	Pkg  *scanner.PackageInfo
+	Env  *Environment
+}
+
 // Tracer is an interface for instrumenting the symbolic execution process.
 // An implementation can be passed to the interpreter to track which AST nodes
 // are being evaluated.
 type Tracer interface {
-	Visit(node ast.Node)
+	Trace(event TraceEvent)
 }
 
 // ScanPolicyFunc is a function that determines whether a package should be scanned from source.
 type ScanPolicyFunc func(importPath string) bool
 
 // TracerFunc is an adapter to allow the use of ordinary functions as Tracers.
-type TracerFunc func(node ast.Node)
+type TracerFunc func(event TraceEvent)
 
-// Visit calls f(node).
-func (f TracerFunc) Visit(node ast.Node) {
-	f(node)
+// Trace calls f(event).
+func (f TracerFunc) Trace(event TraceEvent) {
+	f(event)
 }
 
 // getSourceLine reads a specific line from a file. It returns the line and any error encountered.
@@ -741,6 +946,28 @@ func (e *Error) AttachFileSet(fset *token.FileSet) {
 	e.fset = fset
 }
 
+// --- PanicError Object ---
+
+// PanicError represents a panic that occurred during symbolic evaluation.
+// It is also a Go error, so it can be returned as one.
+type PanicError struct {
+	BaseObject
+	Value Object // The value passed to panic()
+}
+
+// Type returns the type of the PanicError object.
+func (pe *PanicError) Type() ObjectType { return PANIC_OBJ }
+
+// Inspect returns a string representation of the panic.
+func (pe *PanicError) Inspect() string {
+	return fmt.Sprintf("panic: %s", pe.Value.Inspect())
+}
+
+// Error returns a string representation of the panic, satisfying the error interface.
+func (pe *PanicError) Error() string {
+	return pe.Inspect()
+}
+
 // --- UnresolvedFunction Object ---
 
 // UnresolvedFunction represents a function that could not be fully resolved
@@ -759,9 +986,51 @@ func (uf *UnresolvedFunction) Inspect() string {
 	return fmt.Sprintf("<Unresolved Function: %s.%s>", uf.PkgPath, uf.FuncName)
 }
 
-// --- Global Instances ---
+// --- UnresolvedType Object ---
 
-// Pre-create global instances for common values to save allocations.
+// UnresolvedType represents a type that could not be fully resolved
+// at the time of symbol lookup, for example, because its package could not be scanned.
+type UnresolvedType struct {
+	BaseObject
+	PkgPath  string
+	TypeName string
+}
+
+// Type returns the type of the UnresolvedType object.
+func (ut *UnresolvedType) Type() ObjectType { return UNRESOLVED_TYPE_OBJ }
+
+// Inspect returns a string representation of the unresolved type.
+func (ut *UnresolvedType) Inspect() string {
+	return fmt.Sprintf("<Unresolved Type: %s.%s>", ut.PkgPath, ut.TypeName)
+}
+
+// --- Global Instances ---
 var (
+	// TRUE is the singleton true value.
+	TRUE = &Boolean{Value: true}
+	// FALSE is the singleton false value.
+	FALSE = &Boolean{Value: false}
+	// NIL is the singleton nil value.
 	NIL = &Nil{}
+	// FALLTHROUGH is the singleton fallthrough value.
+	FALLTHROUGH = &Fallthrough{}
 )
+
+// --- AmbiguousSelector Object ---
+
+// AmbiguousSelector represents a selector expression (e.g., `x.Y`) where it's
+// unclear if `Y` is a field or a method, typically due to unresolved embedded types.
+// The resolution is deferred to the caller (e.g., a CallExpr or AssignStmt).
+type AmbiguousSelector struct {
+	BaseObject
+	Receiver Object
+	Sel      *ast.Ident
+}
+
+// Type returns the type of the AmbiguousSelector object.
+func (as *AmbiguousSelector) Type() ObjectType { return AMBIGUOUS_SELECTOR_OBJ }
+
+// Inspect returns a string representation of the ambiguous selector.
+func (as *AmbiguousSelector) Inspect() string {
+	return fmt.Sprintf("<Ambiguous Selector: %s.%s>", as.Receiver.Inspect(), as.Sel.Name)
+}

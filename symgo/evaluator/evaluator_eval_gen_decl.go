@@ -126,3 +126,65 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 	}
 	return nil
 }
+
+func (e *Evaluator) evalTypeDecl(ctx context.Context, d *ast.GenDecl, env *object.Environment, pkg *scan.PackageInfo) {
+	for _, spec := range d.Specs {
+		ts, ok := spec.(*ast.TypeSpec)
+		if !ok {
+			continue
+		}
+
+		// Find the TypeInfo that the scanner created for this TypeSpec.
+		var typeInfo *scan.TypeInfo
+		if pkg != nil { // pkg can be nil in some tests
+			for _, ti := range pkg.Types {
+				if ti.Node == ts {
+					typeInfo = ti
+					break
+				}
+			}
+		}
+
+		if typeInfo == nil {
+			// This could be a local type definition inside a function.
+			// The scanner does not create TypeInfo for these, so we create one on the fly.
+			if pkg == nil || pkg.Fset == nil {
+				e.logc(ctx, slog.LevelWarn, "cannot create local type info without package context", "type", ts.Name.Name)
+				continue
+			}
+			file := pkg.Fset.File(ts.Pos())
+			if file == nil {
+				e.logc(ctx, slog.LevelWarn, "could not find file for local type node position", "type", ts.Name.Name)
+				continue
+			}
+			astFile, fileOK := pkg.AstFiles[file.Name()]
+			if !fileOK {
+				e.logc(ctx, slog.LevelWarn, "could not find ast.File for local type", "type", ts.Name.Name, "path", file.Name())
+				continue
+			}
+			importLookup := e.scanner.BuildImportLookup(astFile)
+
+			// Determine the underlying type information.
+			underlyingFieldType := e.scanner.TypeInfoFromExpr(ctx, ts.Type, nil, pkg, importLookup)
+			// Note: We don't resolve the underlying type here. The important part is to
+			// capture the AST (`ts`) and the textual representation of the underlying type (`underlyingFieldType`).
+			// The resolution will happen later when this type is actually used.
+
+			// Create a new TypeInfo for the local alias.
+			typeInfo = &scan.TypeInfo{
+				Name:       ts.Name.Name,
+				PkgPath:    pkg.ImportPath, // Local types belong to the current package.
+				Node:       ts,             // IMPORTANT: Store the AST node.
+				Underlying: underlyingFieldType,
+				Kind:       scan.AliasKind, // Mark it as an alias.
+			}
+		}
+
+		typeObj := &object.Type{
+			TypeName:     typeInfo.Name,
+			ResolvedType: typeInfo,
+		}
+		typeObj.SetTypeInfo(typeInfo)
+		env.Set(ts.Name.Name, typeObj)
+	}
+}

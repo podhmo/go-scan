@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
+	"go/token"
 	"log/slog"
 
 	scan "github.com/podhmo/go-scan/scanner"
@@ -559,4 +560,116 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}
+}
+
+// evalSymbolicSelection centralizes the logic for handling a selector expression (e.g., `x.Field` or `x.Method()`)
+// where `x` is a symbolic placeholder. This is a common case when dealing with values of unresolved types.
+func (e *Evaluator) evalSymbolicSelection(ctx context.Context, val *object.SymbolicPlaceholder, sel *ast.Ident, env *object.Environment, receiver object.Object, receiverPos token.Pos) object.Object {
+	typeInfo := val.TypeInfo()
+	if typeInfo == nil {
+		// If we are calling a method on a placeholder that has no type info (e.g., from an
+		// undefined identifier in an out-of-policy package), we can't resolve the method.
+		// Instead of erroring, we return another placeholder representing the result of the call.
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of call to method %q on typeless placeholder", sel.Name)}
+	}
+	fullTypeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+	key := fmt.Sprintf("(*%s).%s", fullTypeName, sel.Name)
+	if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+		self := val
+		fn := func(ctx context.Context, args ...object.Object) object.Object {
+			return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+		}
+		return &object.Intrinsic{Fn: fn}
+	}
+	key = fmt.Sprintf("(%s).%s", fullTypeName, sel.Name)
+	if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+		self := val
+		fn := func(ctx context.Context, args ...object.Object) object.Object {
+			return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+		}
+		return &object.Intrinsic{Fn: fn}
+	}
+
+	// Fallback to searching for the method on the instance's type.
+	if typeInfo := val.TypeInfo(); typeInfo != nil {
+		if method, err := e.accessor.findMethodOnType(ctx, typeInfo, sel.Name, env, receiver, receiverPos); err == nil && method != nil {
+			return method
+		}
+
+		// If it's not a method, check if it's a field on the struct (including embedded).
+		// This must be done *before* the unresolved check, as an unresolved type can still have field info.
+		if typeInfo.Struct != nil {
+			if field, err := e.accessor.findFieldOnType(ctx, typeInfo, sel.Name); err == nil && field != nil {
+				return e.resolver.ResolveSymbolicField(ctx, field, val)
+			}
+		}
+
+		if typeInfo.Unresolved {
+			placeholder := &object.SymbolicPlaceholder{
+				Reason:   fmt.Sprintf("symbolic method call %s on unresolved symbolic type %s", sel.Name, typeInfo.Name),
+				Receiver: val,
+			}
+			// Try to find method in interface definition if available
+			if typeInfo.Interface != nil {
+				for _, method := range typeInfo.Interface.Methods {
+					if method.Name == sel.Name {
+						// Convert MethodInfo to a temporary FunctionInfo
+						placeholder.UnderlyingFunc = &scan.FunctionInfo{
+							Name:       method.Name,
+							Parameters: method.Parameters,
+							Results:    method.Results,
+						}
+						break
+					}
+				}
+			}
+			return placeholder
+		}
+	}
+
+	// For symbolic placeholders, don't error - return another placeholder
+	// This allows analysis to continue even when types are unresolved
+	return &object.SymbolicPlaceholder{
+		Reason:   "method or field " + sel.Name + " on symbolic type " + val.Inspect(),
+		Receiver: val,
+	}
+}
+
+// getAllInterfaceMethods recursively collects all methods from an interface and its embedded interfaces.
+// It handles cycles by keeping track of visited interface types.
+// A duplicate of this method exists in `goscan.Scanner` for historical reasons;
+// the evaluator needs its own copy to resolve interface method calls during symbolic execution.
+func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scan.TypeInfo, visited map[string]struct{}) []*scan.MethodInfo {
+	if ifaceType == nil || ifaceType.Interface == nil {
+		return nil
+	}
+
+	// Cycle detection
+	typeName := ifaceType.PkgPath + "." + ifaceType.Name
+	if _, ok := visited[typeName]; ok {
+		return nil
+	}
+	visited[typeName] = struct{}{}
+
+	var allMethods []*scan.MethodInfo
+	allMethods = append(allMethods, ifaceType.Interface.Methods...)
+
+	for _, embeddedField := range ifaceType.Interface.Embedded {
+		// Resolve the embedded type to get its full definition.
+		// Note: embeddedField.Resolve(ctx) creates a new context, so our visited map won't propagate.
+		// We need to use the resolver directly or pass the context. Let's assume the resolver handles cycles.
+		embeddedTypeInfo, err := embeddedField.Resolve(ctx)
+		if err != nil {
+			e.logc(ctx, slog.LevelWarn, "could not resolve embedded interface", "type", embeddedField.String(), "error", err)
+			continue
+		}
+
+		if embeddedTypeInfo != nil && embeddedTypeInfo.Kind == scan.InterfaceKind {
+			// Recursively get methods from the embedded interface.
+			embeddedMethods := e.getAllInterfaceMethods(ctx, embeddedTypeInfo, visited)
+			allMethods = append(allMethods, embeddedMethods...)
+		}
+	}
+
+	return allMethods
 }

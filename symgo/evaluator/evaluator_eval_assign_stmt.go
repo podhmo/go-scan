@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/printer"
+	"go/token"
 	"log/slog"
 
 	scan "github.com/podhmo/go-scan/scanner"
@@ -212,4 +213,122 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 	}
 
 	return e.newError(ctx, n.Pos(), "unsupported assignment statement")
+}
+
+func (e *Evaluator) evalIdentAssignment(ctx context.Context, ident *ast.Ident, rhs ast.Expr, tok token.Token, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+	val := e.Eval(ctx, rhs, env, pkg)
+	if isError(val) {
+		return val
+	}
+
+	// If the value is a return value from a function call, unwrap it.
+	if ret, ok := val.(*object.ReturnValue); ok {
+		val = ret.Value
+	}
+
+	// Log the type info of the value being assigned.
+	typeInfo := val.TypeInfo()
+	typeName := "<nil>"
+	if typeInfo != nil {
+		typeName = typeInfo.Name
+	}
+	e.logger.Debug("evalIdentAssignment: assigning value", "var", ident.Name, "value_type", val.Type(), "value_typeinfo", typeName)
+
+	return e.assignIdentifier(ctx, ident, val, tok, env)
+}
+
+func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val object.Object, tok token.Token, env *object.Environment) object.Object {
+	// Before assigning, the RHS must be fully evaluated.
+	val = e.forceEval(ctx, val, nil) // pkg is not strictly needed here as DeclPkg is used.
+	if isError(val) {
+		return val
+	}
+
+	// For `:=`, we always define a new variable in the current scope.
+	if tok == token.DEFINE {
+		// In Go, `:=` can redeclare a variable if it's in a different scope,
+		// but in our symbolic engine, we'll simplify and just overwrite in the local scope.
+		// A more complex implementation would handle shadowing more precisely.
+		v := &object.Variable{
+			Name:        ident.Name,
+			Value:       val,
+			IsEvaluated: true, // A variable defined with `:=` has its value evaluated immediately.
+			BaseObject: object.BaseObject{
+				ResolvedTypeInfo:  val.TypeInfo(),
+				ResolvedFieldType: val.FieldType(),
+			},
+		}
+		if val.FieldType() != nil {
+			if resolved := e.resolver.ResolveType(ctx, val.FieldType()); resolved != nil && resolved.Kind == scan.InterfaceKind {
+				v.PossibleTypes = make(map[string]struct{})
+				if ft := val.FieldType(); ft != nil {
+					v.PossibleTypes[ft.String()] = struct{}{}
+				}
+			}
+		}
+		e.logger.Debug("evalAssignStmt: defining var", "name", ident.Name)
+		return env.SetLocal(ident.Name, v) // Use SetLocal for :=
+	}
+
+	// For `=`, find the variable and update it in-place.
+	obj, ok := env.Get(ident.Name)
+	if !ok {
+		// This can happen for package-level variables not yet evaluated,
+		// or if the code is invalid Go. We define it in the current scope as a fallback.
+		return e.assignIdentifier(ctx, ident, val, token.DEFINE, env)
+	}
+
+	v, ok := obj.(*object.Variable)
+	if !ok {
+		// Not a variable, just overwrite it in the environment.
+		e.logger.Debug("evalAssignStmt: overwriting non-variable in env", "name", ident.Name)
+		return env.Set(ident.Name, val)
+	}
+
+	// If the variable's declared type is an interface, we should preserve that
+	// static type information on the variable itself. The concrete type of the
+	// assigned value is still available on `val` (which becomes `v.Value`).
+	var isLHSInterface bool
+	if ft := v.FieldType(); ft != nil {
+		if ti := e.resolver.ResolveType(ctx, ft); ti != nil {
+			isLHSInterface = ti.Kind == scan.InterfaceKind
+		}
+	}
+
+	v.Value = val
+	if !isLHSInterface {
+		v.SetTypeInfo(val.TypeInfo())
+		v.SetFieldType(val.FieldType())
+	}
+	newFieldType := val.FieldType()
+
+	// Always accumulate possible types. Resetting the map can lead to lost
+	// information, especially when dealing with interface assignments where the
+	// static type of the variable might be unresolved.
+	if v.PossibleTypes == nil {
+		v.PossibleTypes = make(map[string]struct{})
+	}
+	if newFieldType != nil {
+		key := newFieldType.String()
+
+		// Workaround: If the default string representation of a pointer type is just "*",
+		// it's likely because the underlying element's FieldType has an empty name.
+		// In this case, we construct a more robust key using the TypeInfo from the
+		// object the pointer points to. This makes the analysis resilient to
+		// incomplete FieldType information from the scanner.
+		if key == "*" {
+			if ptr, ok := val.(*object.Pointer); ok {
+				if inst, ok := ptr.Value.(*object.Instance); ok {
+					if ti := inst.TypeInfo(); ti != nil && ti.PkgPath != "" && ti.Name != "" {
+						key = fmt.Sprintf("%s.*%s", ti.PkgPath, ti.Name)
+					}
+				}
+			}
+		}
+
+		v.PossibleTypes[key] = struct{}{}
+		e.logger.Debug("evalAssignStmt: adding possible type to var", "name", ident.Name, "new_type", key)
+	}
+
+	return v
 }

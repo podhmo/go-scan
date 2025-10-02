@@ -87,3 +87,66 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 		return e.newError(ctx, node.Pos(), "unknown unary operator: %s", node.Op)
 	}
 }
+
+func (e *Evaluator) evalBangOperatorExpression(right object.Object) object.Object {
+	// If the operand is a symbolic placeholder, the result is also a symbolic placeholder.
+	if _, ok := right.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: "result of ! on symbolic value"}
+	}
+
+	switch right {
+	case object.TRUE:
+		return object.FALSE
+	case object.FALSE:
+		return object.TRUE
+	case object.NIL:
+		return object.TRUE
+	default:
+		// In Go, `!` is only for booleans. For symbolic execution,
+		// we might encounter other types. We'll treat them as "truthy"
+		// (so !non-boolean is false), which is a common scripty behavior,
+		// but a more rigorous implementation might error here.
+		return object.FALSE
+	}
+}
+
+func (e *Evaluator) evalNumericUnaryExpression(ctx context.Context, op token.Token, right object.Object) object.Object {
+	// If the operand is a symbolic placeholder, the result is also a symbolic placeholder.
+	if _, ok := right.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("result of unary operator %s on symbolic value", op)}
+	}
+
+	switch val := right.(type) {
+	case *object.Integer:
+		switch op {
+		case token.SUB:
+			return &object.Integer{Value: -val.Value}
+		case token.ADD:
+			return &object.Integer{Value: val.Value} // Unary plus is a no-op.
+		case token.XOR:
+			return &object.Integer{Value: ^val.Value} // Bitwise NOT.
+		default:
+			return e.newError(ctx, token.NoPos, "unhandled numeric unary operator for INTEGER: %s", op)
+		}
+	case *object.Float:
+		switch op {
+		case token.SUB:
+			return &object.Float{Value: -val.Value}
+		case token.ADD:
+			return &object.Float{Value: val.Value}
+		default:
+			return e.newError(ctx, token.NoPos, "unhandled numeric unary operator for FLOAT: %s", op)
+		}
+	case *object.Complex:
+		switch op {
+		case token.SUB:
+			return &object.Complex{Value: -val.Value}
+		case token.ADD:
+			return &object.Complex{Value: val.Value}
+		default:
+			return e.newError(ctx, token.NoPos, "unhandled numeric unary operator for COMPLEX: %s", op)
+		}
+	default:
+		return e.newError(ctx, token.NoPos, "unary operator %s not supported for type %s", op, right.Type())
+	}
+}

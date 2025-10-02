@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"go/constant"
+	"go/token"
 	"log/slog"
 	"strconv"
 
@@ -100,4 +102,31 @@ func (e *Evaluator) evalIdent(ctx context.Context, n *ast.Ident, env *object.Env
 		return val
 	}
 	return e.newError(ctx, n.Pos(), "identifier not found: %s", n.Name)
+}
+
+// convertGoConstant converts a go/constant.Value to a symgo/object.Object.
+func (e *Evaluator) convertGoConstant(ctx context.Context, val constant.Value, pos token.Pos) object.Object {
+	switch val.Kind() {
+	case constant.String:
+		return &object.String{Value: constant.StringVal(val)}
+	case constant.Int:
+		i, ok := constant.Int64Val(val)
+		if !ok {
+			// This might be a large integer that doesn't fit in int64.
+			// For symbolic execution, this is an acceptable limitation for now.
+			return e.newError(ctx, pos, "could not convert constant to int64: %s", val.String())
+		}
+		return &object.Integer{Value: i}
+	case constant.Bool:
+		return nativeBoolToBooleanObject(constant.BoolVal(val))
+	case constant.Float:
+		f, _ := constant.Float64Val(val)
+		return &object.Float{Value: f}
+	case constant.Complex:
+		r, _ := constant.Float64Val(constant.Real(val))
+		i, _ := constant.Float64Val(constant.Imag(val))
+		return &object.Complex{Value: complex(r, i)}
+	default:
+		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("unsupported constant kind: %s", val.Kind())}
+	}
 }

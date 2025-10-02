@@ -1150,7 +1150,7 @@ func main() {
 func TestIdentifierNotFoundLogging(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: slog.LevelWarn,
 	}))
 
 	source := `

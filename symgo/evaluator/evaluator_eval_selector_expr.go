@@ -673,3 +673,27 @@ func (e *Evaluator) getAllInterfaceMethods(ctx context.Context, ifaceType *scan.
 
 	return allMethods
 }
+
+func (e *Evaluator) getOrResolveFunction(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
+	// Generate a unique key for the function. For methods, the receiver type is crucial.
+	key := ""
+	if funcInfo.Receiver != nil && funcInfo.Receiver.Type != nil {
+		// e.g., "example.com/me/impl.(*Dog).Speak"
+		key = fmt.Sprintf("%s.(%s).%s", pkg.Path, funcInfo.Receiver.Type.String(), funcInfo.Name)
+	} else {
+		// e.g., "example.com/me.MyFunction"
+		key = fmt.Sprintf("%s.%s", pkg.Path, funcInfo.Name)
+	}
+
+	// Check cache first.
+	if fn, ok := e.funcCache[key]; ok {
+		return fn
+	}
+
+	// Not in cache, resolve it.
+	fn := e.resolver.ResolveFunction(ctx, pkg, funcInfo)
+
+	// Store in cache for next time.
+	e.funcCache[key] = fn
+	return fn
+}

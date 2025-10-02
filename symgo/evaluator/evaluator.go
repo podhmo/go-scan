@@ -648,3 +648,38 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 		}
 	}
 }
+
+
+var (
+	// ErrorInterfaceTypeInfo is a pre-constructed TypeInfo for the built-in error interface.
+	// This is necessary because the scanner may not always be able to resolve built-in types
+	// to their full interface definition, especially in minimal test setups.
+	ErrorInterfaceTypeInfo *scan.TypeInfo
+)
+
+func init() {
+	// Manually construct the TypeInfo for the `error` interface.
+	// The `error` interface is defined as:
+	// type error interface {
+	//     Error() string
+	// }
+	stringFieldType := &scan.FieldType{
+		Name:      "string",
+		IsBuiltin: true,
+	}
+	errorMethod := &scan.MethodInfo{
+		Name: "Error",
+		Results: []*scan.FieldInfo{
+			{
+				Type: stringFieldType,
+			},
+		},
+	}
+	ErrorInterfaceTypeInfo = &scan.TypeInfo{
+		Name: "error",
+		Kind: scan.InterfaceKind,
+		Interface: &scan.InterfaceInfo{
+			Methods: []*scan.MethodInfo{errorMethod},
+		},
+	}
+}

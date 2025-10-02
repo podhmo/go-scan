@@ -7,7 +7,6 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 
@@ -389,71 +388,6 @@ func (e *Evaluator) Eval(ctx context.Context, node ast.Node, env *object.Environ
 	return e.newError(ctx, node.Pos(), "evaluation not implemented for %T", node)
 }
 
-// logc logs a message with the current function context from the call stack.
-func (e *Evaluator) logc(ctx context.Context, level slog.Level, msg string, args ...any) {
-	// usually depth is 2, because logc is called from other functions
-	e.logcWithCallerDepth(ctx, level, 2, msg, args...)
-}
-
-// for user, use logc instead of this function
-func (e *Evaluator) logcWithCallerDepth(ctx context.Context, level slog.Level, depth int, msg string, args ...any) {
-	if !e.logger.Enabled(ctx, level) {
-		return
-	}
-
-	// Get execution position (the caller of this function)
-	_, file, line, ok := runtime.Caller(depth)
-	if ok {
-		// Prepend exec_pos so it appears early in the log output.
-		args = append([]any{slog.String("exec_pos", fmt.Sprintf("%s:%d", file, line))}, args...)
-	}
-
-	// Add context from the current call stack frame.
-	if len(e.callStack) > 0 {
-		frame := e.callStack[len(e.callStack)-1]
-		posStr := ""
-		if e.scanner != nil && e.scanner.Fset() != nil && frame.Pos.IsValid() {
-			posStr = e.scanner.Fset().Position(frame.Pos).String()
-		}
-		contextArgs := []any{
-			slog.String("in_func", frame.Function),
-			slog.String("in_func_pos", posStr),
-		}
-		// Prepend context args so they appear first in the log.
-		args = append(contextArgs, args...)
-	}
-
-	// Prevent recursion: if an argument is an *object.Error, don't inspect it deeply.
-	for i, arg := range args {
-		if err, ok := arg.(*object.Error); ok {
-			args[i] = slog.String("error", err.Message)
-		}
-	}
-
-	e.logger.Log(ctx, level, msg, args...)
-}
-
-func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, args ...interface{}) *object.Error {
-	msg := fmt.Sprintf(format, args...)
-	posStr := fmt.Sprintf("%d", pos) // Default to raw number
-	if e.scanner != nil && e.scanner.Fset() != nil && pos.IsValid() {
-		posStr = e.scanner.Fset().Position(pos).String()
-	}
-	e.logcWithCallerDepth(ctx, slog.LevelError, 2, msg, "pos", posStr)
-
-	frames := make([]*object.CallFrame, len(e.callStack))
-	copy(frames, e.callStack)
-	err := &object.Error{
-		Message:   fmt.Sprintf(format, args...),
-		Pos:       pos,
-		CallStack: frames,
-	}
-	if e.scanner != nil {
-		err.AttachFileSet(e.scanner.Fset())
-	}
-	return err
-}
-
 func isError(obj object.Object) bool {
 	if obj != nil {
 		return obj.Type() == object.ERROR_OBJ
@@ -499,33 +433,6 @@ func (v inspectValuer) LogValue() slog.Value {
 	return slog.StringValue(v.obj.Inspect())
 }
 
-// CalledInterfaceMethodsForTest returns the map of called interface methods for testing.
-func (e *Evaluator) CalledInterfaceMethodsForTest() map[string][]object.Object {
-	return e.calledInterfaceMethods
-}
-
-// SeenPackagesForTest returns the map of seen packages for testing.
-func (e *Evaluator) SeenPackagesForTest() map[string]*goscan.Package {
-	return e.seenPackages
-}
-
-// GetOrLoadPackageForTest is a test helper to expose the internal getOrLoadPackage method.
-func (e *Evaluator) GetOrLoadPackageForTest(ctx context.Context, path string) (*object.Package, error) {
-	return e.getOrLoadPackage(ctx, path)
-}
-
-// PackageEnvForTest is a test helper to get a package's environment.
-func (e *Evaluator) PackageEnvForTest(pkgPath string) (*object.Environment, bool) {
-	if pkg, ok := e.pkgCache[pkgPath]; ok {
-		return pkg.Env, true
-	}
-	return nil, false
-}
-
-// GetOrResolveFunctionForTest is a test helper to expose the internal getOrResolveFunction method.
-func (e *Evaluator) GetOrResolveFunctionForTest(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
-	return e.getOrResolveFunction(ctx, pkg, funcInfo)
-}
 
 // Files returns the file scopes that have been loaded into the evaluator.
 func (e *Evaluator) Files() []*FileScope {
@@ -649,6 +556,39 @@ func (e *Evaluator) Finalize(ctx context.Context) {
 	}
 }
 
+// for test
+
+// CalledInterfaceMethodsForTest returns the map of called interface methods for testing.
+func (e *Evaluator) CalledInterfaceMethodsForTest() map[string][]object.Object {
+	return e.calledInterfaceMethods
+}
+
+// SeenPackagesForTest returns the map of seen packages for testing.
+func (e *Evaluator) SeenPackagesForTest() map[string]*goscan.Package {
+	return e.seenPackages
+}
+
+// PackageEnvForTest is a test helper to get a package's environment.
+func (e *Evaluator) PackageEnvForTest(pkgPath string) (*object.Environment, bool) {
+	if pkg, ok := e.pkgCache[pkgPath]; ok {
+		return pkg.Env, true
+	}
+	return nil, false
+}
+
+// GetOrResolveFunctionForTest is a test helper to expose the internal getOrResolveFunction method.
+func (e *Evaluator) GetOrResolveFunctionForTest(ctx context.Context, pkg *object.Package, funcInfo *scan.FunctionInfo) object.Object {
+	return e.getOrResolveFunction(ctx, pkg, funcInfo)
+}
+
+// GetOrLoadPackageForTest is a test helper to expose the internal getOrLoadPackage method.
+func (e *Evaluator) GetOrLoadPackageForTest(ctx context.Context, path string) (*object.Package, error) {
+	return e.getOrLoadPackage(ctx, path)
+}
+
+
+
+// built-in
 
 var (
 	// ErrorInterfaceTypeInfo is a pre-constructed TypeInfo for the built-in error interface.

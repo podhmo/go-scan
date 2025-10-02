@@ -642,7 +642,7 @@ func main() {
 	// 1. Set up the counting logger
 	handler := newCountingHandler(
 		"undefined method on interface, creating synthetic method",
-		slog.LevelInfo,
+		slog.LevelWarn,
 		slog.NewTextHandler(io.Discard, nil), // Use io.Discard to not print logs during tests
 	)
 	logger := slog.New(handler)

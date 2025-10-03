@@ -30,12 +30,12 @@ The `symgo` evaluator (`applyFunctionImpl`) receives the `object.NIL` object as 
 
 A static analysis tool should not crash in this scenario. Instead, it should recognize the situation (a potential nil-dereference in the source code), log a warning, and continue the analysis by returning a symbolic placeholder for the result of the call.
 
-## 3. Solution
+## 3. Solution and Verification
 
-The solution involves modifying the `symgo/evaluator/evaluator_apply_function.go` file to handle this case gracefully.
+The issue was resolved by modifying `symgo/evaluator/evaluator_apply_function.go` to handle `object.NIL` gracefully.
 
-1.  **Add a `case object.NIL`:** A new case will be added to the `switch fn.(type)` block in the `applyFunctionImpl` function.
-2.  **Log a Warning:** Inside this new case, the evaluator will log a `WARN` level message indicating that it has detected a call to a `nil` function. This provides visibility into potential runtime errors in the analyzed code.
-3.  **Return a Placeholder:** The evaluator will return a `SymbolicPlaceholder` object. This allows the analysis to continue as if the function had been called and returned an unknown value, which is the correct behavior for a symbolic tracer.
-
-This change prevents the evaluator from crashing and makes it more robust when analyzing code with potential nil-dereference bugs. A regression test will be added to ensure this behavior is maintained.
+1.  **Implemented `case object.NIL`:** A new case was added to the `switch fn.(type)` block in the `applyFunctionImpl` function.
+2.  **Logged a Warning:** Inside this new case, the evaluator now logs a `WARN` level message indicating that it has detected a call to a `nil` function, providing visibility into potential runtime errors in the analyzed code.
+3.  **Returned a Placeholder:** The evaluator now returns a `ReturnValue` containing a `SymbolicPlaceholder`. This allows the analysis to continue without crashing, which is the correct behavior for a symbolic tracer.
+4.  **Added Regression Test:** A direct unit test was added to `symgo/evaluator/basic_test.go` to verify that `applyFunction` correctly handles a direct call with `object.NIL`. This ensures the fix is robust and prevents future regressions.
+5.  **Verification:** The fix was verified by running `make -C examples/find-orphans`. The output file `find-orphans.out` no longer contains the `ERROR: not a function: NIL` message. Instead, it correctly displays the new `WARN` log, and the tool completes its analysis successfully.

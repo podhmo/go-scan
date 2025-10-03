@@ -1793,35 +1793,79 @@ func TestEvalStarExpr_OnUnresolvedFunction(t *testing.T) {
 	}
 }
 
-func TestEvalCallExpr_NilFunction(t *testing.T) {
-	// 1. Setup logger to capture output
-	var logBuf bytes.Buffer
-	logHandler := slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})
-	logger := slog.New(logHandler)
+// TestSymgo_NilFunctionArgumentRegression is a regression test for a bug where a nil function
+// argument would cause the symbolic evaluator to error out when exploring an unreachable
+// code path (`if f != nil { f() }` where f is nil). The corrected behavior is to
+// gracefully handle the nil function call in the unreachable path and continue analysis.
+func TestSymgo_NilFunctionArgumentRegression(t *testing.T) {
+	source := `
+package main
 
-	// 2. Setup a minimal scanner and evaluator with the logger
-	s, err := goscan.New(goscan.WithLogger(logger))
-	if err != nil {
-		t.Fatalf("failed to create scanner: %v", err)
+func helper(f func()) {
+	if f != nil {
+		f()
 	}
-	eval := New(s, logger, nil, nil)
-	ctx := context.Background()
+}
 
-	// 3. Directly call applyFunction with a NIL object
-	result := eval.applyFunction(ctx, object.NIL, []object.Object{}, nil, token.NoPos)
+func myFunc1() {}
+func myFunc2() {}
 
-	// 4. Assertions
-	// The result should be a ReturnValue wrapping a SymbolicPlaceholder, not an error.
-	retVal, ok := result.(*object.ReturnValue)
-	if !ok {
-		t.Fatalf("expected result to be *object.ReturnValue, but got %T: %v", result, result)
+func main() {
+	helper(myFunc1)
+	helper(nil)
+	helper(myFunc2)
+}
+`
+	var myFunc1Called, myFunc2Called bool
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		eval.RegisterIntrinsic("example.com/main.myFunc1", func(ctx context.Context, args ...object.Object) object.Object {
+			myFunc1Called = true
+			return nil
+		})
+		eval.RegisterIntrinsic("example.com/main.myFunc2", func(ctx context.Context, args ...object.Object) object.Object {
+			myFunc2Called = true
+			return nil
+		})
+
+		for _, file := range mainPkg.AstFiles {
+			if res := eval.Eval(ctx, file, nil, mainPkg); res != nil && isError(res) {
+				return fmt.Errorf("evaluation of file failed: %v", res)
+			}
+		}
+
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, got %T", mainFuncObj)
+		}
+
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+
+		// We do not expect an error in the corrected code.
+		// In the buggy code, this is where the "not a function: NIL" error will be caught.
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("applyFunction failed with an unexpected error: %v", err.Message)
+		}
+		return nil
 	}
-	if _, ok := retVal.Value.(*object.SymbolicPlaceholder); !ok {
-		t.Fatalf("expected return value to be *object.SymbolicPlaceholder, but got %T", retVal.Value)
-	}
 
-	// Check that the expected warning was logged.
-	if !strings.Contains(logBuf.String(), "detected a call to a nil function value") {
-		t.Fatalf("expected to see a warning about calling a nil function, but logs were:\n%s", logBuf.String())
+	runTest(t, source, action)
+
+	if !myFunc1Called {
+		t.Error("expected myFunc1 to be called, but it was not")
+	}
+	if !myFunc2Called {
+		t.Error("expected myFunc2 to be called, but it was not")
 	}
 }

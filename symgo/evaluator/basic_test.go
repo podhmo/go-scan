@@ -1792,3 +1792,36 @@ func TestEvalStarExpr_OnUnresolvedFunction(t *testing.T) {
 		t.Fatalf("expected result to be *object.SymbolicPlaceholder, but got %T: %v", result, result)
 	}
 }
+
+func TestEvalCallExpr_NilFunction(t *testing.T) {
+	// 1. Setup logger to capture output
+	var logBuf bytes.Buffer
+	logHandler := slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	logger := slog.New(logHandler)
+
+	// 2. Setup a minimal scanner and evaluator with the logger
+	s, err := goscan.New(goscan.WithLogger(logger))
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+	eval := New(s, logger, nil, nil)
+	ctx := context.Background()
+
+	// 3. Directly call applyFunction with a NIL object
+	result := eval.applyFunction(ctx, object.NIL, []object.Object{}, nil, token.NoPos)
+
+	// 4. Assertions
+	// The result should be a ReturnValue wrapping a SymbolicPlaceholder, not an error.
+	retVal, ok := result.(*object.ReturnValue)
+	if !ok {
+		t.Fatalf("expected result to be *object.ReturnValue, but got %T: %v", result, result)
+	}
+	if _, ok := retVal.Value.(*object.SymbolicPlaceholder); !ok {
+		t.Fatalf("expected return value to be *object.SymbolicPlaceholder, but got %T", retVal.Value)
+	}
+
+	// Check that the expected warning was logged.
+	if !strings.Contains(logBuf.String(), "detected a call to a nil function value") {
+		t.Fatalf("expected to see a warning about calling a nil function, but logs were:\n%s", logBuf.String())
+	}
+}

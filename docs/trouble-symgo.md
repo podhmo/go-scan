@@ -38,4 +38,8 @@ The issue was resolved by modifying `symgo/evaluator/evaluator_apply_function.go
 2.  **Logged a Warning:** Inside this new case, the evaluator now logs a `WARN` level message indicating that it has detected a call to a `nil` function, providing visibility into potential runtime errors in the analyzed code.
 3.  **Returned a Placeholder:** The evaluator now returns a `ReturnValue` containing a `SymbolicPlaceholder`. This allows the analysis to continue without crashing, which is the correct behavior for a symbolic tracer.
 4.  **Added Regression Test:** A direct unit test was added to `symgo/evaluator/basic_test.go` to verify that `applyFunction` correctly handles a direct call with `object.NIL`. This ensures the fix is robust and prevents future regressions.
-5.  **Verification:** The fix was verified by running `make -C examples/find-orphans`. The output file `find-orphans.out` no longer contains the `ERROR: not a function: NIL` message. Instead, it correctly displays the new `WARN` log, and the tool completes its analysis successfully.
+5.  **Verification:** The fix was verified by running `make -C examples/find-orphans`. The output file `find-orphans.out` no longer contains the `ERROR: not a function: NIL` message. Instead, it correctly displays the new `WARN` log, and the tool completes its analysis successfully. The relevant log output is:
+
+    ```
+    level=WARN msg="detected a call to a nil function value" ... pos=/app/examples/minigo/main_test.go:28:4
+    ```

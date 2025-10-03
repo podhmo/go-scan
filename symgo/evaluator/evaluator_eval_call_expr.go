@@ -37,6 +37,13 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		function = ret.Value
 	}
 
+	// If the function is nil, we can't call it. In symbolic execution, this can
+	// happen on an unreachable path, so we don't treat it as a fatal error.
+	// We just return nil and stop evaluation of this path.
+	if function.Type() == object.NIL_OBJ {
+		return object.NIL
+	}
+
 	args := e.evalExpressions(ctx, n.Args, env, pkg)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]

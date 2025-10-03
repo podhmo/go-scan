@@ -410,7 +410,12 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		}
 		placeholder.SetTypeInfo(fn.ResolvedType)
 		return &object.ReturnValue{Value: placeholder}
-
+	case *object.Nil:
+		// This handles a symbolic call to a nil function pointer.
+		// This is a potential panic in the actual code, but the analyzer should not panic.
+		// It should log the potential error and return a symbolic placeholder.
+		e.logc(ctx, slog.LevelWarn, "detected a call to a nil function value", "pos", e.scanner.Fset().Position(callPos))
+		return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "result of calling a nil function"}}
 	default:
 		return e.newError(ctx, callPos, "not a function: %s", fn.Type())
 	}

@@ -1,76 +1,57 @@
-# Undefined Method on Pointer to Named Map Type
+# `symgo`における "not a function: NIL" エラーの調査と解決
 
-This document outlines the analysis and resolution plan for a bug in the `symgo` symbolic execution engine where it fails to resolve a method call on a pointer to a named type that is based on a map.
+## 1. 当初の問題
 
-## 1. Problem Description
+`make -C examples/find-orphans` を実行すると、`find-orphans.out` に `level=ERROR msg="not a function: NIL"` というエラーが記録される。このエラーは `examples/minigo/main_test.go` の解析中に発生していた。
 
-The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer to a named map type. The method is defined on the value receiver of the type, a pattern that the standard Go compiler handles transparently via automatic dereferencing.
+## 2. 調査の経緯と誤った仮説
 
-### Example Log Output
+### 仮説1: if文の評価ロジックの欠陥
 
-```
-level=ERROR msg="undefined method or field: Has for pointer type MAP" \
-in_func=ExtractEmailNotificationSettingDisableTopic \
-exec_pos=.../symgo/evaluator/evaluator.go:2261 \
-pos=.../mail/extract.go:8:5
-```
+当初、`if f != nil { f() }` のようなコードで、条件式 `f != nil` が `false` と評価されても、`symgo` が `if` の `then` ブロックを探索してしまうことが問題だと考えた。
 
-### Example Code That Fails
+この仮説に基づき、`evalIfStmt` と `evalBinaryExpr` を修正し、条件が具体的な真偽値に解決される場合は、到達不可能な分岐を評価しないように変更した。
 
+しかし、このアプローチはリポジトリ全体のテストスイートを失敗させた。`symgo` はシンボリック実行エンジン（トレーサー）であり、**意図的に両方の分岐を探索するのが正しい設計**であったため、この修正は `symgo` の基本設計に反していた。
+
+### 仮説2: 関数呼び出し間の状態汚染
+
+`helper(myFunc1)` -> `helper(nil)` -> `helper(myFunc2)` のような一連の呼び出しで、`helper(nil)` の引数が後続の `helper(myFunc2)` の呼び出しに影響を与えている（状態を汚染している）のではないかと考えた。
+
+しかし、詳細なデバッグの結果、呼び出し間で環境（スコープ）は正しく分離されており、状態の汚染は発生していないことが確認された。
+
+## 3. 真の根本原因
+
+`symgo` がシンボリックトレーサーとして、到達不可能なパス（`f` が `nil` のときの `f()` 呼び出し）を探索すること自体は、仕様通りの正しい挙動である。
+
+真の問題は、その**到達不可能なパスを探索した結果、`nil` を関数として呼び出そうとした際に、解析全体を停止させてしまう致命的なエラーを発生させていた**点にある。シンボリック実行においては、このようなケースはエラーとして処理するのではなく、そのパスの評価を穏やかに終了させるべきである。
+
+## 4. 最終的な解決策
+
+この問題を解決するため、最も影響範囲が狭く、かつシンボリック実行の原則に沿った修正を行う。
+
+関数呼び出しを処理する `evalCallExpr` (`symgo/evaluator/evaluator_eval_call_expr.go`) の段階で、呼び出し対象のオブジェクトが `*object.Nil` であるかをチェックする。もし `nil` であれば、致命的なエラーを発生させる `applyFunction` を呼び出す前に、即座に評価を終了して `nil` を返すようにする。
+
+これにより、エンジンは到達不可能なパスを探索してもエラーで停止することなく、解析全体を正常に続行できる。
+
+### 5. 修正後の挙動の検証
+
+この修正により、以下のようなシナリオでも `symgo` は正しく動作する。
+
+**シナリオ:**
 ```go
-// mail/model.go
-type UnsubscribedGroups map[Group]bool
-
-func (s UnsubscribedGroups) Has(group Group) bool { // Method on VALUE receiver
-	return s[group]
-}
-
-func NewUnsubscribedGroups(tags []string) *UnsubscribedGroups { // Returns POINTER
-	result := UnsubscribedGroups{}
-	// ... logic to populate map ...
-	return &result
-}
-
-// mail/extract.go
-func ExtractEmailNotificationSettingDisableTopic(tags []string) {
-	unsubscribe := NewUnsubscribedGroups(tags) // unsubscribe is *UnsubscribedGroups
-	if unsubscribe.Has(GroupTopic) { // ERROR: symgo fails to find .Has
-		// ...
-	}
+if f != nil {
+    f()
+    g()
 }
 ```
 
-## 2. Analysis
+**`f` が `nil` の場合の評価フロー:**
 
-The error message `undefined method or field: Has for pointer type MAP` is the key.
+1.  `symgo` は `if` ブロック内を探索する。
+2.  最初の文 `f()` が評価される。
+3.  `evalCallExpr` は `f` が `nil` であることを検知し、エラーを発生させることなく `nil` を返して評価を穏やかに終了する。
+4.  ブロック内の評価は中断されず、次の文 `g()` の評価に進む。
+5.  `g()` は正常に解析される。
 
-1.  **Type Information Loss**: The evaluator correctly identifies that `unsubscribe` is a pointer. However, instead of seeing it as a pointer to the named type `*UnsubscribedGroups`, it seems to resolve it to a generic `pointer type MAP`. It loses the specific type name (`UnsubscribedGroups`).
-2.  **Incorrect Method Set**: Because the specific type information is lost, `symgo` looks for the `Has` method on the method set of a generic `*MAP`. This method set is empty.
-3.  **Missing Automatic Dereference**: The Go compiler would handle this by checking the method set of the pointer type `*UnsubscribedGroups`, not finding `Has`, and then automatically checking the method set of the value type `UnsubscribedGroups`, where it would find it. `symgo`'s logic is failing to perform this second step, likely because it has already lost the type name.
-
-The root cause is likely in how the evaluator handles method calls (`evalSelectorExpr`) on pointer objects, especially when the pointer's underlying element is a named type wrapping a built-in like a map. The type information is not being preserved or accessed correctly during method resolution.
-
-## 3. Plan for Resolution
-
-1.  **Create a Failing Test Case**:
-    *   Add a new test file in the `symgo/` directory.
-    *   This test will define a self-contained Go program as a string that replicates the bug pattern:
-        *   A named type based on `map`.
-        *   A method on the value receiver of that type.
-        *   A function returning a pointer to that type.
-        *   A call to the method on the pointer.
-    *   The test will use `symgo` to analyze this code and assert that the analysis completes without error and correctly identifies the function calls.
-
-2.  **Implement the Fix in the Evaluator**:
-    *   The primary location for the fix is the `evalSelectorExpr` function in `symgo/evaluator/evaluator.go`.
-    *   The logic must be updated to handle method calls on `object.Pointer` types.
-    *   When a method is not found on the pointer's direct method set, the evaluator must look at the `Value` the pointer points to.
-    *   It must then correctly retrieve the method set from that underlying value type, even if it's a named map or other named built-in. This means ensuring the full `object.Type` (including its name) is preserved and inspected.
-
-3.  **Verify the Fix**:
-    *   Run the newly created test to confirm it passes.
-    *   Run the entire `symgo` test suite (`go test ./...`) to ensure no regressions have been introduced.
-
-4.  **Update `TODO.md`**:
-    *   Once the fix is verified, update the main `TODO.md` file to reflect that this task has been completed.
-    *   Add a new entry under an appropriate "Implemented" section detailing the fix.
+これにより、到達不可能なパスの探索中に発生した `nil` 関数呼び出しが、後続の文の解析を妨げることがなくなり、トレーサーとしての一貫した挙動が保証される。

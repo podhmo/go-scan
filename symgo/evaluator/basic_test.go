@@ -1792,3 +1792,80 @@ func TestEvalStarExpr_OnUnresolvedFunction(t *testing.T) {
 		t.Fatalf("expected result to be *object.SymbolicPlaceholder, but got %T: %v", result, result)
 	}
 }
+
+// TestSymgo_NilFunctionArgumentRegression is a regression test for a bug where a nil function
+// argument would cause the symbolic evaluator to error out when exploring an unreachable
+// code path (`if f != nil { f() }` where f is nil). The corrected behavior is to
+// gracefully handle the nil function call in the unreachable path and continue analysis.
+func TestSymgo_NilFunctionArgumentRegression(t *testing.T) {
+	source := `
+package main
+
+func helper(f func()) {
+	if f != nil {
+		f()
+	}
+}
+
+func myFunc1() {}
+func myFunc2() {}
+
+func main() {
+	helper(myFunc1)
+	helper(nil)
+	helper(myFunc2)
+}
+`
+	var myFunc1Called, myFunc2Called bool
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		eval := New(s, s.Logger, nil, nil)
+
+		eval.RegisterIntrinsic("example.com/main.myFunc1", func(ctx context.Context, args ...object.Object) object.Object {
+			myFunc1Called = true
+			return nil
+		})
+		eval.RegisterIntrinsic("example.com/main.myFunc2", func(ctx context.Context, args ...object.Object) object.Object {
+			myFunc2Called = true
+			return nil
+		})
+
+		for _, file := range mainPkg.AstFiles {
+			if res := eval.Eval(ctx, file, nil, mainPkg); res != nil && isError(res) {
+				return fmt.Errorf("evaluation of file failed: %v", res)
+			}
+		}
+
+		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, got %T", mainFuncObj)
+		}
+
+		result := eval.Apply(ctx, mainFunc, []object.Object{}, mainPkg)
+
+		// We do not expect an error in the corrected code.
+		// In the buggy code, this is where the "not a function: NIL" error will be caught.
+		if err, ok := result.(*object.Error); ok {
+			return fmt.Errorf("applyFunction failed with an unexpected error: %v", err.Message)
+		}
+		return nil
+	}
+
+	runTest(t, source, action)
+
+	if !myFunc1Called {
+		t.Error("expected myFunc1 to be called, but it was not")
+	}
+	if !myFunc2Called {
+		t.Error("expected myFunc2 to be called, but it was not")
+	}
+}

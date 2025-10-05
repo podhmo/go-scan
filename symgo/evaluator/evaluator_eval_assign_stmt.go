@@ -22,8 +22,15 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				return e.newError(ctx, n.Pos(), "type assertion with 2 values on RHS must have 2 variables on LHS, got %d", len(n.Lhs))
 			}
 
-			// Evaluate the source expression to trace calls
-			e.Eval(ctx, typeAssert.X, env, pkg)
+			// Evaluate the source expression to get the original object.
+			originalObj := e.Eval(ctx, typeAssert.X, env, pkg)
+			if isError(originalObj) {
+				return originalObj
+			}
+			unwrappedOriginalObj := originalObj
+			if v, ok := unwrappedOriginalObj.(*object.Variable); ok {
+				unwrappedOriginalObj = v.Value
+			}
 
 			// Resolve the asserted type (T).
 			if pkg == nil || pkg.Fset == nil {
@@ -52,32 +59,36 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				resolvedType.Kind = scan.InterfaceKind
 			}
 
-			// Create placeholders for the two return values.
-			valuePlaceholder := &object.SymbolicPlaceholder{
-				Reason:     fmt.Sprintf("value from type assertion to %s", fieldType.String()),
-				BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+			var val object.Object
+			var okVal object.Object
+			originalTypeInfo := unwrappedOriginalObj.TypeInfo()
+
+			// Check for type compatibility.
+			if originalTypeInfo != nil && resolvedType != nil && (originalTypeInfo.Kind == scan.InterfaceKind || e.scanner.Implements(ctx, originalTypeInfo, resolvedType)) {
+				// Success path
+				okVal = object.TRUE
+				val = unwrappedOriginalObj.Clone()
+				val.SetTypeInfo(resolvedType)
+				val.SetFieldType(fieldType)
+			} else {
+				// Failure path
+				okVal = object.FALSE
+				// On failure, the value of `v` is the zero value of the asserted type `T`.
+				val = &object.SymbolicPlaceholder{
+					Reason:     fmt.Sprintf("zero value for failed type assertion to %s", fieldType.String()),
+					BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+				}
 			}
 
-			okPlaceholder := &object.SymbolicPlaceholder{
-				Reason: "ok from type assertion",
-				BaseObject: object.BaseObject{
-					ResolvedTypeInfo: nil, // Built-in types do not have a TypeInfo struct.
-					ResolvedFieldType: &scan.FieldType{
-						Name:      "bool",
-						IsBuiltin: true,
-					},
-				},
-			}
-
-			// Assign the placeholders to the LHS variables.
+			// Assign the new value and the ok value to the LHS variables.
 			if ident, ok := n.Lhs[0].(*ast.Ident); ok {
 				if ident.Name != "_" {
-					e.assignIdentifier(ctx, ident, valuePlaceholder, n.Tok, env)
+					e.assignIdentifier(ctx, ident, val, n.Tok, env)
 				}
 			}
 			if ident, ok := n.Lhs[1].(*ast.Ident); ok {
 				if ident.Name != "_" {
-					e.assignIdentifier(ctx, ident, okPlaceholder, n.Tok, env)
+					e.assignIdentifier(ctx, ident, okVal, n.Tok, env)
 				}
 			}
 			return nil

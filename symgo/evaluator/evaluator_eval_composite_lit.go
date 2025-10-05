@@ -186,6 +186,11 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 					if isError(val) {
 						return val
 					}
+					// Ensure the value is fully evaluated before setting it as a field.
+					val = e.forceEval(ctx, val, pkg)
+					if isError(val) {
+						return val
+					}
 					structObj.Set(key.Name, val)
 				}
 			}
@@ -216,13 +221,12 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		return placeholder
 	}
 
-	// The failing test expects the underlying type name, not the alias name.
-	instance := &object.Instance{
-		TypeName: resolvedType.PkgPath + "." + resolvedType.Name,
-		BaseObject: object.BaseObject{
-			ResolvedTypeInfo: resolvedType,
-		},
+	// If we reach here, it's a composite literal of a known type that isn't a struct, map, or slice.
+	// This could be an array, for example. For now, return a placeholder to avoid incorrect behavior.
+	placeholder := &object.SymbolicPlaceholder{
+		Reason: "unhandled composite literal type " + resolvedType.Name,
 	}
-	instance.SetFieldType(fieldType)
-	return instance
+	placeholder.SetFieldType(fieldType)
+	placeholder.SetTypeInfo(resolvedType)
+	return placeholder
 }

@@ -109,10 +109,28 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 						}
 					}
 
-					val := &object.SymbolicPlaceholder{
-						Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+					var val object.Object
+					unwrappedOriginalObj := originalObj
+					if v, ok := unwrappedOriginalObj.(*object.Variable); ok {
+						unwrappedOriginalObj = v.Value
 					}
+					originalTypeInfo := unwrappedOriginalObj.TypeInfo()
+
+					// We consider it a match if types are compatible, or if the original is an interface (any).
+					if originalTypeInfo != nil && resolvedType != nil && (originalTypeInfo.Kind == scan.InterfaceKind || e.scanner.Implements(ctx, originalTypeInfo, resolvedType)) {
+						// Success path: clone the object and set the new type.
+						val = unwrappedOriginalObj.Clone()
+						val.SetTypeInfo(resolvedType)
+						val.SetFieldType(fieldType)
+					} else {
+						// Failure path: create a placeholder. This case won't be executed in reality,
+						// but symgo explores all branches.
+						val = &object.SymbolicPlaceholder{
+							Reason:     fmt.Sprintf("type switch case variable %s (path not taken)", fieldType.String()),
+							BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+						}
+					}
+
 					v := &object.Variable{
 						Name:        varName,
 						Value:       val,

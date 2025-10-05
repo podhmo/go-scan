@@ -1,44 +1,44 @@
-# `symgo`における "not a function: NIL" エラーの調査と解決
+# Investigation and Resolution of "not a function: NIL" Error in `symgo`
 
-## 1. 当初の問題
+## 1. The Initial Problem
 
-`make -C examples/find-orphans` を実行すると、`find-orphans.out` に `level=ERROR msg="not a function: NIL"` というエラーが記録される。このエラーは `examples/minigo/main_test.go` の解析中に発生していた。
+When running `make -C examples/find-orphans`, an error `level=ERROR msg="not a function: NIL"` was logged to `find-orphans.out`. This error occurred during the analysis of `examples/minigo/main_test.go`.
 
-## 2. 調査の経緯と誤った仮説
+## 2. Investigation and Incorrect Hypotheses
 
-### 仮説1: if文の評価ロジックの欠陥
+### Hypothesis 1: Flaw in `if` Statement Evaluation Logic
 
-当初、`if f != nil { f() }` のようなコードで、条件式 `f != nil` が `false` と評価されても、`symgo` が `if` の `then` ブロックを探索してしまうことが問題だと考えた。
+Initially, the problem was thought to be that `symgo` explored the `then` block of an `if` statement even when the condition was concretely false, such as in `if f != nil { f() }` where `f` was nil.
 
-この仮説に基づき、`evalIfStmt` と `evalBinaryExpr` を修正し、条件が具体的な真偽値に解決される場合は、到達不可能な分岐を評価しないように変更した。
+Based on this hypothesis, `evalIfStmt` and `evalBinaryExpr` were modified to prune unreachable branches when a condition resolved to a concrete boolean value.
 
-しかし、このアプローチはリポジトリ全体のテストスイートを失敗させた。`symgo` はシンボリック実行エンジン（トレーサー）であり、**意図的に両方の分岐を探索するのが正しい設計**であったため、この修正は `symgo` の基本設計に反していた。
+However, this approach caused the repository's entire test suite to fail. `symgo` is a symbolic execution engine (a tracer), and **it is designed to intentionally explore all branches**. Therefore, this fix contradicted `symgo`'s fundamental design.
 
-### 仮説2: 関数呼び出し間の状態汚染
+### Hypothesis 2: State Corruption Between Function Calls
 
-`helper(myFunc1)` -> `helper(nil)` -> `helper(myFunc2)` のような一連の呼び出しで、`helper(nil)` の引数が後続の `helper(myFunc2)` の呼び出しに影響を与えている（状態を汚染している）のではないかと考えた。
+Another hypothesis was that in a sequence of calls like `helper(myFunc1)` -> `helper(nil)` -> `helper(myFunc2)`, the arguments from the `helper(nil)` call were improperly affecting the subsequent `helper(myFunc2)` call (i.e., state corruption).
 
-しかし、詳細なデバッグの結果、呼び出し間で環境（スコープ）は正しく分離されており、状態の汚染は発生していないことが確認された。
+However, detailed debugging confirmed that the environment (scope) was correctly isolated between calls, and no state corruption was occurring.
 
-## 3. 真の根本原因
+## 3. The True Root Cause
 
-`symgo` がシンボリックトレーサーとして、到達不可能なパス（`f` が `nil` のときの `f()` 呼び出し）を探索すること自体は、仕様通りの正しい挙動である。
+It is correct, by design, for `symgo` as a symbolic tracer to explore unreachable paths (such as the call to `f()` when `f` is `nil`).
 
-真の問題は、その**到達不可能なパスを探索した結果、`nil` を関数として呼び出そうとした際に、解析全体を停止させてしまう致命的なエラーを発生させていた**点にある。シンボリック実行においては、このようなケースはエラーとして処理するのではなく、そのパスの評価を穏やかに終了させるべきである。
+The real issue was that **the exploration of this unreachable path resulted in a fatal error when attempting to call a `nil` function, which halted the entire analysis**. In symbolic execution, such a case should not be treated as a fatal error but should instead gracefully terminate the evaluation of that specific path.
 
-## 4. 最終的な解決策
+## 4. The Final Solution
 
-この問題を解決するため、最も影響範囲が狭く、かつシンボリック実行の原則に沿った修正を行う。
+To resolve this, a targeted fix was implemented that is minimal in scope and aligns with the principles of symbolic execution.
 
-関数呼び出しを処理する `evalCallExpr` (`symgo/evaluator/evaluator_eval_call_expr.go`) の段階で、呼び出し対象のオブジェクトが `*object.Nil` であるかをチェックする。もし `nil` であれば、致命的なエラーを発生させる `applyFunction` を呼び出す前に、即座に評価を終了して `nil` を返すようにする。
+In the function call processing stage, `evalCallExpr` (in `symgo/evaluator/evaluator_eval_call_expr.go`), a check is added for the object being called. If the object is `*object.Nil`, the evaluation immediately terminates and returns `nil` *before* calling `applyFunction`, which would have produced the fatal error.
 
-これにより、エンジンは到達不可能なパスを探索してもエラーで停止することなく、解析全体を正常に続行できる。
+This allows the engine to explore unreachable paths without crashing, ensuring the analysis continues normally.
 
-### 5. 修正後の挙動の検証
+## 5. Verifying the Corrected Behavior
 
-この修正により、以下のようなシナリオでも `symgo` は正しく動作する。
+This fix ensures that `symgo` behaves correctly even in the following scenario.
 
-**シナリオ:**
+**Scenario:**
 ```go
 if f != nil {
     f()
@@ -46,12 +46,20 @@ if f != nil {
 }
 ```
 
-**`f` が `nil` の場合の評価フロー:**
+**Evaluation flow when `f` is `nil`:**
 
-1.  `symgo` は `if` ブロック内を探索する。
-2.  最初の文 `f()` が評価される。
-3.  `evalCallExpr` は `f` が `nil` であることを検知し、エラーを発生させることなく `nil` を返して評価を穏やかに終了する。
-4.  ブロック内の評価は中断されず、次の文 `g()` の評価に進む。
-5.  `g()` は正常に解析される。
+1.  `symgo` explores the `if` block as designed.
+2.  The first statement, `f()`, is evaluated.
+3.  `evalCallExpr` detects that `f` is `nil` and gracefully terminates the evaluation for this statement, returning `nil` without causing an error.
+4.  The evaluation of the block is not interrupted, and it proceeds to the next statement, `g()`.
+5.  `g()` is analyzed normally.
 
-これにより、到達不可能なパスの探索中に発生した `nil` 関数呼び出しが、後続の文の解析を妨げることがなくなり、トレーサーとしての一貫した挙動が保証される。
+This ensures that a `nil` function call encountered during the exploration of an unreachable path does not prevent subsequent statements from being analyzed, guaranteeing consistent behavior as a tracer.
+
+## 6. Final Verification
+
+After implementing the fix, the original end-to-end test was run again:
+```bash
+make -C examples/find-orphans
+```
+The command completed successfully. A subsequent check confirmed that the output file `examples/find-orphans/find-orphans.out` no longer contained any `level=ERROR` logs, verifying that the fix resolved the initial problem.

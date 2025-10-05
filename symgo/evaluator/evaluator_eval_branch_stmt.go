@@ -19,6 +19,11 @@ func (e *Evaluator) evalBranchStmt(ctx context.Context, n *ast.BranchStmt) objec
 		return &object.Break{Label: label}
 	case token.CONTINUE:
 		return &object.Continue{Label: label}
+	case token.GOTO:
+		// Treat goto as a no-op for symbolic analysis.
+		// This avoids errors and complex control flow simulation,
+		// allowing the tracer to continue to the next statement sequentially.
+		return nil
 	case token.FALLTHROUGH:
 		return object.FALLTHROUGH
 	default:

@@ -184,7 +184,7 @@ func main() {
 		mainPkg := pkgs[0]
 
 		// Use a logger to see potential errors during development.
-		handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+		handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})
 		logger := slog.New(handler)
 
 		// The scan policy should scan everything for this test.
@@ -560,7 +560,7 @@ func main() {
 		var doCalled bool
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})
 			logger := slog.New(handler)
 			eval := New(s, logger, nil, nil)
 
@@ -614,7 +614,7 @@ func main() {
 		var finalName string
 		action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
 			pkg := pkgs[0]
-			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+			handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})
 			logger := slog.New(handler)
 			eval := New(s, logger, nil, nil)
 

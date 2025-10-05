@@ -121,3 +121,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.
 - [x] **Handle `not a function: NIL`**: Fixed "not a function: NIL" errors that occurred during symbolic execution of test files. The root cause was that the tracer would explore an unreachable code path (e.g., inside an `if f != nil` block when `f` is nil) and then raise a fatal error when trying to evaluate the `nil` function call. The fix was to make the function call evaluator (`evalCallExpr`) gracefully handle being passed a `nil` object by returning early, allowing analysis to continue without crashing. ([docs/trouble-symgo.md](./docs/trouble-symgo.md))
+
+### `symgo`: Improve Robustness by Addressing Standard Library Errors ([docs/plan-symgo-improve-robustness.md](./docs/plan-symgo-improve-robustness.md))
+- [ ] **High Priority**:
+  - [x] Implement `goto` statement support (handled as no-op).
+  - [ ] Resolve generic type parameters correctly.
+  - [ ] Prevent `invalid indirect` errors from nil pointer dereferencing.
+- [ ] **Medium Priority**:
+  - [ ] Support `uint64` and large integer constants to prevent overflow.
+  - [ ] Improve type inference to fix selector type errors.
+  - [ ] Implement missing operators for `complex` types.
+- [ ] **Low Priority**:
+  - [ ] Support parsing of large hex literals (related to `uint64` support).

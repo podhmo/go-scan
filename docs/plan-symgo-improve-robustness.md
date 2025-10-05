@@ -24,6 +24,9 @@ The goal is to identify and categorize critical issues in the symgo evaluator to
 
 ### Goto Unsupported
 
+> [!NOTE]
+> This feature has been implemented. The `symgo` evaluator now treats `goto` statements as a no-op, allowing analysis to continue without error, which is consistent with its design as a symbolic tracer rather than a full interpreter.
+
 **Priority:** High
 
 **Description:** Goto statement not supported

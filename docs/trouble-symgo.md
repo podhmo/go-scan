@@ -1,76 +1,65 @@
-# Undefined Method on Pointer to Named Map Type
+# Investigation and Resolution of "not a function: NIL" Error in `symgo`
 
-This document outlines the analysis and resolution plan for a bug in the `symgo` symbolic execution engine where it fails to resolve a method call on a pointer to a named type that is based on a map.
+## 1. The Initial Problem
 
-## 1. Problem Description
+When running `make -C examples/find-orphans`, an error `level=ERROR msg="not a function: NIL"` was logged to `find-orphans.out`. This error occurred during the analysis of `examples/minigo/main_test.go`.
 
-The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer to a named map type. The method is defined on the value receiver of the type, a pattern that the standard Go compiler handles transparently via automatic dereferencing.
+## 2. Investigation and Incorrect Hypotheses
 
-### Example Log Output
+### Hypothesis 1: Flaw in `if` Statement Evaluation Logic
 
-```
-level=ERROR msg="undefined method or field: Has for pointer type MAP" \
-in_func=ExtractEmailNotificationSettingDisableTopic \
-exec_pos=.../symgo/evaluator/evaluator.go:2261 \
-pos=.../mail/extract.go:8:5
-```
+Initially, the problem was thought to be that `symgo` explored the `then` block of an `if` statement even when the condition was concretely false, such as in `if f != nil { f() }` where `f` was nil.
 
-### Example Code That Fails
+Based on this hypothesis, `evalIfStmt` and `evalBinaryExpr` were modified to prune unreachable branches when a condition resolved to a concrete boolean value.
 
+However, this approach caused the repository's entire test suite to fail. `symgo` is a symbolic execution engine (a tracer), and **it is designed to intentionally explore all branches**. Therefore, this fix contradicted `symgo`'s fundamental design.
+
+### Hypothesis 2: State Corruption Between Function Calls
+
+Another hypothesis was that in a sequence of calls like `helper(myFunc1)` -> `helper(nil)` -> `helper(myFunc2)`, the arguments from the `helper(nil)` call were improperly affecting the subsequent `helper(myFunc2)` call (i.e., state corruption).
+
+However, detailed debugging confirmed that the environment (scope) was correctly isolated between calls, and no state corruption was occurring.
+
+## 3. The True Root Cause
+
+It is correct, by design, for `symgo` as a symbolic tracer to explore unreachable paths (such as the call to `f()` when `f` is `nil`).
+
+The real issue was that **the exploration of this unreachable path resulted in a fatal error when attempting to call a `nil` function, which halted the entire analysis**. In symbolic execution, such a case should not be treated as a fatal error but should instead gracefully terminate the evaluation of that specific path.
+
+## 4. The Final Solution
+
+To resolve this, a targeted fix was implemented that is minimal in scope and aligns with the principles of symbolic execution.
+
+In the function call processing stage, `evalCallExpr` (in `symgo/evaluator/evaluator_eval_call_expr.go`), a check is added for the object being called. If the object is `*object.Nil`, the evaluation immediately terminates and returns `nil` *before* calling `applyFunction`, which would have produced the fatal error.
+
+This allows the engine to explore unreachable paths without crashing, ensuring the analysis continues normally.
+
+## 5. Verifying the Corrected Behavior
+
+This fix ensures that `symgo` behaves correctly even in the following scenario.
+
+**Scenario:**
 ```go
-// mail/model.go
-type UnsubscribedGroups map[Group]bool
-
-func (s UnsubscribedGroups) Has(group Group) bool { // Method on VALUE receiver
-	return s[group]
-}
-
-func NewUnsubscribedGroups(tags []string) *UnsubscribedGroups { // Returns POINTER
-	result := UnsubscribedGroups{}
-	// ... logic to populate map ...
-	return &result
-}
-
-// mail/extract.go
-func ExtractEmailNotificationSettingDisableTopic(tags []string) {
-	unsubscribe := NewUnsubscribedGroups(tags) // unsubscribe is *UnsubscribedGroups
-	if unsubscribe.Has(GroupTopic) { // ERROR: symgo fails to find .Has
-		// ...
-	}
+if f != nil {
+    f()
+    g()
 }
 ```
 
-## 2. Analysis
+**Evaluation flow when `f` is `nil`:**
 
-The error message `undefined method or field: Has for pointer type MAP` is the key.
+1.  `symgo` explores the `if` block as designed.
+2.  The first statement, `f()`, is evaluated.
+3.  `evalCallExpr` detects that `f` is `nil` and gracefully terminates the evaluation for this statement, returning `nil` without causing an error.
+4.  The evaluation of the block is not interrupted, and it proceeds to the next statement, `g()`.
+5.  `g()` is analyzed normally.
 
-1.  **Type Information Loss**: The evaluator correctly identifies that `unsubscribe` is a pointer. However, instead of seeing it as a pointer to the named type `*UnsubscribedGroups`, it seems to resolve it to a generic `pointer type MAP`. It loses the specific type name (`UnsubscribedGroups`).
-2.  **Incorrect Method Set**: Because the specific type information is lost, `symgo` looks for the `Has` method on the method set of a generic `*MAP`. This method set is empty.
-3.  **Missing Automatic Dereference**: The Go compiler would handle this by checking the method set of the pointer type `*UnsubscribedGroups`, not finding `Has`, and then automatically checking the method set of the value type `UnsubscribedGroups`, where it would find it. `symgo`'s logic is failing to perform this second step, likely because it has already lost the type name.
+This ensures that a `nil` function call encountered during the exploration of an unreachable path does not prevent subsequent statements from being analyzed, guaranteeing consistent behavior as a tracer.
 
-The root cause is likely in how the evaluator handles method calls (`evalSelectorExpr`) on pointer objects, especially when the pointer's underlying element is a named type wrapping a built-in like a map. The type information is not being preserved or accessed correctly during method resolution.
+## 6. Final Verification
 
-## 3. Plan for Resolution
-
-1.  **Create a Failing Test Case**:
-    *   Add a new test file in the `symgo/` directory.
-    *   This test will define a self-contained Go program as a string that replicates the bug pattern:
-        *   A named type based on `map`.
-        *   A method on the value receiver of that type.
-        *   A function returning a pointer to that type.
-        *   A call to the method on the pointer.
-    *   The test will use `symgo` to analyze this code and assert that the analysis completes without error and correctly identifies the function calls.
-
-2.  **Implement the Fix in the Evaluator**:
-    *   The primary location for the fix is the `evalSelectorExpr` function in `symgo/evaluator/evaluator.go`.
-    *   The logic must be updated to handle method calls on `object.Pointer` types.
-    *   When a method is not found on the pointer's direct method set, the evaluator must look at the `Value` the pointer points to.
-    *   It must then correctly retrieve the method set from that underlying value type, even if it's a named map or other named built-in. This means ensuring the full `object.Type` (including its name) is preserved and inspected.
-
-3.  **Verify the Fix**:
-    *   Run the newly created test to confirm it passes.
-    *   Run the entire `symgo` test suite (`go test ./...`) to ensure no regressions have been introduced.
-
-4.  **Update `TODO.md`**:
-    *   Once the fix is verified, update the main `TODO.md` file to reflect that this task has been completed.
-    *   Add a new entry under an appropriate "Implemented" section detailing the fix.
+After implementing the fix, the original end-to-end test was run again:
+```bash
+make -C examples/find-orphans
+```
+The command completed successfully. A subsequent check confirmed that the output file `examples/find-orphans/find-orphans.out` no longer contained any `level=ERROR` logs, verifying that the fix resolved the initial problem.

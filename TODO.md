@@ -125,7 +125,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgo`: Improve Robustness by Addressing Standard Library Errors ([docs/plan-symgo-improve-robustness.md](./docs/plan-symgo-improve-robustness.md))
 - [ ] **High Priority**:
   - [x] Implement `goto` statement support (handled as no-op).
-  - [ ] Resolve generic type parameters correctly.
+  - [x] Resolve generic type parameters correctly.
   - [ ] Prevent `invalid indirect` errors from nil pointer dereferencing.
 - [ ] **Medium Priority**:
   - [ ] Support `uint64` and large integer constants to prevent overflow.

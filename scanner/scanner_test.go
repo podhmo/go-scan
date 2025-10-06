@@ -797,3 +797,62 @@ func main() {
 		t.Errorf("Element definition kind mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestScanner_GenericMethodTypeParameters(t *testing.T) {
+	// 1. Setup: Create code with a method on a generic type.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	code := `
+package main
+
+type Box[T any] struct {
+	Value T
+}
+
+// Get returns the value from the box.
+func (b Box[T]) Get() T {
+	return b.Value
+}
+`
+	err := os.WriteFile(filePath, []byte(code), 0644)
+	if err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+
+	// 2. Action: Scan the file.
+	s := newTestScanner(t, "example.com/me", dir)
+	pkg, err := s.ScanFiles(context.Background(), []string{filePath}, dir)
+	if err != nil {
+		t.Fatalf("scanning files: %v", err)
+	}
+
+	// 3. Assertions: Check if the 'Get' method has the correct type parameter 'T'.
+	var getMethod *FunctionInfo
+	for _, f := range pkg.Functions {
+		if f.Name == "Get" {
+			getMethod = f
+			break
+		}
+	}
+
+	if getMethod == nil {
+		t.Fatal("Function 'Get' not found")
+	}
+
+	if len(getMethod.TypeParams) != 1 {
+		t.Fatalf("Expected 1 type parameter for method 'Get', but got %d", len(getMethod.TypeParams))
+	}
+
+	typeParam := getMethod.TypeParams[0]
+	if typeParam.Name != "T" {
+		t.Errorf("Expected type parameter name to be 'T', but got '%s'", typeParam.Name)
+	}
+
+	// Also check the constraint
+	if typeParam.Constraint == nil {
+		t.Fatal("Expected type parameter 'T' to have a constraint, but it was nil")
+	}
+	if typeParam.Constraint.Name != "any" {
+		t.Errorf("Expected constraint for 'T' to be 'any', but got '%s'", typeParam.Constraint.Name)
+	}
+}

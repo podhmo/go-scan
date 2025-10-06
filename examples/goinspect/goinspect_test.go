@@ -139,3 +139,85 @@ func TestGoInspect(t *testing.T) {
 		})
 	}
 }
+
+func TestGoInspect_NoModuleContext(t *testing.T) {
+	// This test simulates running goinspect from a directory without a go.mod file.
+
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(originalWd)
+
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change directory to temp dir: %v", err)
+	}
+	t.Logf("changed working directory to %s", tmpDir)
+
+	testCases := []struct {
+		name              string
+		pkgPatterns       []string
+		withPatterns      []string
+		targets           []string
+		trimPrefix        bool
+		includeUnexported bool
+		shortFormat       bool
+		expandFormat      bool
+	}{
+		{
+			name:        "no_module_stdlib_fmt",
+			pkgPatterns: []string{"fmt"},
+			targets:     []string{"fmt.Println"},
+			shortFormat: true,
+		},
+		{
+			name:        "no_module_external_go_cmp",
+			pkgPatterns: []string{"github.com/google/go-cmp/cmp"},
+			targets:     []string{"github.com/google/go-cmp/cmp.Diff"},
+			shortFormat: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Logf("Running test case %s from outside a module", tc.name)
+
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+			ctx := context.Background()
+			ctx = scanner.WithParallelismLimit(ctx, 1)
+
+			err := run(ctx, &buf, logger, tc.pkgPatterns, tc.withPatterns, tc.targets, tc.trimPrefix, tc.includeUnexported, tc.shortFormat, tc.expandFormat)
+			if err != nil {
+				t.Fatalf("run() failed: %v", err)
+			}
+
+			goldenFile := filepath.Join(originalWd, "testdata", tc.name+".golden")
+
+			if *update {
+				err := os.WriteFile(goldenFile, buf.Bytes(), 0644)
+				if err != nil {
+					t.Fatalf("failed to update golden file %s: %v", goldenFile, err)
+				}
+				t.Logf("updated golden file: %s", goldenFile)
+				return
+			}
+
+			expected, err := os.ReadFile(goldenFile)
+			if err != nil {
+				t.Fatalf("failed to read golden file %s: %v", goldenFile, err)
+			}
+
+			got := strings.ReplaceAll(buf.String(), "\r\n", "\n")
+			want := strings.ReplaceAll(string(expected), "\r\n", "\n")
+
+			if got != want {
+				t.Errorf("output does not match golden file %s\n", goldenFile)
+				t.Logf("GOT:\n%s", got)
+				t.Logf("WANT:\n%s", want)
+			}
+		})
+	}
+}

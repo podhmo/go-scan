@@ -33,9 +33,11 @@ func main() {
 		mode                 = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
 		excludeDirs          stringSliceFlag
 		primaryAnalysisScope stringSliceFlag
+		entrypointPkgs       stringSliceFlag
 	)
 	flag.Var(&excludeDirs, "exclude-dirs", "comma-separated list of directories to exclude (e.g. testdata,vendor)")
 	flag.Var(&primaryAnalysisScope, "primary-analysis-scope", "comma-separated list of package patterns to define the primary analysis scope (for debugging purposes)")
+	flag.Var(&entrypointPkgs, "entrypoint-pkg", "comma-separated list of main packages to use as entry points in app mode")
 	flag.Parse()
 
 	// Validate mode
@@ -58,7 +60,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *debug, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil, primaryAnalysisScope); err != nil {
+	if err := run(ctx, *debug, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil, primaryAnalysisScope, entrypointPkgs); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
@@ -137,7 +139,7 @@ func discoverModules(ctx context.Context, root string, excludeDirs []string) ([]
 	return modules, nil
 }
 
-func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {
+func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string, entrypointPkgs []string) error {
 	logLevel := new(slog.LevelVar)
 	if debug {
 		logLevel.Set(slog.LevelDebug)
@@ -272,6 +274,7 @@ func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace
 		includeTests:         includeTests,
 		scanPolicy:           scanPolicy,
 		primaryAnalysisScope: primaryAnalysisScope,
+		entrypointPkgs:       entrypointPkgs,
 	}
 	return a.analyze(ctx, asJSON)
 }
@@ -431,6 +434,7 @@ type analyzer struct {
 	includeTests         bool
 	scanPolicy           symgo.ScanPolicyFunc
 	primaryAnalysisScope []string
+	entrypointPkgs       []string
 	mu                   sync.Mutex
 	ctx                  context.Context
 }
@@ -591,6 +595,23 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 	}
 
+	// If specific entry point packages are requested in app mode, filter the discovered mainEntryPoints.
+	if len(a.entrypointPkgs) > 0 && (a.mode == "app" || (a.mode == "auto" && len(mainEntryPoints) > 0)) {
+		entrypointSet := make(map[string]bool)
+		for _, pkgPath := range a.entrypointPkgs {
+			entrypointSet[pkgPath] = true
+		}
+
+		var filteredMainEntryPoints []*object.Function
+		for _, fn := range mainEntryPoints {
+			if entrypointSet[fn.Package.ImportPath] {
+				filteredMainEntryPoints = append(filteredMainEntryPoints, fn)
+			}
+		}
+		slog.DebugContext(ctx, "filtered main entry points based on --entrypoint-pkg", "requested", a.entrypointPkgs, "found", len(filteredMainEntryPoints), "of", len(mainEntryPoints))
+		mainEntryPoints = filteredMainEntryPoints
+	}
+
 	// Decide which entry points to use based on the selected mode, and apply
 	// initial usage marks.
 	var analysisFns []*object.Function
@@ -599,6 +620,9 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	switch a.mode {
 	case "app":
 		if len(mainEntryPoints) == 0 {
+			if len(a.entrypointPkgs) > 0 {
+				return fmt.Errorf("application mode specified with --entrypoint-pkg, but no main entry point was found in the specified packages: %v", a.entrypointPkgs)
+			}
 			return fmt.Errorf("application mode specified, but no main entry point was found")
 		}
 		analysisFns = mainEntryPoints

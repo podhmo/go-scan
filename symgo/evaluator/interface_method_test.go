@@ -313,10 +313,10 @@ func main() {
 		foundTypes[pt] = true
 	}
 
-	if !foundTypes["example.com/me.*Dog"] {
+	if !foundTypes["*example.com/me.Dog"] {
 		t.Errorf("did not find *Dog in possible concrete types")
 	}
-	if !foundTypes["example.com/me.*Cat"] {
+	if !foundTypes["*example.com/me.Cat"] {
 		t.Errorf("did not find *Cat in possible concrete types")
 	}
 }

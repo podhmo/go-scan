@@ -1,69 +1,68 @@
-# `symgo`: Method Call on Pointer Return Value Fails
+# Troubleshooting (2): Member Access on Type-Narrowed Variables
 
-This document outlines a bug in the `symgo` evaluator where it fails to resolve method calls on pointer types returned directly from functions.
+This document details the complex and iterative troubleshooting process for implementing member access on variables narrowed by type assertions (`if v, ok := i.(T)`) and type switches (`switch v := i.(type)`). It supersedes the initial `trouble-symgo-narrowing.md` document.
 
-## 1. Problem
+## 1. Goal
 
-The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer that was returned from a function.
+The objective is to enable the `symgo` evaluator to correctly trace method calls and field accesses on variables whose types have been narrowed. For example:
 
-**Error Log:**
-```
-level=ERROR msg="undefined method or field: String for pointer type RETURN_VALUE"
-```
-
-**Example Go Code:**
 ```go
-// timeutil/date.go
-package timeutil
-
-type Date string
-
-func (d Date) String() string {
-    return string(d)
+// if-ok Type Assertion
+if v, ok := i.(User); ok {
+    inspect(v.Name) // `v` should be a `User` with its fields accessible.
 }
 
-// main.go
-package main
-
-func GetDate() *timeutil.Date {
-    d := timeutil.Date("2024-01-01")
-    return &d
-}
-
-func main() {
-    // This call fails during symgo analysis
-    s := GetDate().String()
+// Type Switch
+switch v := i.(type) {
+case Greeter:
+    v.Greet() // `v` should be a `Greeter` and its methods callable.
 }
 ```
-In standard Go, this is perfectly valid. The `String()` method, which has a value receiver `(d Date)`, is correctly called on the pointer `*timeutil.Date` via automatic pointer dereferencing. The `symgo` engine fails to replicate this behavior.
 
-## 2. Root Cause Analysis
+## 2. The Winding Path of Debugging
 
-The issue lies in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function, which handles expressions like `x.y`.
+The implementation journey was complex, involving several flawed approaches before the true root cause was isolated.
 
-1.  **Function Call Evaluation:** The call to `GetDate()` is evaluated first. The `symgo` engine correctly determines it returns a pointer to a `Date` object. The result is wrapped in an `*object.ReturnValue`.
-2.  **Selector Expression Evaluation:** The `evalSelectorExpr` function is then called to resolve `.String()`.
-    -   It correctly unwraps the `*object.ReturnValue` at the beginning of the function, so the expression it analyzes (`left`) becomes an `*object.Pointer`.
-    -   It enters the `case *object.Pointer:` block.
-    -   Inside this block, it inspects the pointer's `Value` (the `pointee`).
-3.  **The Failure:** The `pointee` in this scenario is an `*object.Instance` of `Date`. However, the logic inside the `case *object.Pointer:` block does not check for registered intrinsics, which are essential for testing and for handling certain standard library functions. It attempts to resolve the method directly from type information, but because the test relies on an intrinsic, the call is never registered.
+### Attempt 1: The `SymbolicPlaceholder` with `Underlying` Field
 
-As a result, the test assertion fails. The original user-reported error was slightly different but stemmed from the same core issue: incomplete logic for handling pointer receivers.
+- **Idea:** The first attempt was to introduce an `Underlying` field to `object.SymbolicPlaceholder`. The placeholder would represent the new, narrowed type, while `Underlying` would hold a direct reference to the original object's value.
+- **Problem:** This led to a tangled web of indirection. The `Underlying` object was often an `*object.Variable` itself, which required multiple layers of "unwrapping" (`v.Value`). The logic in `evalSelectorExpr` and `ResolveSymbolicField` became convoluted, and it was extremely difficult to pinpoint where the concrete value was being lost. This approach was abandoned due to its complexity and lack of success.
 
-## 3. Proposed Solution
+### Attempt 2: The "Clone and Overwrite" Strategy
 
-The fix is to enhance the `case *object.Pointer:` block in `evalSelectorExpr`.
+- **Idea:** To simplify, the next approach was to `Clone()` the original object and directly overwrite the type information on the clone using `SetTypeInfo()`. This seemed more direct and robust.
+- **Implementation:**
+    1. An `object.Object.Clone()` method was added to the interface and implemented across all concrete types.
+    2. `evalTypeSwitchStmt` and `evalAssignStmt` were modified to clone the original object and apply the new type.
+- **Problem:** This led to a very confusing state: `TestTypeSwitch_MethodCall` **passed**, but `TestIfOk_FieldAccess` **consistently failed**. The `inspect` intrinsic was called, but with an empty string, indicating the `Name` field was not being accessed from a struct with the correct value.
 
-1.  **Unwrap ReturnValue:** Add a check to see if the `pointee` is of type `*object.ReturnValue` and unwrap it. This handles cases where a function returns a pointer to a pointer.
-2.  **Add Intrinsic Checks:** Before resolving the method from type info, add checks for registered intrinsics for both pointer (`(*T).Method`) and value (`(T).Method`) receivers, mirroring the logic that already exists for `*object.Instance` receivers.
+### Attempt 3: The Flawed Compatibility Check
 
-This change will make the symbolic evaluator correctly model Go's automatic pointer dereferencing for method calls and ensure that intrinsics for pointer types are correctly resolved.
+- **Idea:** The discrepancy between the two tests suggested an issue with how the success/failure paths were modeled. The `Clone()` should only happen on a *successful* assertion. A compatibility check using `e.scanner.Implements()` was added.
+- **Problem:** This was the correct direction, but my initial implementations were still flawed, leading me to incorrectly believe the issue was elsewhere (e.g., in `evalCompositeLit` or `ResolveSymbolicField`). I went down several rabbit holes, including adding extensive logging, only to return to the same point: the `if-ok` test was still failing.
 
-## 4. Plan
+## 3. The Root Cause, Finally Identified
 
-1.  **[COMPLETED]** Create this document (`docs/trouble-symgo2.md`).
-2.  **[COMPLETED]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
-3.  **[COMPLETED]** Run tests to confirm the failure.
-4.  **[COMPLETED]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
-5.  **[COMPLETED]** Run tests to verify the fix and check for regressions.
-6.  **[COMPLETED]** Update `TODO.md`.
+After multiple resets and re-evaluations, the true, subtle difference between the two control flow structures in the `symgo` evaluator was identified:
+
+- **`type switch`:** The `case` blocks are explored unconditionally by the symbolic tracer. My implementation correctly created a properly-valued clone for the matching `case` and a placeholder for the non-matching `case`. Because the test only inspects the success path, it passed.
+- **`if-ok` assertion:** The execution of the `if` block is conditional on the value of the `ok` variable. My implementation was correctly creating a cloned object `v`, but the `ok` variable was being assigned a `SymbolicPlaceholder` for a boolean, not a concrete `object.TRUE` or `object.FALSE`. When `evalIfStmt` evaluated the condition, it could not determine concretely whether to enter the block. While `symgo` is designed to explore both branches of an `if`, the lack of a concrete `true` on the success path appears to be the reason the block's contents were not being evaluated with the correctly-valued `v`.
+
+## 4. The Path Forward: The Definitive Fix
+
+The final, correct strategy is to ensure the `ok` variable in an `if-ok` assertion is assigned a **concrete boolean value**.
+
+1.  **Re-implement the Compatibility Check:** The logic in `evalAssignStmt` for the `if-ok` case must be identical to the successful logic in `evalTypeSwitchStmt`. It will:
+    a. Unwrap the original object to get its concrete value (e.g., an `*object.Instance`).
+    b. Resolve the target type from the assertion.
+    c. Use `e.scanner.Implements()` to check if the original object's type is compatible with the target type.
+
+2.  **Handle Success Path (`isCompatible == true`):**
+    - The `v` variable will be assigned a **clone** of the original object with its type info updated.
+    - The `ok` variable will be assigned the concrete value **`object.TRUE`**.
+
+3.  **Handle Failure Path (`isCompatible == false`):**
+    - The `v` variable will be assigned a **`SymbolicPlaceholder`** representing the zero value of the target type.
+    - The `ok` variable will be assigned the concrete value **`object.FALSE`**.
+
+This ensures that when `evalIfStmt` evaluates the condition, it sees a concrete `true` and correctly proceeds to evaluate the `if` block with the properly valued and typed variable `v`. This will be verified by re-running the tests after applying this final, targeted fix to `evalAssignStmt`.

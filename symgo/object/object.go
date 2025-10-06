@@ -505,10 +505,11 @@ func (sp *SymbolicPlaceholder) Clone() Object {
 // --- ReturnValue Object ---
 
 // ReturnValue represents the value being returned from a function.
-// It wraps another Object.
+// It wraps another Object and may hold the static type from the function signature.
 type ReturnValue struct {
 	BaseObject
-	Value Object
+	Value      Object
+	StaticType *scanner.FieldType // The static type of the return, from function signature
 }
 
 // Type returns the type of the ReturnValue object.
@@ -824,6 +825,12 @@ func (e *Environment) Get(name string) (Object, bool) {
 	if !ok && e.outer != nil {
 		obj, ok = e.outer.Get(name)
 	}
+	return obj, ok
+}
+
+// GetLocal retrieves an object by name from the local environment only.
+func (e *Environment) GetLocal(name string) (Object, bool) {
+	obj, ok := e.store[name]
 	return obj, ok
 }
 

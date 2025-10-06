@@ -303,15 +303,11 @@ func (ft *FieldType) String() string {
 
 	if ft.IsPointer {
 		sb.WriteString("*")
-		// For pointers, the current parsing for StarExpr in parseTypeExpr does:
-		//   underlyingType := s.parseTypeExpr(t.X, currentTypeParams)
-		//   underlyingType.IsPointer = true
-		//   return underlyingType
-		// This means `underlyingType` (which is `ft` here) *is* the element type, but marked as a pointer.
-		// So, we write "*" and then format `ft` as if it's not a pointer for the rest of its structure.
-		// ft.Elem is primarily for slice/map element types.
+		if ft.Elem != nil {
+			sb.WriteString(ft.Elem.String())
+		}
+		return sb.String()
 	}
-
 	if ft.IsSlice {
 		sb.WriteString("[]")
 		if ft.Elem != nil {

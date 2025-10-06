@@ -241,17 +241,20 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 			}
 		}
 
-		evaluatedValue := evaluated
+		finalRv := &object.ReturnValue{}
 		if ret, ok := evaluated.(*object.ReturnValue); ok {
-			evaluatedValue = ret.Value
+			finalRv.Value = ret.Value
+		} else if evaluated == nil {
+			finalRv.Value = object.NIL // Handle naked return
+		} else {
+			finalRv.Value = evaluated
 		}
 
-		// If the evaluated result is a Go nil (from a naked return), wrap it.
-		if evaluatedValue == nil {
-			return &object.ReturnValue{Value: object.NIL}
+		// Attach static type information from the function signature for single return values.
+		if fn.Def != nil && len(fn.Def.Results) == 1 {
+			finalRv.StaticType = fn.Def.Results[0].Type
 		}
-
-		return &object.ReturnValue{Value: evaluatedValue}
+		return finalRv
 
 	case *object.Intrinsic:
 		return fn.Fn(ctx, args...)

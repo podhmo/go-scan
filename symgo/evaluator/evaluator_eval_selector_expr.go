@@ -217,6 +217,7 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return left
 	}
 
+	e.logc(ctx, slog.LevelDebug, "[DEBUG] evalSelectorExpr: receiver evaluated", "receiver", left.Inspect(), "receiver_type", left.Type())
 	e.logger.Debug("evalSelectorExpr: evaluated left", "type", left.Type(), "value", inspectValuer{left})
 
 	switch val := left.(type) {

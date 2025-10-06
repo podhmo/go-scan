@@ -176,6 +176,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 			StructType: resolvedType,
 			Fields:     make(map[string]object.Object),
 		}
+		e.logc(ctx, slog.LevelDebug, "[DEBUG] evalCompositeLit: created struct object", "type", resolvedType.Name)
 		structObj.SetTypeInfo(resolvedType)
 		structObj.SetFieldType(fieldType)
 
@@ -191,6 +192,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 					if isError(val) {
 						return val
 					}
+					e.logc(ctx, slog.LevelDebug, "[DEBUG] evalCompositeLit: setting field", "field", key.Name, "value", val.Inspect(), "value_type", val.Type())
 					structObj.Set(key.Name, val)
 				}
 			}

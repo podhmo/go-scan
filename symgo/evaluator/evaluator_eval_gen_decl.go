@@ -118,7 +118,7 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 						v.SetTypeInfo(resolvedTypeInfo)
 					}
 				}
-				env.Set(name.Name, v)
+				env.SetLocal(name.Name, v)
 			}
 		}
 	case token.TYPE:

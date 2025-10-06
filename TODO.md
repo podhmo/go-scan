@@ -128,7 +128,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - [x] Resolve generic type parameters correctly.
   - [x] Prevent `invalid indirect` errors from nil pointer dereferencing.
 - [ ] **Medium Priority**:
-  - [ ] Support `uint64` and large integer constants to prevent overflow.
+  - [x] Support `uint64` and large integer constants to prevent overflow.
   - [ ] Improve type inference to fix selector type errors.
   - [ ] Implement missing operators for `complex` types.
 - [ ] **Low Priority**:

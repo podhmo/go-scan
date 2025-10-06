@@ -40,10 +40,13 @@ The engine's recursion handling is another indicator of its specialized design, 
 
 ### 2.4. `switch` Statements (`evalSwitchStmt`, `evalTypeSwitchStmt`)
 
-The handling of `switch` and `type switch` statements follows the same philosophy as `if` statements.
+The handling of `switch` and `type switch` statements follows the same "explore all paths" philosophy as `if` statements, but with important nuances.
 
-- **Behavior**: The evaluator does not attempt to determine which `case` branch will be executed at runtime. Instead, it iterates through **all** `case` clauses in the statement and evaluates the body of each one. For a `type switch`, it also correctly creates a new variable in each `case` block's scope, typed to match that specific case.
-- **Alignment with Design**: This is perfectly aligned with the goal of discovering all possible code paths. By visiting every `case`, the engine ensures that no potential function call or type usage is missed.
+- **`switch` Statements (`evalSwitchStmt`)**: The evaluator does not attempt to determine which `case` branch will be executed at runtime. Instead, it iterates through **all** `case` clauses and evaluates the body of each one in a separate scope. This ensures all potential function calls are discovered.
+
+- **`type-switch` Statements (`evalTypeSwitchStmt`)**: This statement is handled with a specific strategy to maximize path discovery, especially when the type being switched on is a symbolic interface.
+    - **Behavior**: For each typed `case T:` block, the evaluator creates a **new, symbolic instance** of type `T` and assigns it to the case variable (e.g., `v`). This allows the tracer to hypothetically explore the code path within that block as if the interface variable had been of type `T`.
+    - **Alignment with Design**: This is a direct implementation of the tracer philosophy. By creating new symbolic instances for each branch, the engine can analyze all possible paths without needing a concrete value, ensuring a complete call graph is generated. This contrasts with the `if-ok` assertion, which clones a known concrete value for a single known path.
 
 ### 2.5. Function, Closure, and Call Handling
 

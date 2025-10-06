@@ -84,6 +84,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - **`symgo`: Implement Robust Interface Resolution ([docs/plan-symgo-interface-resolution.md](./docs/plan-symgo-interface-resolution.md))**
 - **`symgo` Engine Improvements ([docs/plan-symgo-refine2.md](./docs/plan-symgo-refine2.md))**
 - **`symgo`: Enforce Strict Scan Policy ([docs/plan-symgo-focus.md](./docs/plan-symgo-focus.md))**
+- **`symgo`: Enhance Type-Narrowed Member Access**: The evaluator can now correctly trace member access on variables whose types have been narrowed by both `if-ok` assertions and `type-switch` statements.
+    - **`if-ok` Assertions**: For `v, ok := i.(T)`, the evaluator clones the underlying concrete object held by `i`, preserving its state (e.g., field values) for the new variable `v`.
+    - **`type-switch` Statements**: For `switch v := i.(type)`, the evaluator acts as a symbolic tracer, exploring all possible `case` branches. For each `case T:`, it creates a new symbolic instance of `T`, allowing analysis to proceed hypothetically down every path.
 - **`symgo`: Fix Local Type Alias Resolution**: The evaluator now correctly handles type aliases defined inside a function body. This includes creating a `TypeInfo` for the alias on-the-fly and correctly resolving composite literals that use the alias, ensuring the underlying type's structure is used for evaluation while preserving the alias's name for type checking. ([docs/cont-symgo-local-alias.md](./docs/cont-symgo-local-alias.md))
 - **`symgo` Evaluator Enhancements**:
     - **`panic(nil)` Handling**: Fixed a critical bug where the symbolic evaluator would crash when analyzing code containing a `panic(nil)` call. The evaluator now correctly handles this as a symbolic `PanicError` object, preventing the crash and allowing analysis to continue. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
@@ -110,11 +113,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Interface Union Types**: Correctly parse and analyze interfaces defined as a union of types (e.g., `type MyInterface interface { *TypeA | *TypeB }`), enabling accurate analysis of generic functions that use them as constraints.
 - [x] **Fix `invalid indirect` on Unresolved Function Types**: Fixed a crash in the evaluator when dereferencing a pointer to an unresolved function type (e.g., a function type from an unscanned package). The evaluator now returns a symbolic placeholder, improving robustness for tools like `find-orphans`. ([docs/trouble-symgo.md](docs/trouble-symgo.md))
 - [x] **Import Path Heuristic**: Enhanced the heuristic for guessing package names from import paths. It now generates multiple candidates (e.g., for `"github.com/mattn/go-isatty"`, it produces `["isatty", "goisatty"]`) and checks each one, making symbol resolution for unscanned packages more robust and flexible. It now also handles suffixes like `-go` (e.g., `"github.com/stripe/stripe-go/v79"` -> `stripe`).
-
-### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
-- [x] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.
-  - [x] **`if-ok` Assertions**: The evaluator now correctly handles member access on variables narrowed using the `v, ok := i.(T)` idiom. This was achieved by introducing a `Clone() Object` method to the `object.Object` interface, which preserves the concrete value of the variable across the assertion.
-  - [x] **`type-switch` Statements**: The evaluator now correctly handles member access on variables narrowed using the `switch v := i.(type)` statement by cloning the underlying object for each case.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

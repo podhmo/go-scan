@@ -40,10 +40,13 @@ The engine's recursion handling is another indicator of its specialized design, 
 
 ### 2.4. `switch` Statements (`evalSwitchStmt`, `evalTypeSwitchStmt`)
 
-The handling of `switch` and `type switch` statements follows the same philosophy as `if` statements.
+The handling of `switch` and `type switch` statements follows the same "explore all paths" philosophy as `if` statements, but with important nuances.
 
-- **Behavior**: The evaluator does not attempt to determine which `case` branch will be executed at runtime. Instead, it iterates through **all** `case` clauses in the statement and evaluates the body of each one. For a `type switch`, it also correctly creates a new variable in each `case` block's scope, typed to match that specific case.
-- **Alignment with Design**: This is perfectly aligned with the goal of discovering all possible code paths. By visiting every `case`, the engine ensures that no potential function call or type usage is missed.
+- **`switch` Statements (`evalSwitchStmt`)**: The evaluator does not attempt to determine which `case` branch will be executed at runtime. Instead, it iterates through **all** `case` clauses and evaluates the body of each one in a separate scope. This ensures all potential function calls are discovered.
+
+- **`type-switch` Statements (`evalTypeSwitchStmt`)**: This statement is handled with a specific strategy to maximize path discovery, especially when the type being switched on is a symbolic interface.
+    - **Behavior**: For each typed `case T:` block, the evaluator creates a **new, symbolic instance** of type `T` and assigns it to the case variable (e.g., `v`). This allows the tracer to hypothetically explore the code path within that block as if the interface variable had been of type `T`.
+    - **Alignment with Design**: This is a direct implementation of the tracer philosophy. By creating new symbolic instances for each branch, the engine can analyze all possible paths without needing a concrete value, ensuring a complete call graph is generated. This contrasts with the `if-ok` assertion, which clones a known concrete value for a single known path.
 
 ### 2.5. Function, Closure, and Call Handling
 
@@ -184,3 +187,14 @@ Based on the comprehensive analysis of the `symgo` source code and its correspon
 - **Robustness**: The engine and its tests demonstrate a strong focus on robustness. The handling of recursion, out-of-policy types, and complex expressions (like assignments with type assertions) shows a mature design that is resilient to the complexities of real-world Go code.
 
 - **Conclusion**: The investigation confirms that `symgo` is not an over-extended interpreter. It is a well-designed symbolic tracing engine. No fundamental architectural changes are recommended based on this analysis. The design is sound.
+
+### 2.13. `if-ok` Type Assertion Handling (`evalAssignStmt`)
+
+The engine's handling of the `v, ok := i.(T)` idiom is a key feature for enabling precise analysis of type-narrowed code. The implementation correctly preserves the concrete value of the variable `v` after a successful assertion.
+
+-   **Behavior**: When `evalAssignStmt` encounters a two-value type assertion, it does not simply create a `SymbolicPlaceholder` for `v`. Instead, it performs the following steps:
+    1.  It evaluates the expression `i` to get the underlying object that the interface holds.
+    2.  It uses the newly introduced `object.Object.Clone()` method to create a shallow copy of this underlying object.
+    3.  This cloned object is assigned to the new variable `v`. The `ok` variable is assigned the `object.TRUE` singleton.
+-   **`Clone()` Method**: To support this, the `Clone() Object` method was added to the `object.Object` interface and implemented for all concrete object types. This method creates a shallow copy of the object, which is crucial for preserving the state (e.g., field values of a struct) of the original object in the new variable `v` without creating shared-state side effects.
+-   **Alignment with Design**: This approach is critical for symbolic analysis. By preserving the concrete value, the engine can subsequently trace member access (e.g., `v.ConcreteField`) or method calls (`v.ConcreteMethod()`) on the narrowed variable `v`, even if those members were not part of the original interface `i`. This allows for a much deeper and more accurate analysis of Go's idiomatic type-handling patterns.

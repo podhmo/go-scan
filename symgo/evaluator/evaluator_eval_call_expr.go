@@ -258,12 +258,13 @@ func (e *Evaluator) extendFunctionEnv(ctx context.Context, fn *object.Function, 
 				// If the argument is a function, we need to "tag" it with the current call stack
 				// to enable recursion detection through higher-order functions.
 				if funcArg, ok := arg.(*object.Function); ok {
-					clonedFunc := funcArg.Clone()
-					// Create a copy of the call stack to avoid shared state issues.
-					stackCopy := make([]*object.CallFrame, len(e.callStack))
-					copy(stackCopy, e.callStack)
-					clonedFunc.BoundCallStack = stackCopy
-					arg = clonedFunc // Use the tagged clone for the binding
+					if clonedFunc, ok := funcArg.Clone().(*object.Function); ok {
+						// Create a copy of the call stack to avoid shared state issues.
+						stackCopy := make([]*object.CallFrame, len(e.callStack))
+						copy(stackCopy, e.callStack)
+						clonedFunc.BoundCallStack = stackCopy
+						arg = clonedFunc // Use the tagged clone for the binding
+					}
 				}
 
 				v := &object.Variable{

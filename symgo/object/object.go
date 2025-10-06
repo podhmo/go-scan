@@ -67,6 +67,8 @@ type Object interface {
 	FieldType() *scanner.FieldType
 	// SetFieldType sets the field type information for the object.
 	SetFieldType(*scanner.FieldType)
+	// Clone creates a shallow copy of the object.
+	Clone() Object
 }
 
 // BaseObject provides a default implementation for the TypeInfo and FieldType methods.
@@ -109,6 +111,12 @@ func (s *String) Type() ObjectType { return STRING_OBJ }
 // Inspect returns a string representation of the String's value.
 func (s *String) Inspect() string { return fmt.Sprintf("%q", s.Value) }
 
+// Clone creates a shallow copy.
+func (s *String) Clone() Object {
+	c := *s
+	return &c
+}
+
 // Release returns the String object to the pool.
 func (s *String) Release() {
 	s.Value = ""
@@ -128,6 +136,12 @@ func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 
 // Inspect returns a string representation of the Integer's value.
 func (i *Integer) Inspect() string { return strconv.FormatInt(i.Value, 10) }
+
+// Clone creates a shallow copy.
+func (i *Integer) Clone() Object {
+	c := *i
+	return &c
+}
 
 // Release returns the Integer object to the pool.
 func (i *Integer) Release() {
@@ -149,6 +163,12 @@ func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 // Inspect returns a string representation of the Float's value.
 func (f *Float) Inspect() string { return strconv.FormatFloat(f.Value, 'f', -1, 64) }
 
+// Clone creates a shallow copy.
+func (f *Float) Clone() Object {
+	c := *f
+	return &c
+}
+
 // Release returns the Float object to the pool.
 func (f *Float) Release() {
 	f.Value = 0
@@ -169,6 +189,12 @@ func (c *Complex) Type() ObjectType { return COMPLEX_OBJ }
 // Inspect returns a string representation of the Complex's value.
 func (c *Complex) Inspect() string { return fmt.Sprintf("%v", c.Value) }
 
+// Clone creates a shallow copy.
+func (c *Complex) Clone() Object {
+	clone := *c
+	return &clone
+}
+
 // --- Boolean Object ---
 
 // Boolean represents a boolean value.
@@ -182,6 +208,12 @@ func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 
 // Inspect returns a string representation of the Boolean's value.
 func (b *Boolean) Inspect() string { return strconv.FormatBool(b.Value) }
+
+// Clone creates a shallow copy.
+func (b *Boolean) Clone() Object {
+	clone := *b
+	return &clone
+}
 
 // NewInteger creates a new Integer object from the pool.
 func NewInteger(value int64) *Integer {
@@ -240,16 +272,16 @@ func (f *Function) Inspect() string {
 
 // WithReceiver creates a new Function object with the receiver and its position bound.
 func (f *Function) WithReceiver(receiver Object, pos token.Pos) *Function {
-	newF := *f // Creates a shallow copy
+	newF := f.Clone().(*Function) // Creates a shallow copy
 	newF.Receiver = receiver
 	newF.ReceiverPos = pos
-	return &newF
+	return newF
 }
 
 // Clone creates a shallow copy of the Function object. This is essential for
 // creating call-site-specific instances of a function (e.g., to bind a call stack)
 // without polluting the globally cached function object.
-func (f *Function) Clone() *Function {
+func (f *Function) Clone() Object {
 	newF := *f
 	return &newF
 }
@@ -268,6 +300,12 @@ func (i *Intrinsic) Type() ObjectType { return INTRINSIC_OBJ }
 
 // Inspect returns a string representation of the intrinsic function.
 func (i *Intrinsic) Inspect() string { return "intrinsic function" }
+
+// Clone creates a shallow copy.
+func (i *Intrinsic) Clone() Object {
+	c := *i
+	return &c
+}
 
 // --- Instance Object ---
 
@@ -292,6 +330,13 @@ func (i *Instance) Inspect() string {
 	return fmt.Sprintf("instance<%s>", i.TypeName)
 }
 
+// Clone creates a shallow copy of the instance.
+func (i *Instance) Clone() Object {
+	c := *i
+	// The State map and Underlying object are copied by reference, which is a shallow copy.
+	return &c
+}
+
 // --- Package Object ---
 
 // Package represents an imported Go package.
@@ -311,6 +356,12 @@ func (p *Package) Type() ObjectType { return PACKAGE_OBJ }
 // Inspect returns a string representation of the package.
 func (p *Package) Inspect() string {
 	return fmt.Sprintf("package %s (%q)", p.Name, p.Path)
+}
+
+// Clone creates a shallow copy.
+func (p *Package) Clone() Object {
+	c := *p
+	return &c
 }
 
 // --- Error Object ---
@@ -357,6 +408,12 @@ func (e *Error) Type() ObjectType { return ERROR_OBJ }
 // Inspect returns a formatted string representation of the error, including the call stack.
 func (e *Error) Inspect() string {
 	return e.Error()
+}
+
+// Clone creates a shallow copy.
+func (e *Error) Clone() Object {
+	c := *e
+	return &c
 }
 
 // Error returns a formatted string representation of the error, including the call stack,
@@ -435,6 +492,13 @@ func (sp *SymbolicPlaceholder) Inspect() string {
 	return sp.inspectCache
 }
 
+// Clone creates a shallow copy.
+func (sp *SymbolicPlaceholder) Clone() Object {
+	c := *sp
+	c.cacheValid = false // Invalidate cache on clone
+	return &c
+}
+
 // --- ReturnValue Object ---
 
 // ReturnValue represents the value being returned from a function.
@@ -449,6 +513,12 @@ func (rv *ReturnValue) Type() ObjectType { return RETURN_VALUE_OBJ }
 
 // Inspect returns a string representation of the wrapped value.
 func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
+
+// Clone creates a shallow copy.
+func (rv *ReturnValue) Clone() Object {
+	c := *rv
+	return &c
+}
 
 // --- Variable Object ---
 
@@ -476,6 +546,12 @@ func (v *Variable) Inspect() string {
 	return v.Value.Inspect()
 }
 
+// Clone creates a shallow copy.
+func (v *Variable) Clone() Object {
+	c := *v
+	return &c
+}
+
 // --- Pointer Object ---
 
 // Pointer represents a pointer to another object.
@@ -490,6 +566,12 @@ func (p *Pointer) Type() ObjectType { return POINTER_OBJ }
 // Inspect returns a string representation of the pointer.
 func (p *Pointer) Inspect() string {
 	return fmt.Sprintf("&%s", p.Value.Inspect())
+}
+
+// Clone creates a shallow copy.
+func (p *Pointer) Clone() Object {
+	c := *p
+	return &c
 }
 
 // --- Struct Object ---
@@ -526,6 +608,17 @@ func (s *Struct) Inspect() string {
 	return out.String()
 }
 
+// Clone creates a shallow copy of the struct. The Fields map is duplicated,
+// but the values within are not.
+func (s *Struct) Clone() Object {
+	c := *s
+	c.Fields = make(map[string]Object, len(s.Fields))
+	for k, v := range s.Fields {
+		c.Fields[k] = v // This is a shallow copy of the field values
+	}
+	return &c
+}
+
 // Get retrieves a field from the struct.
 func (s *Struct) Get(name string) (Object, bool) {
 	val, ok := s.Fields[name]
@@ -552,6 +645,11 @@ func (n *Nil) Type() ObjectType { return NIL_OBJ }
 
 // Inspect returns a string representation of nil.
 func (n *Nil) Inspect() string { return "nil" }
+
+// Clone returns the singleton NIL instance, as it's immutable.
+func (n *Nil) Clone() Object {
+	return n
+}
 
 // --- Slice Object ---
 
@@ -581,6 +679,17 @@ func (s *Slice) Inspect() string {
 	return out.String()
 }
 
+// Clone creates a shallow copy of the slice object.
+// The elements themselves are not cloned.
+func (s *Slice) Clone() Object {
+	c := *s
+	// The elements slice is copied, but it's a slice of interfaces, so it's a shallow copy.
+	newElements := make([]Object, len(s.Elements))
+	copy(newElements, s.Elements)
+	c.Elements = newElements
+	return &c
+}
+
 // --- Map Object ---
 
 // Map represents a map literal. Its type is represented by a FieldType,
@@ -606,6 +715,17 @@ func (m *Map) Inspect() string {
 	return "map[<unknown>]<unknown>"
 }
 
+// Clone creates a shallow copy of the map object.
+// The key/value pairs are not deep-cloned.
+func (m *Map) Clone() Object {
+	c := *m
+	c.Pairs = make(map[Object]Object, len(m.Pairs))
+	for k, v := range m.Pairs {
+		c.Pairs[k] = v
+	}
+	return &c
+}
+
 // --- Channel Object ---
 
 // Channel represents a channel object. Its type is represented by a FieldType,
@@ -624,6 +744,12 @@ func (c *Channel) Inspect() string {
 		return c.ChanFieldType.String()
 	}
 	return "chan <unknown>"
+}
+
+// Clone creates a shallow copy.
+func (c *Channel) Clone() Object {
+	clone := *c
+	return &clone
 }
 
 // --- Environment ---
@@ -765,6 +891,12 @@ func (mr *MultiReturn) Inspect() string {
 	return "multi-return"
 }
 
+// Clone creates a shallow copy.
+func (mr *MultiReturn) Clone() Object {
+	c := *mr
+	return &c
+}
+
 // --- Break Object ---
 
 // Break represents a break statement.
@@ -782,6 +914,12 @@ func (b *Break) Inspect() string {
 		return fmt.Sprintf("break %s", b.Label)
 	}
 	return "break"
+}
+
+// Clone creates a shallow copy.
+func (b *Break) Clone() Object {
+	c := *b
+	return &c
 }
 
 // --- Continue Object ---
@@ -803,6 +941,12 @@ func (c *Continue) Inspect() string {
 	return "continue"
 }
 
+// Clone creates a shallow copy.
+func (c *Continue) Clone() Object {
+	clone := *c
+	return &clone
+}
+
 // --- Fallthrough Object ---
 
 // Fallthrough represents a fallthrough statement.
@@ -815,6 +959,11 @@ func (f *Fallthrough) Type() ObjectType { return FALLTHROUGH_OBJ }
 
 // Inspect returns a string representation of the fallthrough statement.
 func (f *Fallthrough) Inspect() string { return "fallthrough" }
+
+// Clone returns the singleton FALLTHROUGH instance.
+func (f *Fallthrough) Clone() Object {
+	return f
+}
 
 // --- Variadic Object ---
 
@@ -833,6 +982,12 @@ func (v *Variadic) Inspect() string {
 		return fmt.Sprintf("...%s", v.Value.Inspect())
 	}
 	return "..."
+}
+
+// Clone creates a shallow copy.
+func (v *Variadic) Clone() Object {
+	c := *v
+	return &c
 }
 
 var ()
@@ -867,6 +1022,16 @@ func (f *InstantiatedFunction) Inspect() string {
 	return fmt.Sprintf("func %s[%s]() { ... }", name, strings.Join(args, ", "))
 }
 
+// Clone creates a shallow copy of the instantiated function.
+func (f *InstantiatedFunction) Clone() Object {
+	c := *f
+	// Also clone the embedded Function to ensure the receiver isn't shared.
+	if f.Function != nil {
+		c.Function = f.Function.Clone().(*Function)
+	}
+	return &c
+}
+
 // --- Type Object ---
 
 // Type represents a type value that can be stored in the environment.
@@ -885,6 +1050,12 @@ func (t *Type) Type() ObjectType { return TYPE_OBJ }
 // Inspect returns a string representation of the type.
 func (t *Type) Inspect() string {
 	return t.TypeName
+}
+
+// Clone creates a shallow copy.
+func (t *Type) Clone() Object {
+	c := *t
+	return &c
 }
 
 // --- Tracer Interface ---
@@ -968,6 +1139,12 @@ func (pe *PanicError) Error() string {
 	return pe.Inspect()
 }
 
+// Clone creates a shallow copy.
+func (pe *PanicError) Clone() Object {
+	c := *pe
+	return &c
+}
+
 // --- UnresolvedFunction Object ---
 
 // UnresolvedFunction represents a function that could not be fully resolved
@@ -986,6 +1163,12 @@ func (uf *UnresolvedFunction) Inspect() string {
 	return fmt.Sprintf("<Unresolved Function: %s.%s>", uf.PkgPath, uf.FuncName)
 }
 
+// Clone creates a shallow copy.
+func (uf *UnresolvedFunction) Clone() Object {
+	c := *uf
+	return &c
+}
+
 // --- UnresolvedType Object ---
 
 // UnresolvedType represents a type that could not be fully resolved
@@ -1002,6 +1185,12 @@ func (ut *UnresolvedType) Type() ObjectType { return UNRESOLVED_TYPE_OBJ }
 // Inspect returns a string representation of the unresolved type.
 func (ut *UnresolvedType) Inspect() string {
 	return fmt.Sprintf("<Unresolved Type: %s.%s>", ut.PkgPath, ut.TypeName)
+}
+
+// Clone creates a shallow copy.
+func (ut *UnresolvedType) Clone() Object {
+	c := *ut
+	return &c
 }
 
 // --- Global Instances ---
@@ -1033,4 +1222,10 @@ func (as *AmbiguousSelector) Type() ObjectType { return AMBIGUOUS_SELECTOR_OBJ }
 // Inspect returns a string representation of the ambiguous selector.
 func (as *AmbiguousSelector) Inspect() string {
 	return fmt.Sprintf("<Ambiguous Selector: %s.%s>", as.Receiver.Inspect(), as.Sel.Name)
+}
+
+// Clone creates a shallow copy.
+func (as *AmbiguousSelector) Clone() Object {
+	c := *as
+	return &c
 }

@@ -433,7 +433,6 @@ func (v inspectValuer) LogValue() slog.Value {
 	return slog.StringValue(v.obj.Inspect())
 }
 
-
 // Files returns the file scopes that have been loaded into the evaluator.
 func (e *Evaluator) Files() []*FileScope {
 	return e.files
@@ -585,8 +584,6 @@ func (e *Evaluator) GetOrResolveFunctionForTest(ctx context.Context, pkg *object
 func (e *Evaluator) GetOrLoadPackageForTest(ctx context.Context, path string) (*object.Package, error) {
 	return e.getOrLoadPackage(ctx, path)
 }
-
-
 
 // built-in
 

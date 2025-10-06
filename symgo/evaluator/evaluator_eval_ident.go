@@ -110,13 +110,14 @@ func (e *Evaluator) convertGoConstant(ctx context.Context, val constant.Value, p
 	case constant.String:
 		return &object.String{Value: constant.StringVal(val)}
 	case constant.Int:
-		i, ok := constant.Int64Val(val)
-		if !ok {
-			// This might be a large integer that doesn't fit in int64.
-			// For symbolic execution, this is an acceptable limitation for now.
-			return e.newError(ctx, pos, "could not convert constant to int64: %s", val.String())
+		if i, ok := constant.Int64Val(val); ok {
+			return &object.Integer{Value: i}
 		}
-		return &object.Integer{Value: i}
+		if u, ok := constant.Uint64Val(val); ok {
+			return &object.UnsignedInteger{Value: u}
+		}
+		// Fallback for very large numbers that don't fit in uint64.
+		return e.newError(ctx, pos, "constant %s overflows uint64", val.String())
 	case constant.Bool:
 		return nativeBoolToBooleanObject(constant.BoolVal(val))
 	case constant.Float:

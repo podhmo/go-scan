@@ -22,6 +22,7 @@ type ObjectType string
 // Define the basic object types for the symbolic engine.
 const (
 	INTEGER_OBJ               ObjectType = "INTEGER"
+	UNSIGNED_INTEGER_OBJ      ObjectType = "UNSIGNED_INTEGER"
 	FLOAT_OBJ                 ObjectType = "FLOAT"
 	COMPLEX_OBJ               ObjectType = "COMPLEX"
 	BOOLEAN_OBJ               ObjectType = "BOOLEAN"
@@ -147,6 +148,26 @@ func (i *Integer) Clone() Object {
 func (i *Integer) Release() {
 	i.Value = 0
 	integerPool.Put(i)
+}
+
+// --- UnsignedInteger Object ---
+
+// UnsignedInteger represents an unsigned integer value.
+type UnsignedInteger struct {
+	BaseObject
+	Value uint64
+}
+
+// Type returns the type of the UnsignedInteger object.
+func (ui *UnsignedInteger) Type() ObjectType { return UNSIGNED_INTEGER_OBJ }
+
+// Inspect returns a string representation of the UnsignedInteger's value.
+func (ui *UnsignedInteger) Inspect() string { return strconv.FormatUint(ui.Value, 10) }
+
+// Clone creates a shallow copy.
+func (ui *UnsignedInteger) Clone() Object {
+	c := *ui
+	return &c
 }
 
 // --- Float Object ---

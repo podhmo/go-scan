@@ -977,6 +977,7 @@ func (s *Scanner) parseFuncDecl(ctx context.Context, f *ast.FuncDecl, absFilePat
 		reparsedFuncSignature := s.parseFuncType(ctx, f.Type, methodScopeTypeParams, pkgInfo, importLookup)
 		funcInfo.Parameters = reparsedFuncSignature.Parameters
 		funcInfo.Results = reparsedFuncSignature.Results
+		funcInfo.TypeParams = methodScopeTypeParams
 	}
 	return funcInfo
 }

@@ -111,10 +111,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Interface Union Types**: Correctly parse and analyze interfaces defined as a union of types (e.g., `type MyInterface interface { *TypeA | *TypeB }`), enabling accurate analysis of generic functions that use them as constraints.
 - [x] **Fix `invalid indirect` on Unresolved Function Types**: Fixed a crash in the evaluator when dereferencing a pointer to an unresolved function type (e.g., a function type from an unscanned package). The evaluator now returns a symbolic placeholder, improving robustness for tools like `find-orphans`. ([docs/trouble-symgo.md](docs/trouble-symgo.md))
 - [x] **Import Path Heuristic**: Enhanced the heuristic for guessing package names from import paths. It now generates multiple candidates (e.g., for `"github.com/mattn/go-isatty"`, it produces `["isatty", "goisatty"]`) and checks each one, making symbol resolution for unscanned packages more robust and flexible. It now also handles suffixes like `-go` (e.g., `"github.com/stripe/stripe-go/v79"` -> `stripe`).
-
-### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
-- [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.
-- [ ] **Fix Interface Type Tracking for Unresolved Types**: The `updateVarOnAssignment` logic fails to track concrete types when the assigned value is a symbolic placeholder from an unresolved (shallow-scanned) package. This causes tests like `TestShallowScan_AssignIdentifier_WithUnresolvedInterface` to fail. The type tracking needs to be made more robust for these cases.
+- [ ] **Enhance Type-Narrowed Member Access**: Implement support for method calls and field access on variables narrowed by `type switch` and `if-ok` assertions. ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
+- [ ] **Fix Interface Type Tracking for Unresolved Types**: The `updateVarOnAssignment` logic fails to track concrete types when the assigned value is a symbolic placeholder from an unresolved (shallow-scanned) package. This causes tests like `TestShallowScan_AssignIdentifier_WithUnresolvedInterface` to fail. The type tracking needs to be made more robust for these cases. ([docs/trouble-symgo-narrowing.md](./docs/trouble-symgo-narrowing.md))
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

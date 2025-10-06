@@ -1,39 +1,40 @@
-# Trouble Analysis: Refactoring `AssignStmt` and the Challenge of Implicit Type Tracking
+# Trouble Analysis: The `AssignStmt` Refactoring and Its Unforeseen Consequences
 
-This document details the investigation into a complex issue within the `symgo` evaluator related to assignment statements (`=`, `:=`). The task was not to implement assignment from scratch, but rather to refactor the existing logic. This refactoring effort inadvertently caused significant regressions, revealing the critical and subtle nature of type tracking in the symbolic engine.
+This document details the investigation into a complex series of regressions within the `symgo` evaluator. The work did not originate as a simple bug fix, but as a strategic, exploratory refactoring aimed at a larger goal: **implementing support for type-narrowing constructs**. This attempt, however, revealed critical, implicit assumptions in the existing evaluation logic, leading to widespread test failures that needed to be addressed.
 
-## 1. The Original Goal: Refactor and Clarify Assignment Logic
+## 1. The Original Goal: Supporting Type-Narrowing
 
-Before this task, many assignment-related tests, such as `TestEval_InterfaceMethodCall_AcrossControlFlow`, were passing. This indicates that the evaluator *could* handle complex assignments. However, the logic was likely scattered across different parts of the `Eval` function (e.g., in `evalIdent`, `evalCallExpr`, etc.) rather than being centralized in a single `evalAssignStmt` handler.
+The initial motivation for this task was to begin implementing the features described in `TODO.md` under "Enhance Type-Narrowed Member Access." Specifically, the goal was to enable `symgo` to understand code patterns like:
 
-The motivation for the refactoring was to:
--   **Centralize Logic**: Create a single `evalAssignStmt` function to handle all forms of assignment (`=`, `:=`).
--   **Improve Readability**: Make the code easier to understand and maintain by having a clear, dedicated place for assignment evaluation.
--   **Explicitly Handle Edge Cases**: Add clear logic for multi-value returns, type assertions, and map indexing on the RHS of an assignment, which were previously handled implicitly.
-
-The initial task was triggered by the need to implement a core `AssignStmt` handler to provide a foundation for these improvements. The initial tests, like `TestEvalAssignStmt_Simple`, were created to validate this new, centralized handler.
-
+**`if-ok` type assertion:**
 ```go
-// From symgo/integration_test/assign_stmt_test.go
-// This test was created to validate the new, centralized assignment logic.
-func TestEvalAssignStmt_Simple(t *testing.T) {
-	source := `
-package main
-func main() int {
-	var x int
-	x = 10
-	return x
-}
-`
-// ... test logic asserts that the return value is 10 ...
+if v, ok := i.(T); ok {
+    // Inside this block, `v` is known to be of type `T`.
+    // The evaluator should be able to resolve method calls on `v` as type `T`.
 }
 ```
 
-## 2. The Refactoring and the Unforeseen Regressions
+**`type switch`:**
+```go
+switch v := i.(type) {
+case T1:
+    // `v` is of type `T1`
+case T2:
+    // `v` is of type `T2`
+}
+```
 
-The refactoring began by creating a new `evaluator_stmt.go` file and directing all `ast.AssignStmt` nodes to a new `evalAssignStmt` function. This immediately broke a wide range of tests, revealing that the previous, distributed logic had handled many subtle cases implicitly.
+Before implementing this new logic, a strategic decision was made to first refactor the existing, scattered logic for assignments into a single, centralized `evalAssignStmt` function. The hypothesis was that a clean, unified assignment handler would make it easier and safer to subsequently add the new type-narrowing logic. This refactoring was an *exploratory trial* within the larger solution space.
 
-The task had now transformed from "implementing a new feature" to "refactoring existing logic and fixing the resulting regressions." The core of these regressions stemmed from a single, complex problem: **the loss of type information when assigning values to interface variables.**
+## 2. The Refactoring Attempt and the Cascade of Regressions
+
+This refactoring effort, intended as a preparatory cleanup, immediately destabilized the evaluator.
+
+1.  **Initial Implementation**: A new `evaluator_stmt.go` was created, and a basic `evalAssignStmt` handler was added to the evaluator's main `Eval` function.
+2.  **Cascading Failures**: Running the test suite revealed that numerous existing tests—which had been passing—were now failing. This was the critical moment of realization: **assignment logic was not missing, but was implicitly and correctly handled by a combination of other evaluation functions.** My attempt to centralize it had broken these fragile, implicit connections.
+3.  **Shift in Focus**: The task immediately pivoted from "refactoring for a new feature" to "fixing the regressions caused by the refactoring."
+
+The core of the regressions stemmed from a single, complex problem: **the loss of type information when assigning values to interface variables.**
 
 **Example of a Broken Test (`TestEval_InterfaceMethodCall_AcrossControlFlow`):**
 This test, which was previously passing, verifies a critical static analysis capability:
@@ -59,21 +60,12 @@ The investigation into this regression revealed a fundamental tension in the eva
 
 The original, implicit logic handled this correctly. The new, centralized `assign` helper function initially failed because it did not correctly manage this dual-type system.
 
-## 4. Iterative Fixes and Current Status
+## 4. Current Status: Recovery and Remaining Challenges
 
-Several attempts were made to fix this, each revealing a deeper layer of the problem:
+After several iterations of debugging, the refactored assignment logic has been stabilized to the point where most of the regressions are fixed. The core assignment tests and the `TestEval_InterfaceMethodCall_AcrossControlFlow` test are now passing.
 
--   **Fixing `var` Scope**: Corrected `evalGenDecl` to use `env.SetLocal`, which fixed simple variable declarations but not the interface assignment issue.
--   **Unwrapping `ReturnValue`**: Ensured that values returned from functions were unwrapped, which fixed direct assignments from function calls but not the type tracking.
--   **Improving `updateVarOnAssignment`**: The latest fixes have focused on making this helper function smarter. It now explicitly checks if a variable is an interface and then attempts to deduce the concrete type of the value being assigned (handling pointers correctly) and records a string representation of that type in the `PossibleTypes` map.
+This was achieved by making the implicit logic explicit within a new `updateVarOnAssignment` helper function, which now correctly tracks concrete types (including pointers) assigned to interface variables.
 
-**Current Status:**
--   The `assign_stmt_test.go` tests, which cover basic assignment forms, are now passing.
--   `TestEval_InterfaceMethodCall_AcrossControlFlow` is also passing, indicating the refined `updateVarOnAssignment` logic is correctly tracking concrete pointer types.
--   However, `TestShallowScan_AssignIdentifier_WithUnresolvedInterface` still fails. This suggests that the current type-tracking logic, while improved, is not yet robust enough to handle cases where the concrete type being assigned is itself a symbolic placeholder from a shallow-scanned (unresolved) package.
+However, some regressions remain, notably `TestShallowScan_AssignIdentifier_WithUnresolvedInterface`. This indicates that the type-tracking logic, while improved, is not yet robust enough to handle cases where the concrete type being assigned is itself a symbolic placeholder from a shallow-scanned (unresolved) package.
 
-## 5. Conclusion & Next Steps
-
-The refactoring, while initially causing significant disruption, has successfully centralized the assignment logic and made the once-implicit requirements of the type system explicit. This has ultimately improved the maintainability and clarity of the code.
-
-The primary remaining task is to enhance `updateVarOnAssignment` to correctly handle assignments where the RHS is an unresolved type. This will likely involve improving how type information is extracted from `*object.SymbolicPlaceholder` objects, ensuring that even partially available type information is correctly tracked.
+The original goal of implementing type-narrowing for `if-ok` and `type-switch` has been postponed until this foundational assignment logic is fully stabilized. The exploratory refactoring, while disruptive, has been valuable in forcing a deeper understanding and a more explicit, robust implementation of `symgo`'s core type-tracking mechanism.

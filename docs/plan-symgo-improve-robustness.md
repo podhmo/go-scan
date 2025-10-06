@@ -345,6 +345,9 @@ Missing operators include: `|` (bitwise OR), `>` (comparison)
 
 ### Invalid Indirect
 
+> [!NOTE]
+> This feature has been implemented. The `symgo` evaluator now correctly initializes pointer fields in struct literals to `nil` and gracefully handles `nil` pointer dereferences in `evalStarExpr` by returning a symbolic placeholder instead of crashing. This allows analysis to continue, which is consistent with its design as a symbolic tracer.
+
 **Priority:** High
 
 **Description:** Dereferencing nil pointer

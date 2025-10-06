@@ -107,6 +107,15 @@ Modify the `symgo` evaluator to make the tests pass. The likely areas for modifi
 
 The core of the implementation will be ensuring that the `TypeInfo` stored on the symbolic variable is fully utilized during method and field resolution, successfully connecting the type-narrowed variable to its members.
 
+#### Refined Implementation Strategy: Two-Stage Member Lookup
+
+As per a more detailed analysis, simply narrowing the type is insufficient for symbolic analysis. The correct approach is a two-stage lookup for member access on variables that might have been type-asserted:
+
+1.  **Primary Lookup (Interface):** First, attempt to resolve the member (method or field) on the variable's static interface type. This is the standard path and covers cases where the method is part of the interface definition.
+2.  **Secondary Lookup (Concrete Type):** If the member is not found on the interface, the evaluator must then check if the variable's value is a `SymbolicPlaceholder` created by a type assertion (`if-ok` or `type-switch`). If so, it should use the concrete `TypeInfo` stored on that placeholder to attempt a second lookup.
+
+This ensures that the evaluator can trace calls to both interface methods and methods specific to the concrete type, which is the core goal of this feature. The implementation will focus on enhancing `evalSelectorExpr` and its helpers to perform this dual-lookup logic.
+
 **Handling Scan Policies:**
 The implementation must be robust with respect to `symgo`'s scan policy. The tests should cover the following scenarios:
 1.  **Intra-Policy Assertion:** The type assertion occurs in a package that is within the primary analysis scope, and the target type (`T`) is also defined within that scope. This is the baseline case where full source is available.

@@ -96,13 +96,12 @@ func TestTypeNarrowing_IfOkMethodCall(t *testing.T) {
 		t.Fatalf("scantest.Run() failed: %v", err)
 	}
 
+	if evalErr != nil {
+		t.Fatalf("evaluation failed unexpectedly: %v", evalErr)
+	}
+
 	expected := []string{"Alice"}
-	if diff := cmp.Diff(expected, inspectedValues); diff == "" {
-		t.Errorf("UNEXPECTED: test passed, but was expected to fail. The feature might already be implemented.")
-	} else {
-		t.Logf("SUCCESS (for now): test failed as expected. Inspected values mismatch:\n%s", diff)
-		if evalErr != nil {
-			t.Logf("SUCCESS (for now): evaluation failed with error, as expected: %v", evalErr)
-		}
+	if diff := cmp.Diff(expected, inspectedValues); diff != "" {
+		t.Errorf("mismatch in inspected values (-want +got):\n%s", diff)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -94,19 +96,93 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
 }
 
-func run(ctx context.Context, out io.Writer, logger *slog.Logger, pkgPatterns, withPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
+// isModuleMode checks if the current directory is within a Go module.
+func isModuleMode() bool {
+	cmd := exec.Command("go", "env", "GOMOD")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	gomodPath := strings.TrimSpace(string(output))
+	return gomodPath != "" && gomodPath != os.DevNull
+}
 
-	// 2. Scan packages using goscan.
-	s, err := goscan.New(
+// setupTempModule creates a temporary Go module and uses 'go mod tidy' to fetch dependencies.
+func setupTempModule(ctx context.Context, logger *slog.Logger, pkgPatterns, withPatterns []string) (string, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "goinspect-")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating temp dir: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(tmpDir) }
+
+	logger.Debug("created temporary module", "dir", tmpDir)
+
+	cmd := exec.CommandContext(ctx, "go", "mod", "init", "temp")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", cleanup, fmt.Errorf("failed to run 'go mod init' in temp dir %s: %w\n%s", tmpDir, err, string(output))
+	}
+
+	var depsToImport []string
+	allPatterns := append(pkgPatterns, withPatterns...)
+	for _, pattern := range allPatterns {
+		if strings.Contains(pattern, ".") && !strings.HasPrefix(pattern, "./") && !filepath.IsAbs(pattern) {
+			depsToImport = append(depsToImport, pattern)
+		}
+	}
+
+	if len(depsToImport) > 0 {
+		var b strings.Builder
+		b.WriteString("package main\n\nimport (\n")
+		for _, dep := range depsToImport {
+			fmt.Fprintf(&b, "\t_ %q\n", dep)
+		}
+		b.WriteString(")\n\nfunc main() {}\n")
+
+		dummyGoFile := filepath.Join(tmpDir, "dummy.go")
+		if err := os.WriteFile(dummyGoFile, []byte(b.String()), 0644); err != nil {
+			return "", cleanup, fmt.Errorf("creating dummy go file: %w", err)
+		}
+
+		logger.Debug("running 'go mod tidy' to resolve dependencies")
+		cmd = exec.CommandContext(ctx, "go", "mod", "tidy")
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return "", cleanup, fmt.Errorf("failed to run 'go mod tidy' in temp dir %s: %w\n%s", tmpDir, err, string(output))
+		}
+	}
+
+	return tmpDir, cleanup, nil
+}
+
+
+func run(ctx context.Context, out io.Writer, logger *slog.Logger, pkgPatterns, withPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
+	inModuleMode := isModuleMode()
+	logger.Info("running context", "module_mode", inModuleMode)
+
+	scannerOptions := []goscan.ScannerOption{
 		goscan.WithLogger(logger),
 		goscan.WithGoModuleResolver(),
-		// goscan.WithLoadMode(goscan.LoadModeNeedsAll), // TODO: find the correct option
-	)
+	}
+
+	var cleanup func()
+	if !inModuleMode {
+		tmpDir, c, err := setupTempModule(ctx, logger, pkgPatterns, withPatterns)
+		if err != nil {
+			return fmt.Errorf("failed to setup temporary module: %w", err)
+		}
+		cleanup = c
+		scannerOptions = append(scannerOptions, goscan.WithWorkDir(tmpDir))
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	s, err := goscan.New(scannerOptions...)
 	if err != nil {
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	// 2a. Scan all packages from both --pkg and --with patterns.
 	var allPatterns []string
 	allPatterns = append(allPatterns, pkgPatterns...)
 	allPatterns = append(allPatterns, withPatterns...)
@@ -115,7 +191,6 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, pkgPatterns, w
 	for _, pkgPattern := range allPatterns {
 		scannedPkgs, err := s.Scan(ctx, pkgPattern)
 		if err != nil {
-			// It's possible a pattern matches no packages, which isn't a fatal error.
 			if strings.Contains(err.Error(), "no packages found") {
 				logger.Debug("pattern matched no packages", "pattern", pkgPattern)
 				continue

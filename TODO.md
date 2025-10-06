@@ -99,6 +99,13 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
  
 ## To Be Implemented
 
+### `goinspect`: Standalone Execution
+- [ ] **Run without go.mod**: Allow `goinspect` to run from outside a Go module to inspect standard library and third-party packages.
+- [ ] **Context Detection**: Implement logic to detect whether `goinspect` is running in a module or no-module context.
+- [ ] **Standard Library Resolution**: Add support for finding and scanning standard library packages from `GOROOT`.
+- [ ] **Module Cache Resolution**: Add support for resolving and scanning third-party packages from the module cache by creating a temporary module.
+- [ ] **Integration Tests**: Add tests for running `goinspect` in a no-module context.
+
 ### `goinspect`: Fix Bugs and Enhancements
 - [x] **Fix `stdlib_errors` test failure**: The `TestGoInspect/stdlib_errors` test was failing intermittently due to a non-deterministic analysis order in `symgo`. The fix was to collect all functions from scanned packages, sort them deterministically, and then perform the analysis, ensuring a stable call-graph generation.
 - [x] **Add `--with` flag for dependency analysis**: Implemented a `--with` flag to include packages in the analysis scope without making them entry points, allowing users to trace calls into libraries.

@@ -179,6 +179,7 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 		structObj.SetTypeInfo(resolvedType)
 		structObj.SetFieldType(fieldType)
 
+		initializedFields := make(map[string]bool)
 		for _, elt := range node.Elts {
 			if kv, ok := elt.(*ast.KeyValueExpr); ok {
 				if key, ok := kv.Key.(*ast.Ident); ok {
@@ -187,9 +188,24 @@ func (e *Evaluator) evalCompositeLit(ctx context.Context, node *ast.CompositeLit
 						return val
 					}
 					structObj.Set(key.Name, val)
+					initializedFields[key.Name] = true
 				}
 			}
 			// TODO: Handle positional struct fields.
+		}
+
+		// Set zero values for uninitialized fields. This is crucial for correctly
+		// handling nil pointer fields.
+		if resolvedType.Struct != nil {
+			for _, fieldDef := range resolvedType.Struct.Fields {
+				if !initializedFields[fieldDef.Name] {
+					// For now, we only care about pointer types being nil.
+					// Other types will implicitly be symbolic placeholders when accessed.
+					if fieldDef.Type != nil && fieldDef.Type.IsPointer {
+						structObj.Set(fieldDef.Name, object.NIL)
+					}
+				}
+			}
 		}
 		// Return an Instance that wraps the Struct, for compatibility with method lookups.
 		instance := &object.Instance{

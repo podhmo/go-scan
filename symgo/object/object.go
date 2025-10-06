@@ -400,7 +400,6 @@ type Error struct {
 	Pos       token.Pos
 	CallStack []*CallFrame
 	fset      *token.FileSet // FileSet to resolve positions
-	Wrapped   Object       // For error wrapping (e.g., %w)
 }
 
 // Type returns the type of the Error object.
@@ -460,8 +459,6 @@ type SymbolicPlaceholder struct {
 	UnderlyingFunc *scanner.FunctionInfo
 	// The package context for the UnderlyingFunc.
 	Package *scanner.PackageInfo
-	// Generic field to hold an underlying object, used for error wrapping etc.
-	Underlying Object
 	// If the placeholder is for an interface method call, this holds the receiver.
 	Receiver Object
 	// For interface method calls, this holds the set of possible concrete field types

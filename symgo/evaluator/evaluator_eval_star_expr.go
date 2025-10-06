@@ -101,5 +101,11 @@ func (e *Evaluator) evalStarExpr(ctx context.Context, node *ast.StarExpr, env *o
 		return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("dereference of non-pointer symbolic value %s", val.Inspect())}
 	}
 
+	// A nil pointer dereference should not be a fatal error in a symbolic tracer.
+	// It's an invalid path, but we should be able to continue analyzing other paths.
+	if val == object.NIL {
+		return &object.SymbolicPlaceholder{Reason: "dereference of nil pointer"}
+	}
+
 	return e.newError(ctx, node.Pos(), "invalid indirect of %s (type %T)", val.Inspect(), val)
 }

@@ -12,67 +12,52 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-const typeSwitchMultiCaseSource = `
+const typeSwitchTracerSource = `
 package main
 
-// Mover is an interface implemented by different types.
 type Mover interface {
 	Move()
 }
 
-// Person is one concrete type.
 type Person struct {
 	Name string
 }
 func (p Person) Move() {}
 func (p Person) Greet() {
-	// This method is NOT on the Mover interface.
-	inspect("person:" + p.Name)
+	inspect("Person.Greet")
 }
 
-// Dog is another concrete type.
 type Dog struct {
 	Breed string
 }
 func (d Dog) Move() {}
 func (d Dog) Bark() {
-	// This method is also NOT on the Mover interface.
-	inspect("dog:" + d.Breed)
+	inspect("Dog.Bark")
 }
 
-
-// inspect is a special function that will be implemented as an intrinsic.
 func inspect(s string) {}
 
-func main() {
-	var i Mover
-
-	// First, test the Person case.
-	i = Person{Name: "Alice"}
+func process(i Mover) {
 	switch v := i.(type) {
 	case Person:
 		v.Greet()
 	case Dog:
-		v.Bark() // This branch should not be taken for a Person.
+		v.Bark()
 	case nil:
 		// do nothing
 	}
+}
 
-	// Second, test the Dog case.
-	i = Dog{Breed: "Retriever"}
-	switch v := i.(type) {
-	case Person:
-		v.Greet() // This branch should not be taken for a Dog.
-	case Dog:
-		v.Bark()
-	}
+func main() {
+	var p Mover
+	process(p)
 }
 `
 
-func TestTypeNarrowing_TypeSwitchMultiCase(t *testing.T) {
+func TestTypeNarrowing_TypeSwitchTracerBehavior(t *testing.T) {
 	files := map[string]string{
 		"go.mod":  "module example.com/main",
-		"main.go": typeSwitchMultiCaseSource,
+		"main.go": typeSwitchTracerSource,
 	}
 
 	dir, cleanup := scantest.WriteFiles(t, files)
@@ -128,10 +113,8 @@ func TestTypeNarrowing_TypeSwitchMultiCase(t *testing.T) {
 		t.Fatalf("evaluation failed unexpectedly: %v", evalErr)
 	}
 
-	// Since the evaluator is an interpreter, it will only execute the matching case.
-	// We expect to see one result from the Person switch, and one from the Dog switch.
 	sort.Strings(inspectedValues)
-	expected := []string{"dog:Retriever", "person:Alice"}
+	expected := []string{"Dog.Bark", "Person.Greet"}
 	if diff := cmp.Diff(expected, inspectedValues); diff != "" {
 		t.Errorf("mismatch in inspected values (-want +got):\n%s", diff)
 	}

@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"log/slog"
 
@@ -75,18 +76,22 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 
 			if varName != "" {
 				if caseClause.List == nil { // default case
-					clonedObj := originalObj.Clone()
+					// For the default case, the variable `v` takes the value of the original object `i`.
+					// It is a clone to prevent side effects in other branches.
+					val := originalObj.Clone()
 					v := &object.Variable{
 						Name:        varName,
-						Value:       clonedObj,
+						Value:       val,
 						IsEvaluated: true,
 						BaseObject: object.BaseObject{
-							ResolvedTypeInfo:  clonedObj.TypeInfo(),
-							ResolvedFieldType: clonedObj.FieldType(),
+							ResolvedTypeInfo:  val.TypeInfo(),
+							ResolvedFieldType: val.FieldType(),
 						},
 					}
 					caseEnv.Set(varName, v)
 				} else {
+					// For a typed case `case T:`, we create a new symbolic instance of `T`.
+					// This allows the tracer to explore this path hypothetically.
 					typeExpr := caseClause.List[0]
 					fieldType := e.scanner.TypeInfoFromExpr(ctx, typeExpr, nil, pkg, importLookup)
 					if fieldType == nil {
@@ -101,17 +106,32 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					if !fieldType.IsBuiltin {
 						resolvedType = e.resolver.ResolveType(ctx, fieldType)
 						if resolvedType != nil && resolvedType.Kind == scan.UnknownKind {
+							// This can happen for interface types that are not fully resolved,
+							// especially in shallow scan mode. Treat it as an interface to allow analysis to proceed.
 							resolvedType.Kind = scan.InterfaceKind
 						}
 					}
 
-					clonedObj := originalObj.Clone()
-					clonedObj.SetFieldType(fieldType)
-					clonedObj.SetTypeInfo(resolvedType)
+					var val object.Object
+					if resolvedType != nil && resolvedType.Kind == scan.StructKind {
+						val = &object.Instance{
+							TypeName: resolvedType.Name,
+							State:    make(map[string]object.Object),
+							BaseObject: object.BaseObject{
+								ResolvedTypeInfo:  resolvedType,
+								ResolvedFieldType: fieldType,
+							},
+						}
+					} else {
+						val = &object.SymbolicPlaceholder{
+							Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
+							BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
+						}
+					}
 
 					v := &object.Variable{
 						Name:        varName,
-						Value:       clonedObj,
+						Value:       val,
 						IsEvaluated: true,
 						BaseObject: object.BaseObject{
 							ResolvedTypeInfo:  resolvedType,

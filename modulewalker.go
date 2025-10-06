@@ -26,6 +26,7 @@ type Config struct {
 	scanner             *scanner.Scanner // low-level scanner
 	fset                *token.FileSet
 	useGoModuleResolver bool
+	FallbackResolve     bool // Added for fallback resolution
 	IncludeTests        bool
 	DryRun              bool
 	Inspect             bool

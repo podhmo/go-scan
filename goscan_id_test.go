@@ -25,7 +25,7 @@ func TestPackageID_SimpleModule(t *testing.T) {
 	tmpdir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	s, err := goscan.New(goscan.WithWorkDir(tmpdir), goscan.WithGoModuleResolver())
+	s, err := goscan.New(goscan.WithWorkDir(tmpdir), goscan.WithGoModuleResolver(false))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestPackageID_Workspace(t *testing.T) {
 
 	scannerOptions := []goscan.ScannerOption{
 		goscan.WithWorkDir(tmpdir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 		goscan.WithModuleDirs([]string{
 			filepath.Join(tmpdir, "app1"),
 			filepath.Join(tmpdir, "app2"),
@@ -161,7 +161,7 @@ replace example.com/util => ` + utilModuleDir + `
 
 	s, err := goscan.New(
 		goscan.WithWorkDir(mainModuleDir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 		goscan.WithOverlay(overlay),
 	)
 	if err != nil {

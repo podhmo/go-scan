@@ -22,7 +22,7 @@ func TestScan_Wildcard(t *testing.T) {
 	dir, cleanup := scantest.WriteFiles(t, files)
 	defer cleanup()
 
-	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver())
+	s, err := goscan.New(goscan.WithWorkDir(dir), goscan.WithGoModuleResolver(false))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}

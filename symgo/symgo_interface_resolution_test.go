@@ -71,7 +71,7 @@ func TestInterfaceResolution(t *testing.T) {
 		t.Run(strings.Join(p, ">"), func(t *testing.T) {
 			s, err := goscan.New(
 				goscan.WithWorkDir(dir),
-				goscan.WithGoModuleResolver(),
+				goscan.WithGoModuleResolver(false),
 			)
 			if err != nil {
 				t.Fatalf("failed to create scanner: %v", err)
@@ -200,7 +200,7 @@ func TestInterfaceResolutionWithPointerReceiver(t *testing.T) {
 		t.Run(strings.Join(p, ">"), func(t *testing.T) {
 			s, err := goscan.New(
 				goscan.WithWorkDir(dir),
-				goscan.WithGoModuleResolver(),
+				goscan.WithGoModuleResolver(false),
 			)
 			if err != nil {
 				t.Fatalf("failed to create scanner: %v", err)
@@ -330,7 +330,7 @@ func TestInterfaceResolutionWithValueReceiver(t *testing.T) {
 		t.Run(strings.Join(p, ">"), func(t *testing.T) {
 			s, err := goscan.New(
 				goscan.WithWorkDir(dir),
-				goscan.WithGoModuleResolver(),
+				goscan.WithGoModuleResolver(false),
 			)
 			if err != nil {
 				t.Fatalf("failed to create scanner: %v", err)
@@ -462,7 +462,7 @@ func TestInterfaceResolutionWithEmbeddedInterfaces(t *testing.T) {
 
 	s, err := goscan.New(
 		goscan.WithWorkDir(dir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)

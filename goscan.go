@@ -341,9 +341,12 @@ func WithIncludeTests(include bool) ScannerOption {
 }
 
 // WithGoModuleResolver enables the scanner to find packages in the Go module cache and GOROOT.
-func WithGoModuleResolver() ScannerOption {
+// If fallback is true, it will attempt to resolve packages from GOROOT/GOMODCACHE
+// even if a go.mod exists but does not list the package as a dependency.
+func WithGoModuleResolver(fallback bool) ScannerOption {
 	return func(s *Scanner) error {
 		s.useGoModuleResolver = true
+		s.FallbackResolve = fallback
 		return nil
 	}
 }
@@ -427,6 +430,9 @@ func New(options ...ScannerOption) (*Scanner, error) {
 	locatorOpts := []locator.Option{locator.WithOverlay(s.overlay)}
 	if s.useGoModuleResolver {
 		locatorOpts = append(locatorOpts, locator.WithGoModuleResolver())
+	}
+	if s.FallbackResolve {
+		locatorOpts = append(locatorOpts, locator.WithFallbackResolve(s.FallbackResolve))
 	}
 
 	if s.isWorkspace {

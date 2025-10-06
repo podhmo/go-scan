@@ -71,7 +71,7 @@ func runLogic(t *testing.T, tc TestCase) *Result {
 
 	scanner, err := goscan.New(
 		goscan.WithWorkDir(workDir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		return &Result{Error: &object.Error{Message: fmt.Sprintf("failed to create scanner: %v", err)}}

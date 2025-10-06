@@ -9,7 +9,7 @@ import (
 
 func newTestInterpreter(t *testing.T, opts ...minigo.Option) *minigo.Interpreter {
 	t.Helper()
-	s, err := goscan.New(goscan.WithGoModuleResolver())
+	s, err := goscan.New(goscan.WithGoModuleResolver(false))
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
 	}

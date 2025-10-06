@@ -140,7 +140,7 @@ func Run(t *testing.T, ctx context.Context, dir string, patterns []string, actio
 
 		options := []scan.ScannerOption{
 			scan.WithWorkDir(workDir),
-			scan.WithGoModuleResolver(), // Automatically enable module resolution.
+			scan.WithGoModuleResolver(false), // Automatically enable module resolution.
 		}
 		if overlay != nil {
 			options = append(options, scan.WithOverlay(overlay))

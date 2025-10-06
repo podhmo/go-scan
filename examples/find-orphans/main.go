@@ -222,7 +222,7 @@ func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace
 	// Now create the main scanner
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
-	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver(false))
 	scannerOpts = append(scannerOpts, goscan.WithLogger(logger))
 
 	if workspace != "" {

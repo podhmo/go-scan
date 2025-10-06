@@ -33,7 +33,7 @@ func DoSomething() {}
 
 	scanner, err := goscan.New(
 		goscan.WithWorkDir(tmpdir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		t.Fatalf("New scanner failed: %v", err)

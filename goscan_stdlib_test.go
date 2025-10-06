@@ -13,7 +13,7 @@ func TestScanStdlib_SucceedsWithoutOverride(t *testing.T) {
 	// injected by the `go test` environment.
 	ctx := context.Background()
 
-	s, err := New(WithGoModuleResolver())
+	s, err := New(WithGoModuleResolver(false))
 	if err != nil {
 		t.Fatalf("New() failed: %+v", err)
 	}

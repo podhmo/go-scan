@@ -1,0 +1,20 @@
+func github.com/google/go-cmp/cmp.Diff(...) #1
+  func (*defaultReporter).String(...) #2
+    func github.com/google/go-cmp/cmp.assert(...) #3
+    func (formatOptions).FormatDiff(...) #4
+      func (formatOptions).WithVerbosity(...) #5
+      func (formatOptions).verbosity(...) #6
+      func (formatOptions).CanFormatDiffSlice(...) #7
+      func (formatOptions).FormatDiffSlice(...) #8
+        func .Kind(...) #9
+        func github.com/google/go-cmp/cmp.assert(...) #3
+        func (formatOptions).WithTypeMode(...) #10
+  func github.com/google/go-cmp/cmp.rootStep(...) #11
+  func github.com/google/go-cmp/cmp.newState(...) #12
+    func (*pointerPath).Init(...) #13
+    func (*state).processOption(...) #14
+      func .isFiltered(...) #9
+      [recursive] func (*state).processOption(...) #14
+  func (*state).compareAny(...) #15
+    func (*Path).push(...) #16
+    func (*Path).pop(...) #17

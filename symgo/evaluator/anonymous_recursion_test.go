@@ -38,7 +38,7 @@ func main() {
 	// 3. Setup the scanner, providing the temp dir as the WorkDir
 	s, err := goscan.New(
 		goscan.WithWorkDir(dir), // Set the working directory for path resolution
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		t.Fatalf("goscan.New failed: %+v", err)

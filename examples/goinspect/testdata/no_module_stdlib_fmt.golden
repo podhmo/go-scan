@@ -1,0 +1,95 @@
+func fmt.Println(...) #1
+  func fmt.Fprintln(...) #2
+    func .Write(...) #3
+    func fmt.newPrinter(...) #4
+      func (*fmt).init(...) #5
+        func (*fmt).clearflags(...) #6
+    func (*pp).free(...) #7
+    func (*pp).doPrintln(...) #8
+      func (*buffer).writeByte(...) #9
+      func (*pp).printArg(...) #10
+        func (*fmt).padString(...) #11
+          func (*fmt).writePadding(...) #12
+          func (*buffer).writeString(...) #13
+        func (*fmt).fmtS(...) #14
+          func (*fmt).padString(...) #11
+          func (*fmt).truncateString(...) #15
+        func (*pp).badVerb(...) #16
+          func (*buffer).writeString(...) #13
+          func (*buffer).writeByte(...) #9
+          func (*buffer).writeRune(...) #17
+          [recursive] func (*pp).printArg(...) #10
+          func (*pp).printValue(...) #18
+            func (*buffer).writeString(...) #13
+            func (*buffer).writeByte(...) #9
+            func fmt.getField(...) #19
+            func (*pp).unknownType(...) #20
+              func (*buffer).writeString(...) #13
+              func (*buffer).writeByte(...) #9
+            [recursive] func (*pp).badVerb(...) #16
+            func (*pp).fmtBool(...) #21
+              func (*fmt).fmtBoolean(...) #22
+                func (*fmt).padString(...) #11
+              [recursive] func (*pp).badVerb(...) #16
+            func (*pp).fmtInteger(...) #23
+              func (*fmt).fmtUnicode(...) #24
+                func (*fmt).pad(...) #25
+                  func (*fmt).writePadding(...) #12
+                  func (*buffer).write(...) #26
+              func (*fmt).fmtInteger(...) #27
+                func (*fmt).writePadding(...) #12
+                func (*fmt).pad(...) #25
+              func (*fmt).fmtC(...) #28
+                func (*fmt).pad(...) #25
+              func (*fmt).fmtQc(...) #29
+                func (*fmt).pad(...) #25
+              [recursive] func (*pp).badVerb(...) #16
+              func (*pp).fmt0x64(...) #30
+                func (*fmt).fmtInteger(...) #27
+            func (*pp).fmtFloat(...) #31
+              func (*fmt).fmtFloat(...) #32
+                func (*fmt).writePadding(...) #12
+                func (*fmt).pad(...) #25
+                func (*buffer).write(...) #26
+                func (*buffer).writeByte(...) #9
+              [recursive] func (*pp).badVerb(...) #16
+            func (*pp).fmtComplex(...) #33
+              func (*buffer).writeString(...) #13
+              func (*buffer).writeByte(...) #9
+              [recursive] func (*pp).badVerb(...) #16
+              func (*pp).fmtFloat(...) #31
+            func (*pp).fmtString(...) #34
+              func (*fmt).fmtS(...) #14
+              func (*fmt).fmtSx(...) #35
+                func (*fmt).fmtSbx(...) #36
+                  func (*fmt).writePadding(...) #12
+              func (*fmt).fmtQ(...) #37
+                func (*fmt).pad(...) #25
+                func (*fmt).padString(...) #11
+                func (*fmt).truncateString(...) #15
+              [recursive] func (*pp).badVerb(...) #16
+            func (*pp).fmtBytes(...) #38
+              func (*fmt).fmtInteger(...) #27
+              func (*fmt).fmtBs(...) #39
+                func (*fmt).pad(...) #25
+                func (*fmt).truncate(...) #40
+              func (*fmt).fmtBx(...) #41
+                func (*fmt).fmtSbx(...) #36
+              func (*fmt).fmtQ(...) #37
+              func (*buffer).writeString(...) #13
+              func (*buffer).writeByte(...) #9
+              func (*pp).fmt0x64(...) #30
+              [recursive] func (*pp).printValue(...) #18
+            func (*pp).fmtPointer(...) #42
+              [recursive] func (*pp).badVerb(...) #16
+            func (*pp).handleMethods(...) #43
+              func .String(...) #3
+              [recursive] func (*pp).badVerb(...) #16
+              func (*pp).fmtString(...) #34
+              func (*pp).catchPanic(...) #44
+                func (*fmt).clearflags(...) #6
+                func (*buffer).writeString(...) #13
+                func (*buffer).writeByte(...) #9
+                func (*buffer).writeRune(...) #17
+                [recursive] func (*pp).printArg(...) #10
+            [recursive] func (*pp).printValue(...) #18

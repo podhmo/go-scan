@@ -102,7 +102,7 @@ func run(ctx context.Context, startPkgs []string, hops int, ignore string, hide 
 
 	var scannerOpts []goscan.ScannerOption
 	if full {
-		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+		scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver(true))
 	}
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(test))
 	scannerOpts = append(scannerOpts, goscan.WithDryRun(dryRun))

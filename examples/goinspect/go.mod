@@ -4,7 +4,10 @@ go 1.24.2
 
 toolchain go1.24.3
 
-require github.com/podhmo/go-scan v0.0.2
+require (
+	github.com/google/go-cmp v0.7.0
+	github.com/podhmo/go-scan v0.0.2
+)
 
 require (
 	golang.org/x/mod v0.27.0 // indirect

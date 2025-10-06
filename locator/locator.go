@@ -9,10 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/podhmo/go-scan/scanner"
 	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 // ReplaceDirective represents a single replace directive in a go.mod file.
@@ -33,6 +35,7 @@ type Locator struct {
 
 	// Options for advanced resolution
 	UseGoModuleResolver bool
+	FallbackResolve     bool
 	goRoot              string
 	goModCache          string
 	requires            map[string]string // module path -> version
@@ -57,6 +60,13 @@ func WithOverlay(overlay scanner.Overlay) Option {
 func WithGoModuleResolver() Option {
 	return func(l *Locator) {
 		l.UseGoModuleResolver = true
+	}
+}
+
+// WithFallbackResolve sets the fallback resolve option.
+func WithFallbackResolve(fallback bool) Option {
+	return func(l *Locator) {
+		l.FallbackResolve = fallback
 	}
 }
 
@@ -177,13 +187,6 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 				if remainingPath != "" {
 					newImportPath = r.NewPath + "/" + remainingPath
 				}
-				// If the replaced path points to a different module, this simple locator cannot find it
-				// unless that different module's path is passed to a *new* Locator instance for that module.
-				// For the current request, we can't resolve it if it's truly external.
-				// We will let it fall through, and it will likely fail unless another rule matches,
-				// or the original importPath itself matches the current module (which it wouldn't if a replace rule was hit).
-				// This implies that module-to-module replaces that point to *other* modules are not fully supported by this iteration.
-				// Let's try to resolve it within the current module context.
 				if l.modulePath != "" && strings.HasPrefix(newImportPath, l.modulePath) {
 					relPath := strings.TrimPrefix(newImportPath, l.modulePath)
 					candidatePath := filepath.Join(l.rootDir, relPath)
@@ -216,21 +219,71 @@ func (l *Locator) FindPackageDir(importPath string) (string, error) {
 
 		// Try external modules in GOMODCACHE
 		if l.goModCache != "" {
-			for mod, ver := range l.requires {
-				if strings.HasPrefix(importPath, mod) {
-					// Path in cache is ${GOMODCACHE}/${module}@${version}/${subpath}
-					// Module paths with uppercase letters are encoded.
-					escapedMod, err := module.EscapePath(mod)
-					if err != nil {
-						// Should not happen for valid module paths
+			// First, try resolving using the 'require' directives from go.mod if available.
+			if len(l.requires) > 0 {
+				mods := make([]string, 0, len(l.requires))
+				for mod := range l.requires {
+					mods = append(mods, mod)
+				}
+				sort.Slice(mods, func(i, j int) bool {
+					return len(mods[i]) > len(mods[j])
+				})
+
+				for _, mod := range mods {
+					if strings.HasPrefix(importPath, mod) {
+						ver := l.requires[mod]
+						escapedMod, err := module.EscapePath(mod)
+						if err != nil {
+							continue
+						}
+						baseDir := filepath.Join(l.goModCache, escapedMod+"@"+ver)
+						remainingPath := strings.TrimPrefix(importPath, mod)
+						candidatePath := filepath.Join(baseDir, remainingPath)
+
+						if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
+							return candidatePath, nil
+						}
+					}
+				}
+			}
+
+			// If not found via 'require' (e.g., running outside a module, or with fallback enabled),
+			// scan the filesystem for the latest version.
+			if l.modulePath == "" || l.FallbackResolve {
+				parts := strings.Split(importPath, "/")
+				for i := len(parts); i > 0; i-- {
+					moduleCandidate := strings.Join(parts[:i], "/")
+					if moduleCandidate == "" {
 						continue
 					}
-					baseDir := filepath.Join(l.goModCache, escapedMod+"@"+ver)
-					remainingPath := strings.TrimPrefix(importPath, mod)
-					candidatePath := filepath.Join(baseDir, remainingPath)
 
-					if stat, err := os.Stat(candidatePath); err == nil && stat.IsDir() {
-						return candidatePath, nil
+					escapedMod, err := module.EscapePath(moduleCandidate)
+					if err != nil {
+						continue
+					}
+
+					pattern := filepath.Join(l.goModCache, escapedMod+"@*")
+					versionDirs, _ := filepath.Glob(pattern)
+
+					if len(versionDirs) > 0 {
+						var latestVersion string
+						for _, dir := range versionDirs {
+							versionStr := strings.TrimPrefix(filepath.Base(dir), escapedMod+"@")
+							if semver.IsValid(versionStr) {
+								if latestVersion == "" || semver.Compare(versionStr, latestVersion) > 0 {
+									latestVersion = versionStr
+								}
+							}
+						}
+
+						if latestVersion != "" {
+							baseDir := filepath.Join(l.goModCache, escapedMod+"@"+latestVersion)
+							subPath := strings.TrimPrefix(importPath, moduleCandidate)
+							finalPath := filepath.Join(baseDir, subPath)
+							if stat, err := os.Stat(finalPath); err == nil && stat.IsDir() {
+								return finalPath, nil // Found the package
+							}
+						}
 					}
 				}
 			}

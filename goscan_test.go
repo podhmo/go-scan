@@ -346,7 +346,7 @@ func TestScanner_WithSymbolCache(t *testing.T) {
 
 func TestListExportedSymbols(t *testing.T) {
 	ctx := context.Background()
-	s, err := New(WithGoModuleResolver())
+	s, err := New(WithGoModuleResolver(false))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}

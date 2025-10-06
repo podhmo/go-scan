@@ -63,7 +63,7 @@ func main() {
 	// Setup scanner
 	s, err := goscan.New(
 		goscan.WithWorkDir(dir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)
@@ -215,7 +215,7 @@ func main() {
 	// Setup scanner
 	s, err := goscan.New(
 		goscan.WithWorkDir(dir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		t.Fatalf("failed to create scanner: %v", err)

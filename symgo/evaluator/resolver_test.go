@@ -54,7 +54,7 @@ type Price struct {
 	// Create a new scanner configured to work in the temp directory.
 	s, err := goscan.New(
 		goscan.WithWorkDir(dir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		t.Fatalf("goscan.New() failed: %v", err)
@@ -162,7 +162,7 @@ type Request struct {
 
 	s, err := goscan.New(
 		goscan.WithWorkDir(dir),
-		goscan.WithGoModuleResolver(),
+		goscan.WithGoModuleResolver(false),
 	)
 	if err != nil {
 		t.Fatalf("goscan.New() failed: %v", err)

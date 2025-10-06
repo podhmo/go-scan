@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
@@ -67,7 +68,23 @@ func init() {
 		"float32", "float64", "complex64", "complex128",
 		"bool", "byte", "rune", "error",
 	} {
-		objects[name] = &object.Type{TypeName: name}
+		// For built-in types, we create a complete TypeInfo object.
+		// This is crucial for the resolver and for generic type instantiation.
+		typeInfo := &scanner.TypeInfo{
+			Name: name,
+		}
+		if name == "error" || name == "any" {
+			typeInfo.Kind = scanner.InterfaceKind
+		} else {
+			// There is no specific "BasicKind". Using UnknownKind for built-in
+			// primitive types is sufficient for the evaluator's purposes.
+			typeInfo.Kind = scanner.UnknownKind
+		}
+
+		objects[name] = &object.Type{
+			TypeName:     name,
+			ResolvedType: typeInfo,
+		}
 	}
 
 	universe = &universeScope{

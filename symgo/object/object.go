@@ -1021,6 +1021,8 @@ type InstantiatedFunction struct {
 	*Function
 	TypeArguments []ast.Expr
 	TypeArgs      []*scanner.TypeInfo // Resolved type arguments
+	// TypeParamMap maps type parameter names to their concrete types.
+	TypeParamMap map[string]*scanner.TypeInfo
 }
 
 // Type returns the type of the InstantiatedFunction object.
@@ -1049,6 +1051,13 @@ func (f *InstantiatedFunction) Clone() Object {
 	// Also clone the embedded Function to ensure the receiver isn't shared.
 	if f.Function != nil {
 		c.Function = f.Function.Clone().(*Function)
+	}
+	// Copy the map.
+	if f.TypeParamMap != nil {
+		c.TypeParamMap = make(map[string]*scanner.TypeInfo, len(f.TypeParamMap))
+		for k, v := range f.TypeParamMap {
+			c.TypeParamMap[k] = v // TypeInfo is a pointer, so this is a shallow copy.
+		}
 	}
 	return &c
 }

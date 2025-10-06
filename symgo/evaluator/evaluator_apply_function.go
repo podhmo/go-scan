@@ -149,40 +149,46 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		// The placeholder is now the function, so we recursively call applyFunction with it.
 		return e.applyFunction(ctx, placeholder, args, pkg, callPos)
 	case *object.InstantiatedFunction:
-		// This is the new logic for handling calls to generic functions.
-		extendedEnv := object.NewEnclosedEnvironment(fn.Function.Env)
+		// When applying an instantiated generic function, we need to create a new
+		// environment for the call. This environment must:
+		// 1. Be enclosed by the environment where the generic function was defined (fn.Function.Env).
+		// 2. Contain the bindings for the type parameters (e.g., T -> int).
+		// 3. Contain the bindings for the regular function arguments.
 
-		// Bind type parameters to their concrete types in the new environment.
-		if fn.Function.Def != nil && len(fn.Function.Def.TypeParams) == len(fn.TypeArgs) {
-			for i, typeParam := range fn.Function.Def.TypeParams {
-				typeArgInfo := fn.TypeArgs[i]
-				if typeArgInfo != nil {
+		// Create a new environment for the call, enclosing the function's definition environment.
+		callEnv := object.NewEnclosedEnvironment(fn.Function.Env)
+
+		// Bind type parameters to their concrete types in this new call environment.
+		if fn.TypeParamMap != nil {
+			for name, typeInfo := range fn.TypeParamMap {
+				if typeInfo != nil {
 					typeObj := &object.Type{
-						TypeName:     typeArgInfo.Name,
-						ResolvedType: typeArgInfo,
+						TypeName:     typeInfo.Name,
+						ResolvedType: typeInfo,
 					}
-					typeObj.SetTypeInfo(typeArgInfo)
-					extendedEnv.SetLocal(typeParam.Name, typeObj)
+					typeObj.SetTypeInfo(typeInfo)
+					callEnv.SetLocal(name, typeObj)
 				}
 			}
 		}
 
-		// Now, extend the environment with the regular function arguments, using the
-		// new environment that contains the type parameter bindings.
-		finalEnv, err := e.extendFunctionEnv(ctx, fn.Function, args, extendedEnv)
+		// Now, extend this environment with the regular function arguments.
+		// We pass `callEnv` as the base environment to `extendFunctionEnv`.
+		finalEnv, err := e.extendFunctionEnv(ctx, fn.Function, args, callEnv)
 		if err != nil {
-			return e.newError(ctx, fn.Decl.Pos(), "failed to extend generic function env: %v", err)
+			return e.newError(ctx, fn.Function.Decl.Pos(), "failed to extend generic function env: %v", err)
 		}
 
+		// Evaluate the function body within the fully prepared environment.
 		evaluated := e.Eval(ctx, fn.Function.Body, finalEnv, fn.Function.Package)
+
 		if ret, ok := evaluated.(*object.ReturnValue); ok {
-			return ret
+			return ret.Value
 		}
-		// if the function has a naked return, evaluated will be nil.
 		if evaluated == nil {
-			evaluated = object.NIL
+			return object.NIL
 		}
-		return &object.ReturnValue{Value: evaluated}
+		return evaluated
 
 	case *object.Function:
 		// If the function has no body, it's a declaration (e.g., in an interface, or an external function).

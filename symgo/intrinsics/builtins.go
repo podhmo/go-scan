@@ -194,13 +194,23 @@ func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 	typeArg := args[0]
 	var pointee object.Object
 
+	// The argument to `new` can be a concrete type from the universe (`int`),
+	// a type parameter from the environment (`T`), or an unresolved type.
+	// Both `int` and `T` should resolve to an `*object.Type`.
 	switch t := typeArg.(type) {
 	case *object.Type:
-		// For a resolved type, create a symbolic instance of it.
-		instance := &object.Instance{
-			TypeName: t.TypeName,
+		// This is the ideal case. The argument was resolved to a type object.
+		// This handles both built-in types like `int` and type parameters like `T`
+		// that have been correctly bound in the environment.
+		instance := &object.Instance{}
+		// The most reliable type information comes from ResolvedType.
+		if t.ResolvedType != nil {
+			instance.SetTypeInfo(t.ResolvedType)
+			instance.TypeName = t.ResolvedType.Name
+		} else {
+			// Fallback for built-in types that might not have a full TypeInfo.
+			instance.TypeName = t.TypeName
 		}
-		instance.SetTypeInfo(t.ResolvedType)
 		pointee = instance
 
 	case *object.UnresolvedType:
@@ -221,8 +231,16 @@ func BuiltinNew(ctx context.Context, args ...object.Object) object.Object {
 
 	default:
 		// Fallback for other types, like a symbolic placeholder representing a type.
-		if _, ok := typeArg.(*object.SymbolicPlaceholder); ok {
-			// If `new` is called on a placeholder, return a pointer to another placeholder.
+		// This can happen if the type is complex and couldn't be fully resolved.
+		if sp, ok := typeArg.(*object.SymbolicPlaceholder); ok {
+			// If `new` is called on a placeholder that has type info, use it.
+			if typeInfo := sp.TypeInfo(); typeInfo != nil {
+				instance := &object.Instance{}
+				instance.SetTypeInfo(typeInfo)
+				instance.TypeName = typeInfo.Name
+				return &object.Pointer{Value: instance}
+			}
+			// Otherwise, return a pointer to another placeholder.
 			return &object.Pointer{Value: &object.SymbolicPlaceholder{Reason: "pointer to " + typeArg.Inspect()}}
 		}
 		return &object.Error{Message: fmt.Sprintf("invalid argument for new: expected a type, got %s", typeArg.Type())}

@@ -40,9 +40,21 @@ func (e *Evaluator) evalUnaryExpr(ctx context.Context, node *ast.UnaryExpr, env 
 	case token.SUB, token.ADD, token.XOR:
 		return e.evalNumericUnaryExpression(ctx, node.Op, right)
 	case token.AND:
-		// This is the address-of operator, not a typical unary op on a value.
-		// It needs to be handled specially as it operates on identifiers/expressions, not resolved objects.
-		// Re-evaluating node.X might be redundant but safer.
+		// This is the address-of operator.
+		// We have special logic for taking the address of a simple variable identifier (e.g. `&myVar`).
+		// In this case, we want a pointer to the *variable object* itself, so it can be modified
+		// by functions like `errors.As`.
+		if ident, ok := node.X.(*ast.Ident); ok {
+			if obj, ok := env.Get(ident.Name); ok {
+				if _, isVar := obj.(*object.Variable); isVar {
+					// We found the variable in the environment. Return a pointer to it.
+					return &object.Pointer{Value: obj}
+				}
+			}
+		}
+
+		// For all other expressions (e.g. `&myStruct.field` or `&mySlice[i]`),
+		// we fall back to the original behavior: evaluate the expression and return a pointer to its value.
 		val := e.Eval(ctx, node.X, env, pkg)
 		if isError(val) {
 			return val

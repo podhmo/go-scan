@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	scan "github.com/podhmo/go-scan/scanner"
+	"github.com/podhmo/go-scan/symgo/intrinsics"
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
@@ -69,6 +70,30 @@ func (e *Evaluator) evalCallExpr(ctx context.Context, n *ast.CallExpr, env *obje
 		if fn, ok := arg.(*object.Function); ok {
 			e.scanFunctionLiteral(ctx, fn)
 		}
+	}
+
+	// Check for special standard library functions that we want to handle with intrinsics.
+	var fqn string
+	switch fn := function.(type) {
+	case *object.Function:
+		if fn.Package != nil && fn.Name != nil {
+			// This handles functions resolved from source.
+			fqn = fn.Package.ImportPath + "." + fn.Name.Name
+		}
+	case *object.UnresolvedFunction:
+		// This handles functions from packages that are not fully scanned.
+		fqn = fn.PkgPath + "." + fn.FuncName
+	}
+
+	switch fqn {
+	case "errors.New":
+		return intrinsics.StdlibErrorsNew(ctx, args...)
+	case "errors.Is":
+		return intrinsics.StdlibErrorsIs(ctx, args...)
+	case "errors.As":
+		return intrinsics.StdlibErrorsAs(ctx, args...)
+	case "fmt.Errorf":
+		return intrinsics.StdlibFmtErrorf(ctx, args...)
 	}
 
 	if e.defaultIntrinsic != nil {

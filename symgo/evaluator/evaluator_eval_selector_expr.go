@@ -438,14 +438,33 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 
 		return e.newError(ctx, n.Pos(), "undefined method or field: %s on %s", n.Sel.Name, val.TypeName)
 	case *object.Pointer:
-		// When we have a selector on a pointer, we look for the method on the
-		// type of the object the pointer points to.
+		// When we have a selector on a pointer, we must find the underlying
+		// value. This requires recursively unwrapping pointers and variables.
 		pointee := val.Value
-
-		// NEW: Unwrap ReturnValue if present. This handles method calls on pointers
-		// returned directly from functions, e.g., `getPtr().Method()`.
-		if ret, ok := pointee.(*object.ReturnValue); ok {
-			pointee = ret.Value
+		for {
+			if p, ok := pointee.(*object.Pointer); ok {
+				pointee = p.Value
+				continue
+			}
+			if v, ok := pointee.(*object.Variable); ok {
+				evaluated := e.forceEval(ctx, v, pkg)
+				if isError(evaluated) {
+					return evaluated
+				}
+				if v2, ok2 := evaluated.(*object.Variable); ok2 {
+					// if forceEval returns a variable, it's evaluated. get its value.
+					pointee = v2.Value
+				} else {
+					// forceEval returned the value directly
+					pointee = evaluated
+				}
+				continue
+			}
+			if r, ok := pointee.(*object.ReturnValue); ok {
+				pointee = r.Value
+				continue
+			}
+			break
 		}
 
 		// Generalize pointer method lookup. The pointee can be an Instance, a Map, etc.

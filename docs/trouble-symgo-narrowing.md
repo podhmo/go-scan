@@ -4,10 +4,29 @@ This document details the ongoing investigation into a complex issue within the 
 
 ## 1. The Goal: Implement `AssignStmt`
 
-The initial task was to implement `ast.AssignStmt` evaluation in `symgo/evaluator/evaluator.go`. This is a critical feature for almost any non-trivial analysis, as assignments are fundamental to program state. The implementation needed to handle:
--   Simple assignment (`x = y`)
--   Short variable declaration (`x := y`)
--   Multi-value assignment (`x, y = f()`)
+The initial task was to implement evaluation for `ast.AssignStmt` to make basic assignment patterns work within the `symgo` engine. This was driven by failures in newly created integration tests, such as `TestEvalAssignStmt_Simple`:
+
+```go
+// From symgo/integration_test/assign_stmt_test.go
+func TestEvalAssignStmt_Simple(t *testing.T) {
+	source := `
+package main
+func main() int {
+	var x int
+	x = 10
+	return x
+}
+`
+// ... test logic asserts that the return value is 10 ...
+}
+```
+
+This simple case, along with short variable declarations (`x := 10`) and tuple assignments (`x, y = f()`), were failing. The initial investigation revealed two primary issues:
+
+1.  **Variable Declaration (`var`) Scope**: The `evalGenDecl` function, which handles `var x int`, was not correctly registering `x` in the current scope. It was using `env.Set` instead of `env.SetLocal`, which could cause it to incorrectly update a variable in an outer scope instead of declaring a new one.
+2.  **Assignment (`=`, `:=`) Logic**: A handler for `ast.AssignStmt` was completely missing from the evaluator's main `Eval` switch statement.
+
+The goal was therefore to implement `evalAssignStmt` and fix the related scoping issues to make these fundamental test cases pass, establishing a baseline for assignment functionality.
 
 ## 2. The Implementation Journey: A Series of Unforeseen Complexities
 
@@ -17,23 +36,21 @@ The path to implementing this seemingly simple statement revealed deep-seated co
 
 The first attempt to write a test for the new `evalAssignStmt` function immediately failed at compile time.
 -   **Problem**: `symgo/evaluator/assign_stmt_test.go` needed to import the main `symgo` package to use its interpreter and test helpers. However, `symgo` already depended on `symgo/evaluator`, creating a circular import.
--   **Solution**: The test was moved to a separate `symgo/integration_test` package. This standard Go pattern allows the test to import `symgo` as an external package, breaking the cycle. This also necessitated refactoring the test to use the `symgotest` framework, which proved to be a cleaner, more robust way to write `symgo` tests.
+-   **Solution**: The test was moved to a separate `symgo/integration_test` package. This standard Go pattern allows the test to import `symgo` as an external package, breaking the cycle. This also necessitated refactoring the test to use the `symgotest` helper framework, which proved to be a cleaner, more robust way to write `symgo` tests.
 
-### 2.2. First Implementation and Regressions
+### 2.2. Iterative Refinement and Bug Fixes
 
 With the testing framework in place, an initial implementation of `evalAssignStmt` was added. This version handled the basic mechanics of evaluating the right-hand side (RHS) and setting the value in the environment for the left-hand side (LHS).
 
 However, running the full test suite revealed numerous regressions. This began a multi-stage debugging and refinement process.
 
--   **Bug 1: Incorrect Scoping for `var`**: Tests like `TestEvalAssignStmt_Simple` were failing with "identifier not found" errors. The cause was that `evalGenDecl` (which handles `var x int`) was using `env.Set` instead of `env.SetLocal`. `env.Set` traverses up the scope chain, which is incorrect for a declaration that should always introduce a variable in the *current* scope. The fix was to change the call to `env.SetLocal`.
+-   **Bug 1: Mishandling of `ReturnValue`**: Many tests involving function calls on the RHS of an assignment failed. The reason was that `applyFunction` wraps its results in an `*object.ReturnValue`, but `evalAssignStmt` was not unwrapping this object to get the actual value before assignment. The fix was to add logic to unwrap `*object.ReturnValue` objects after any `Eval` call within the assignment logic.
 
--   **Bug 2: Mishandling of `ReturnValue`**: Many tests involving function calls on the RHS of an assignment failed. The reason was that `applyFunction` wraps its results in an `*object.ReturnValue`, but `evalAssignStmt` was not unwrapping this object to get the actual value before assignment. The fix was to add logic to unwrap `*object.ReturnValue` objects after any `Eval` call within the assignment logic.
-
--   **Bug 3: Static vs. Dynamic Type Inference**: A critical and subtle bug emerged. In code like `var i Animal = NewDog()`, the static type of `i` is the `Animal` interface. However, the evaluator was incorrectly inferring the type of `i` from the dynamic type of the RHS (`*Dog`). This caused failures in tests that expected `i` to be treated as an interface.
+-   **Bug 2: Static vs. Dynamic Type Inference**: A critical and subtle bug emerged. In code like `var i Animal = NewDog()`, the static type of `i` is the `Animal` interface. However, the evaluator was incorrectly inferring the type of `i` from the dynamic type of the RHS (`*Dog`). This caused failures in tests that expected `i` to be treated as an interface.
     -   **Solution**: This required a more complex fix.
         1.  The `object.ReturnValue` was enhanced to carry the *static* `FieldType` from the function's signature.
         2.  `applyFunction` was updated to populate this static type information.
-        3.  The `assign` helper was modified to prioritize this static type information when creating a new variable in a `:=` declaration, ensuring the variable gets the correct interface type.
+        3.  The `assign` helper was modified to prioritize this static type information when creating a new variable in a `:=` declaration, thus preserving the crucial interface type information.
 
 ### 2.3. The Current Challenge: Interface Type Tracking
 

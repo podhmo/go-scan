@@ -1,71 +1,54 @@
-# Trouble Analysis: The `AssignStmt` Refactoring and Its Unforeseen Consequences
+# Trouble Analysis: The `AssignStmt` Refactoring and the Design Conflict with the Symbolic Tracer
 
-This document details the investigation into a complex series of regressions within the `symgo` evaluator. The work did not originate as a simple bug fix, but as a strategic, exploratory refactoring aimed at a larger goal: **implementing support for type-narrowing constructs**. This attempt, however, revealed critical, implicit assumptions in the existing evaluation logic, leading to widespread test failures that needed to be addressed.
+This document details the investigation into a complex series of regressions within the `symgo` evaluator. The work did not originate as a simple bug fix, but as a strategic refactoring aimed at a larger goal: implementing support for type-narrowing constructs. This attempt, however, revealed a fundamental conflict between a naive, interpreter-like implementation of assignment and the core design principles of `symgo` as a symbolic tracer.
 
-## 1. The Original Goal: Supporting Type-Narrowing
+## 1. The Core Design Principle: `symgo` is a Tracer, Not an Interpreter
 
-The initial motivation for this task was to begin implementing the features described in `TODO.md` under "Enhance Type-Narrowed Member Access." Specifically, the goal was to enable `symgo` to understand code patterns like:
+As established in `docs/analysis-symgo-implementation.md`, the `symgo` engine is intentionally not a standard interpreter. Its primary purpose is to trace potential code paths to build a call graph. Two key principles from the analysis document are relevant here:
 
-**`if-ok` type assertion:**
-```go
-if v, ok := i.(T); ok {
-    // Inside this block, `v` is known to be of type `T`.
-    // The evaluator should be able to resolve method calls on `v` as type `T`.
-}
-```
+1.  **Exploration of All Branches**: The engine evaluates *both* the `then` and `else` blocks of an `if` statement to discover what *could* happen in any branch.
+2.  **Additive State for Interfaces**: To support this, the evaluator uses an "additive update" mechanism. When a value is assigned to an interface variable, it **adds** the concrete type of that value to a `PossibleTypes` set on the variable object, rather than simply overwriting the previous state.
 
-**`type switch`:**
-```go
-switch v := i.(type) {
-case T1:
-    // `v` is of type `T1`
-case T2:
-    // `v` is of type `T2`
-}
-```
+## 2. The Initial Goal and the Refactoring "Trial"
 
-Before implementing this new logic, a strategic decision was made to first refactor the existing, scattered logic for assignments into a single, centralized `evalAssignStmt` function. The hypothesis was that a clean, unified assignment handler would make it easier and safer to subsequently add the new type-narrowing logic. This refactoring was an *exploratory trial* within the larger solution space.
+The initial motivation for this task was to begin implementing support for type-narrowing constructs like `if-ok` and `type-switch`, as outlined in the project's `TODO.md`.
 
-## 2. The Refactoring Attempt and the Cascade of Regressions
+As an exploratory first step, a strategic decision was made to refactor the existing, scattered logic for assignments into a single, centralized `evalAssignStmt` function. The hypothesis was that a clean, unified assignment handler would make it easier and safer to subsequently add the new type-narrowing logic.
 
-This refactoring effort, intended as a preparatory cleanup, immediately destabilized the evaluator.
+## 3. The Conflict: A Naive Implementation vs. a Symbolic Design
 
-1.  **Initial Implementation**: A new `evaluator_stmt.go` was created, and a basic `evalAssignStmt` handler was added to the evaluator's main `Eval` function.
-2.  **Cascading Failures**: Running the test suite revealed that numerous existing tests—which had been passing—were now failing. This was the critical moment of realization: **assignment logic was not missing, but was implicitly and correctly handled by a combination of other evaluation functions.** My attempt to centralize it had broken these fragile, implicit connections.
-3.  **Shift in Focus**: The task immediately pivoted from "refactoring for a new feature" to "fixing the regressions caused by the refactoring."
+The initial, centralized `evalAssignStmt` I implemented was fundamentally flawed because it behaved like a standard interpreter: it simply overwrote the value of a variable. This directly conflicted with the "additive state" principle required by the tracer.
 
-The core of the regressions stemmed from a single, complex problem: **the loss of type information when assigning values to interface variables.**
+This conflict was immediately exposed when running the test suite. A key test, `TestEval_InterfaceMethodCall_AcrossControlFlow`, which had been passing under the old, implicit logic, began to fail.
 
-**Example of a Broken Test (`TestEval_InterfaceMethodCall_AcrossControlFlow`):**
-This test, which was previously passing, verifies a critical static analysis capability:
+**The Failing Test Case - A Clear Illustration of the Conflict:**
 ```go
 func main() {
     var s Speaker // s is statically typed as the Speaker interface.
     if someCondition {
-        s = &Dog{} // s is assigned a concrete type *Dog
+        s = &Dog{} // Path 1: s can be a *Dog
     } else {
-        s = &Cat{} // s is assigned a different concrete type *Cat
+        s = &Cat{} // Path 2: s can be a *Cat
     }
     s.Speak() // The evaluator must know that s could be a *Dog OR a *Cat.
 }
 ```
-After the refactoring, this test began to fail. The `PossibleTypes` map for the variable `s` was no longer being populated with both `"*example.com/me.Dog"` and `"*example.com/me.Cat"`.
+This test failed because my new, interpreter-like assignment logic would evaluate one branch (e.g., the `if`), assign `&Dog{}` to `s`, and then evaluate the second branch (`else`), which would simply **overwrite** the state of `s` with `&Cat{}`. The information that `s` could also have been a `*Dog` was lost. The `PossibleTypes` map for `s` ended up with only one entry instead of the required two.
 
-## 3. The Core Conflict: Static vs. Dynamic Type Tracking
+The regression was not a simple bug; it was a fundamental design violation. The task immediately pivoted from "refactoring for a new feature" to "re-aligning the assignment logic with the core principles of the symbolic tracer."
 
-The investigation into this regression revealed a fundamental tension in the evaluator's design:
+## 4. The Solution: Re-aligning with the Tracer Design
 
--   **Interpreter Behavior**: A standard interpreter would assign a concrete value (`&Dog{}`) to `s`. The static type `Speaker` would be used for compile-time checks but discarded at runtime in favor of the concrete type.
--   **Symbolic Tracer Requirement**: For static analysis, `symgo` must do both. It needs to know that the *static type* of `s` is `Speaker` (to resolve the `Speak` method) *and* it needs to accumulate a list of all *possible dynamic types* (`*Dog`, `*Cat`) that could be assigned to `s` across all code paths.
+The subsequent iterative fixes were a process of making the assignment logic "tracer-aware."
 
-The original, implicit logic handled this correctly. The new, centralized `assign` helper function initially failed because it did not correctly manage this dual-type system.
+1.  **`updateVarOnAssignment`**: This helper function became the focal point. Its logic was rewritten to implement the "additive update" principle. Instead of just setting `v.Value`, it now inspects the variable `v`. If `v` is an interface, it determines the concrete type of the value being assigned (`val`) and adds a key representing that type (e.g., `"*example.com/me.Dog"`) to the `v.PossibleTypes` map.
+2.  **Scoping and Type Preservation**: Other related bugs were fixed along the way. `evalGenDecl` was corrected to use `env.SetLocal` to respect lexical scope. Logic was also added to preserve the static type of an interface when using `:=` on a function call that returns an interface, preventing the variable's type from being incorrectly narrowed to the concrete returned type at compile time.
 
-## 4. Current Status: Recovery and Remaining Challenges
+## 5. Current Status
 
-After several iterations of debugging, the refactored assignment logic has been stabilized to the point where most of the regressions are fixed. The core assignment tests and the `TestEval_InterfaceMethodCall_AcrossControlFlow` test are now passing.
+This refactoring journey, though difficult, has ultimately been successful.
+-   The assignment logic is now centralized and more explicit.
+-   Most importantly, it is now correctly aligned with `symgo`'s design as a symbolic tracer. `TestEval_InterfaceMethodCall_AcrossControlFlow` and the other core assignment tests now pass.
+-   Some regressions remain, particularly `TestShallowScan_AssignIdentifier_WithUnresolvedInterface`. This indicates that the type-tracking logic, while much improved, is not yet robust enough to handle cases where the concrete type being assigned is itself a symbolic placeholder from a shallow-scanned (unresolved) package. This is a known limitation and is tracked in `TODO.md`.
 
-This was achieved by making the implicit logic explicit within a new `updateVarOnAssignment` helper function, which now correctly tracks concrete types (including pointers) assigned to interface variables.
-
-However, some regressions remain, notably `TestShallowScan_AssignIdentifier_WithUnresolvedInterface`. This indicates that the type-tracking logic, while improved, is not yet robust enough to handle cases where the concrete type being assigned is itself a symbolic placeholder from a shallow-scanned (unresolved) package.
-
-The original goal of implementing type-narrowing for `if-ok` and `type-switch` has been postponed until this foundational assignment logic is fully stabilized. The exploratory refactoring, while disruptive, has been valuable in forcing a deeper understanding and a more explicit, robust implementation of `symgo`'s core type-tracking mechanism.
+The original goal of implementing type-narrowing can now be pursued on this more robust and correctly designed foundation.

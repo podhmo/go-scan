@@ -1,69 +1,66 @@
-# `symgo`: Method Call on Pointer Return Value Fails
+# Trouble Report: `symgo` Evaluator Failures on Method Chaining and Named Slice Methods
 
-This document outlines a bug in the `symgo` evaluator where it fails to resolve method calls on pointer types returned directly from functions.
+This document details two related bugs in the `symgo` evaluator that cause symbolic execution to halt prematurely. These issues were discovered during the analysis of a large, real-world Go codebase.
 
-## 1. Problem
+## 1. Summary of Problems
 
-The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer that was returned from a function.
+The `symgo` evaluator currently fails when encountering two common Go programming patterns:
 
-**Error Log:**
-```
-level=ERROR msg="undefined method or field: String for pointer type RETURN_VALUE"
-```
+1.  **Fluent API / Method Chaining**: When a method call returns the receiver to allow for chained calls (e.g., `builder.Name("x").Version("v1")`), the evaluator fails on the second call.
+2.  **Methods on Named Slice Types**: When a method is called on a variable whose type is a named slice (e.g., `type MySlice []int; ...; mySlice.MyMethod()`), the evaluator fails.
 
-**Example Go Code:**
-```go
-// timeutil/date.go
-package timeutil
+In both cases, the symbolic execution stops, preventing a complete analysis of the call graph.
 
-type Date string
+## 2. Analysis of Failures
 
-func (d Date) String() string {
-    return string(d)
-}
+Both bugs stem from shortcomings in `symgo/evaluator/evaluator_eval_selector_expr.go`.
 
-// main.go
-package main
+### 2.1. Fluent API / Method Chaining Failure
 
-func GetDate() *timeutil.Date {
-    d := timeutil.Date("2024-01-01")
-    return &d
-}
+-   **Symptom**: The log shows the error `expected a package, instance, or pointer on the left side of selector, but got FUNCTION`.
+-   **Example Code**:
+    ```go
+    // library code used by kingpin
+    app := kingpin.New("my-app", "A command-line app.")
+    app.Flag("debug", "Enable debug mode.").Bool() // Fails on .Bool()
+    ```
+-   **Root Cause**:
+    1.  The evaluator processes `app.Flag("debug", "...")`.
+    2.  This call correctly resolves to the `Flag` method, which is modeled by an intrinsic or a function.
+    3.  The result of evaluating this call is an `*object.Function` representing the *next* method in the chain (e.g., `Bool`), with the receiver (`app`) bound to it.
+    4.  The evaluator then tries to evaluate the `.Bool()` part of the chain. The left-hand side of the selector is now the `*object.Function` object from the previous step.
+    5.  `evalSelectorExpr`'s main `switch` statement does not have a `case` for `*object.Function`. It falls through to the `default` case, which produces the "got FUNCTION" error.
+-   **Alignment with Design**: This is a **bug**. The `symgo` engine, as a tracer, should be able to follow method chains. The failure is not due to a design limitation but an incomplete implementation in `evalSelectorExpr`. The evaluator should recognize that the `*object.Function` has a bound receiver and continue the evaluation on that receiver.
 
-func main() {
-    // This call fails during symgo analysis
-    s := GetDate().String()
-}
-```
-In standard Go, this is perfectly valid. The `String()` method, which has a value receiver `(d Date)`, is correctly called on the pointer `*timeutil.Date` via automatic pointer dereferencing. The `symgo` engine fails to replicate this behavior.
+### 2.2. Method on Named Slice Failure
 
-## 2. Root Cause Analysis
+-   **Symptom**: The log shows the error `expected a package, instance, or pointer on the left side of selector, but got SLICE`.
+-   **Example Code**:
+    ```go
+    type MySlice []int
 
-The issue lies in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function, which handles expressions like `x.y`.
+    func (s MySlice) Sum() int { /* ... */ }
 
-1.  **Function Call Evaluation:** The call to `GetDate()` is evaluated first. The `symgo` engine correctly determines it returns a pointer to a `Date` object. The result is wrapped in an `*object.ReturnValue`.
-2.  **Selector Expression Evaluation:** The `evalSelectorExpr` function is then called to resolve `.String()`.
-    -   It correctly unwraps the `*object.ReturnValue` at the beginning of the function, so the expression it analyzes (`left`) becomes an `*object.Pointer`.
-    -   It enters the `case *object.Pointer:` block.
-    -   Inside this block, it inspects the pointer's `Value` (the `pointee`).
-3.  **The Failure:** The `pointee` in this scenario is an `*object.Instance` of `Date`. However, the logic inside the `case *object.Pointer:` block does not check for registered intrinsics, which are essential for testing and for handling certain standard library functions. It attempts to resolve the method directly from type information, but because the test relies on an intrinsic, the call is never registered.
+    func main() {
+        var s MySlice
+        s.Sum() // Fails here
+    }
+    ```
+-   **Root Cause**:
+    1.  The evaluator correctly identifies `s` as an `*object.Slice`.
+    2.  It then attempts to evaluate the selector `.Sum`.
+    3.  `evalSelectorExpr`'s main `switch` statement does not have a `case` for `*object.Slice`. It falls through to the `default` case, producing the "got SLICE" error.
+    4.  A secondary bug was also identified in `evalCompositeLit`: when evaluating a literal of a named slice type (e.g., `MySlice{1, 2, 3}`), the resulting `*object.Slice` object was not correctly tagged with the `TypeInfo` for `MySlice`. This would prevent method resolution even if `evalSelectorExpr` were fixed.
+-   **Alignment with Design**: This is a **bug**. Go allows defining methods on any named type, including slices. For `symgo` to accurately trace Go code, it must support this common language feature.
 
-As a result, the test assertion fails. The original user-reported error was slightly different but stemmed from the same core issue: incomplete logic for handling pointer receivers.
+## 3. Proposed Solutions
 
-## 3. Proposed Solution
+To address these issues, the following fixes are proposed:
 
-The fix is to enhance the `case *object.Pointer:` block in `evalSelectorExpr`.
+1.  **Fix `evalCompositeLit`**: Modify `evalCompositeLit` to correctly associate the type alias information (`aliasTypeInfo`) with the `*object.Slice` it creates. This ensures that the object carries the necessary metadata for method resolution.
 
-1.  **Unwrap ReturnValue:** Add a check to see if the `pointee` is of type `*object.ReturnValue` and unwrap it. This handles cases where a function returns a pointer to a pointer.
-2.  **Add Intrinsic Checks:** Before resolving the method from type info, add checks for registered intrinsics for both pointer (`(*T).Method`) and value (`(T).Method`) receivers, mirroring the logic that already exists for `*object.Instance` receivers.
+2.  **Enhance `evalSelectorExpr`**:
+    -   **For Fluent APIs**: Before the main `switch` statement, add a check: if the object being evaluated is an `*object.Function` with a non-nil `Receiver`, the evaluator should "unwrap" it and continue the evaluation using the receiver as the new left-hand side object.
+    -   **For Named Slices**: Add a `case *object.Slice:` to the main `switch` statement. Inside this case, if the slice has `TypeInfo` (i.e., it's a named type), the evaluator should use the `accessor` to find the method (`Sum` in the example) on that type. It should also check for any matching intrinsics, which is crucial for testing. If no method is found, it should return a specific "undefined method" error. If the slice is anonymous (no `TypeInfo`), it should fall through to the default error, as anonymous slices cannot have methods.
 
-This change will make the symbolic evaluator correctly model Go's automatic pointer dereferencing for method calls and ensure that intrinsics for pointer types are correctly resolved.
-
-## 4. Plan
-
-1.  **[COMPLETED]** Create this document (`docs/trouble-symgo2.md`).
-2.  **[COMPLETED]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
-3.  **[COMPLETED]** Run tests to confirm the failure.
-4.  **[COMPLETED]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
-5.  **[COMPLETED]** Run tests to verify the fix and check for regressions.
-6.  **[COMPLETED]** Update `TODO.md`.
+Implementing these changes will make the `symgo` evaluator more robust and capable of analyzing a wider range of common Go code patterns, aligning it better with its goal of being a comprehensive static analysis tool.

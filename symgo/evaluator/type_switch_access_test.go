@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -11,43 +12,67 @@ import (
 	"github.com/podhmo/go-scan/symgo/object"
 )
 
-const ifOkMethodCallSource = `
+const typeSwitchMultiCaseSource = `
 package main
 
-type Walker interface {
-	Walk()
+// Mover is an interface implemented by different types.
+type Mover interface {
+	Move()
 }
 
+// Person is one concrete type.
 type Person struct {
 	Name string
 }
-
-func (p Person) Walk() {
-	// This method is part of the interface.
-}
-
+func (p Person) Move() {}
 func (p Person) Greet() {
-	// This method is NOT part of the interface.
-	inspect(p.Name)
+	// This method is NOT on the Mover interface.
+	inspect("person:" + p.Name)
 }
+
+// Dog is another concrete type.
+type Dog struct {
+	Breed string
+}
+func (d Dog) Move() {}
+func (d Dog) Bark() {
+	// This method is also NOT on the Mover interface.
+	inspect("dog:" + d.Breed)
+}
+
 
 // inspect is a special function that will be implemented as an intrinsic.
 func inspect(s string) {}
 
 func main() {
-	var i Walker = Person{Name: "Alice"}
-	if p, ok := i.(Person); ok {
-		// After the type assertion, we should be able to call
-		// a method that is not on the Walker interface.
-		p.Greet()
+	var i Mover
+
+	// First, test the Person case.
+	i = Person{Name: "Alice"}
+	switch v := i.(type) {
+	case Person:
+		v.Greet()
+	case Dog:
+		v.Bark() // This branch should not be taken for a Person.
+	case nil:
+		// do nothing
+	}
+
+	// Second, test the Dog case.
+	i = Dog{Breed: "Retriever"}
+	switch v := i.(type) {
+	case Person:
+		v.Greet() // This branch should not be taken for a Dog.
+	case Dog:
+		v.Bark()
 	}
 }
 `
 
-func TestTypeNarrowing_IfOkMethodCall(t *testing.T) {
+func TestTypeNarrowing_TypeSwitchMultiCase(t *testing.T) {
 	files := map[string]string{
 		"go.mod":  "module example.com/main",
-		"main.go": ifOkMethodCallSource,
+		"main.go": typeSwitchMultiCaseSource,
 	}
 
 	dir, cleanup := scantest.WriteFiles(t, files)
@@ -71,13 +96,16 @@ func TestTypeNarrowing_IfOkMethodCall(t *testing.T) {
 
 		env := object.NewEnclosedEnvironment(eval.UniverseEnv)
 		for _, file := range mainPkg.AstFiles {
-			eval.Eval(ctx, file, env, mainPkg)
+			if res := eval.Eval(ctx, file, env, mainPkg); isError(res) {
+				return res.(*object.Error)
+			}
 		}
 
 		pkgEnv, ok := eval.PackageEnvForTest(mainPkg.ImportPath)
 		if !ok {
 			return fmt.Errorf("package env not found for %q", mainPkg.ImportPath)
 		}
+
 		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found")
@@ -100,7 +128,10 @@ func TestTypeNarrowing_IfOkMethodCall(t *testing.T) {
 		t.Fatalf("evaluation failed unexpectedly: %v", evalErr)
 	}
 
-	expected := []string{"Alice"}
+	// Since the evaluator is an interpreter, it will only execute the matching case.
+	// We expect to see one result from the Person switch, and one from the Dog switch.
+	sort.Strings(inspectedValues)
+	expected := []string{"dog:Retriever", "person:Alice"}
 	if diff := cmp.Diff(expected, inspectedValues); diff != "" {
 		t.Errorf("mismatch in inspected values (-want +got):\n%s", diff)
 	}

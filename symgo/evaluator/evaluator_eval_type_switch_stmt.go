@@ -2,7 +2,6 @@ package evaluator
 
 import (
 	"context"
-	"fmt"
 	"go/ast"
 	"log/slog"
 
@@ -47,8 +46,6 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 		if !ok {
 			return e.newError(ctx, n.Pos(), "expected TypeAssertExpr in ExprStmt of type switch")
 		}
-		// In `switch x.(type)`, there is no new variable, so varName remains empty.
-		// We still need to evaluate the expression being switched on.
 		originalObj = e.Eval(ctx, typeAssert.X, switchEnv, pkg)
 		if isError(originalObj) {
 			return originalObj
@@ -76,17 +73,16 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 			}
 			caseEnv := object.NewEnclosedEnvironment(switchEnv)
 
-			// If varName is set, we are in the `v := x.(type)` form.
-			// We need to create a new variable `v` in the case's scope.
 			if varName != "" {
 				if caseClause.List == nil { // default case
+					clonedObj := originalObj.Clone()
 					v := &object.Variable{
 						Name:        varName,
-						Value:       originalObj,
-						IsEvaluated: true, // Mark as evaluated since originalObj is already set
+						Value:       clonedObj,
+						IsEvaluated: true,
 						BaseObject: object.BaseObject{
-							ResolvedTypeInfo:  originalObj.TypeInfo(),
-							ResolvedFieldType: originalObj.FieldType(),
+							ResolvedTypeInfo:  clonedObj.TypeInfo(),
+							ResolvedFieldType: clonedObj.FieldType(),
 						},
 					}
 					caseEnv.Set(varName, v)
@@ -109,13 +105,13 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 						}
 					}
 
-					val := &object.SymbolicPlaceholder{
-						Reason:     fmt.Sprintf("type switch case variable %s", fieldType.String()),
-						BaseObject: object.BaseObject{ResolvedTypeInfo: resolvedType, ResolvedFieldType: fieldType},
-					}
+					clonedObj := originalObj.Clone()
+					clonedObj.SetFieldType(fieldType)
+					clonedObj.SetTypeInfo(resolvedType)
+
 					v := &object.Variable{
 						Name:        varName,
-						Value:       val,
+						Value:       clonedObj,
 						IsEvaluated: true,
 						BaseObject: object.BaseObject{
 							ResolvedTypeInfo:  resolvedType,
@@ -125,14 +121,12 @@ func (e *Evaluator) evalTypeSwitchStmt(ctx context.Context, n *ast.TypeSwitchStm
 					caseEnv.Set(varName, v)
 				}
 			}
-			// If varName is empty, we are in the `x.(type)` form. No new variable is created.
-			// The environment for the case body is just a new scope above the switch environment.
 
 			for _, stmt := range caseClause.Body {
 				if res := e.Eval(ctx, stmt, caseEnv, pkg); isError(res) {
 					e.logc(ctx, slog.LevelWarn, "error evaluating statement in type switch case", "error", res)
 					if isInfiniteRecursionError(res) {
-						return res // Stop processing on infinite recursion
+						return res
 					}
 				}
 			}
@@ -155,22 +149,18 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 		return &object.SymbolicPlaceholder{Reason: "switch statement"}
 	}
 
-	// Iterate through each case clause as a potential starting point for a new execution path.
 	for i := 0; i < len(n.Body.List); i++ {
-		pathEnv := object.NewEnclosedEnvironment(switchEnv) // Each path gets its own environment to track state.
+		pathEnv := object.NewEnclosedEnvironment(switchEnv)
 
-		// From this starting point `i`, trace the path until a break or the end of a case without fallthrough.
-	pathLoop:
 		for j := i; j < len(n.Body.List); j++ {
 			caseClause, ok := n.Body.List[j].(*ast.CaseClause)
 			if !ok {
 				continue
 			}
 
-			// Evaluate case expressions to trace calls for their side-effects.
 			for _, expr := range caseClause.List {
 				if res := e.Eval(ctx, expr, pathEnv, pkg); isError(res) {
-					return res // Propagate errors from case expressions.
+					return res
 				}
 			}
 
@@ -182,23 +172,19 @@ func (e *Evaluator) evalSwitchStmt(ctx context.Context, n *ast.SwitchStmt, env *
 					switch result.Type() {
 					case object.FALLTHROUGH_OBJ:
 						hasFallthrough = true
-						// The break was redundant here. The switch statement exits, and the
-						// inner for-loop continues to the next statement in the case body.
-						// The `hasFallthrough` flag is handled after the loop.
 					case object.BREAK_OBJ:
-						break pathLoop // This path is terminated by break.
+						goto endPath
 					case object.RETURN_VALUE_OBJ, object.ERROR_OBJ, object.CONTINUE_OBJ:
-						// Propagate these control flow changes immediately, terminating the whole switch evaluation.
-						// This is a simplification but consistent with if-stmt handling.
 						return result
 					}
 				}
 			}
 
 			if !hasFallthrough {
-				break // End of this path. Start a new path from the next case.
+				break
 			}
 		}
+	endPath:
 	}
 
 	return &object.SymbolicPlaceholder{Reason: "switch statement"}

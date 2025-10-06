@@ -126,7 +126,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **High Priority**:
   - [x] Implement `goto` statement support (handled as no-op).
   - [x] Resolve generic type parameters correctly.
-  - [ ] Prevent `invalid indirect` errors from nil pointer dereferencing.
+  - [x] Prevent `invalid indirect` errors from nil pointer dereferencing.
 - [ ] **Medium Priority**:
   - [ ] Support `uint64` and large integer constants to prevent overflow.
   - [ ] Improve type inference to fix selector type errors.

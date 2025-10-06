@@ -17,7 +17,9 @@ A review of the `symgo` evaluator (`symgo/evaluator/evaluator.go`) and its tests
 
 -   **`evalAssignStmt` & `evalIfStmt`:** The evaluator correctly handles the `v, ok := i.(T)` idiom. `evalAssignStmt` creates a `SymbolicPlaceholder` with the type information for `T` and assigns it to `v`. `evalIfStmt` correctly creates a new scope for the `if` block, ensuring the typed variable `v` is properly scoped.
 
--   **The Gap:** The existing test suite (`symgo/evaluator/evaluator_typeswitch_test.go`) verifies that the type-switched variable has the correct *type name* within each case. However, **it does not contain any tests that perform a method call or field access on the narrowed variable.** This indicates that while the mechanism for creating the typed variable exists, its utility in resolving member access is unverified and likely incomplete. The logic chain from `evalSelectorExpr` -> `evalSymbolicSelection` -> `accessor.findMethodOnType` seems plausible but has not been exercised by tests for this specific scenario.
+-   **The Gap:** The existing test suite (`symgo/evaluator/typeswitch_test.go`) verifies that the type-switched variable has the correct *type name* within each case. However, **it does not contain any tests that perform a method call or field access on the narrowed variable.** This indicates that while the mechanism for creating the typed variable exists, its utility in resolving member access is unverified and likely incomplete. The logic chain from `evalSelectorExpr` -> `evalSymbolicSelection` -> `accessor.findMethodOnType` seems plausible but has not been exercised by tests for this specific scenario.
+
+    **Update (2025-10-05):** A manual code review confirmed this analysis. The evaluator correctly creates typed `SymbolicPlaceholder` objects in both `evalTypeSwitchStmt` and `evalAssignStmt` (for `if-ok`), but no corresponding tests exist to verify that member access on these placeholders is functional. The implementation will proceed based on the TDD plan below.
 
 ## 3. Proposed Implementation Plan (TDD Approach)
 

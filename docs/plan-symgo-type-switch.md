@@ -1,37 +1,28 @@
-# Plan: Enhance `symgo` for Type-Narrowed Member Access
+# Plan: Enhance `symgo` for `type-switch` Member Access
 
-## 1. Goal
+## 1. Status
 
-The objective is to enhance the `symgo` symbolic execution engine to correctly trace method calls and field accesses on variables whose types have been narrowed within a control flow structure. The key is to resolve members of the **concrete type** (e.g., a specific struct's methods), not just members that might be part of the original interface's method set. This applies to two primary Go idioms:
+-   **`if-ok` Assertion (`v, ok := i.(T)`)**: **Completed**. Support for this construct was implemented by adding a `Clone() Object` method to the `object.Object` interface. In `evalAssignStmt`, the evaluator now clones the underlying concrete object held by the interface, preserving its state (e.g., field values) in the new variable `v`. This allows for correct member access on the narrowed type.
+-   **`type-switch` Statement (`switch v := i.(type)`)**: **To Be Implemented**. This document outlines the remaining work to support member access within `type-switch` statements.
 
-1.  **Type Switch:** In a `switch v := i.(type)` statement, the variable `v` should be recognized as having the specific type of each `case` block, allowing symbolic execution to trace calls like `v.Method()` or access fields like `v.Field`.
-2.  **`if-ok` Type Assertion:** In an `if v, ok := i.(T); ok` statement, the variable `v` should be recognized as type `T` within the `if` block, enabling the tracing of member access on `v`.
+## 2. Goal
 
-## 2. Investigation and Current State Analysis
+The remaining objective is to enhance the `symgo` symbolic execution engine to correctly trace method calls and field accesses on variables whose types have been narrowed within a `switch v := i.(type)` statement. The key is to resolve members of the **concrete type** of each `case` block, not just members that might be part of the original interface's method set.
 
-A review of the `symgo` evaluator (`symgo/evaluator/evaluator.go`) and its tests reveals the following:
+## 3. Investigation and Current State Analysis
 
--   **Core Design Philosophy:** `symgo` is a symbolic tracer, not a standard interpreter. As documented in `docs/analysis-symgo-implementation.md`, it correctly explores all possible branches of control flow statements like `if` and `switch` to discover all potential code paths. This enhancement must adhere to that design.
+A review of the `symgo` evaluator (`symgo/evaluator/evaluator.go`) reveals:
 
--   **`evalTypeSwitchStmt`:** The current implementation correctly handles `switch v := i.(type)`. For each `case` clause, it creates a new, scoped environment (`caseEnv`). Within this environment, it defines a new variable `v` and assigns it a `SymbolicPlaceholder` object. This placeholder is correctly imbued with the `TypeInfo` and `FieldType` corresponding to the `case`'s type.
+-   **`evalTypeSwitchStmt`:** The current implementation correctly handles the `switch v := i.(type)` syntax. For each `case` clause, it creates a new, scoped environment (`caseEnv`). Within this environment, it defines a new variable `v` and assigns it a `SymbolicPlaceholder` object. This placeholder is correctly imbued with the `TypeInfo` and `FieldType` corresponding to the `case`'s type.
+-   **The Gap:** The current implementation assigns a *new* `SymbolicPlaceholder` to the case variable `v`, which does not carry the *value* of the original object being switched on. This means that while the type is correct, any state (like field values) is lost. To trace member access correctly, the evaluator must, similar to the `if-ok` implementation, clone the original object's value for each matching case.
 
--   **`evalAssignStmt` & `evalIfStmt`:** The evaluator correctly handles the `v, ok := i.(T)` idiom. `evalAssignStmt` creates a `SymbolicPlaceholder` with the type information for `T` and assigns it to `v`. `evalIfStmt` correctly creates a new scope for the `if` block, ensuring the typed variable `v` is properly scoped.
+## 4. Proposed Implementation Plan (TDD Approach)
 
--   **The Gap:** The existing test suite (`symgo/evaluator/typeswitch_test.go`) verifies that the type-switched variable has the correct *type name* within each case. However, **it does not contain any tests that perform a method call or field access on the narrowed variable.** This indicates that while the mechanism for creating the typed variable exists, its utility in resolving member access is unverified and likely incomplete. The logic chain from `evalSelectorExpr` -> `evalSymbolicSelection` -> `accessor.findMethodOnType` seems plausible but has not been exercised by tests for this specific scenario.
+This plan should be executed by a future engineer to implement the feature.
 
-    **Update (2025-10-05):** A manual code review confirmed this analysis. The evaluator correctly creates typed `SymbolicPlaceholder` objects in both `evalTypeSwitchStmt` and `evalAssignStmt` (for `if-ok`), but no corresponding tests exist to verify that member access on these placeholders is functional. The implementation will proceed based on the TDD plan below.
+### Step 1: Add Failing Test for Method Call in Type Switch
 
-## 3. Proposed Implementation Plan (TDD Approach)
-
-This plan should be executed by a future engineer to implement the feature. It follows a test-driven development (TDD) methodology.
-
-### Step 1: Create a New Test File
-
-Create a new file `symgo/evaluator/evaluator_if_typeswitch_test.go` to isolate the new tests for this feature.
-
-### Step 2: Add Failing Test for Method Call in Type Switch
-
-Add a test case that defines a custom type with a method, uses a type switch to narrow an interface to that type, and calls the method. Use an intrinsic to verify the call is traced.
+Add a test case to a new file (`symgo/evaluator/type_switch_access_test.go`) that defines a custom type with a method, uses a type switch to narrow an interface to that type, and calls the method. Use an intrinsic to verify the call is traced.
 
 **Example Test Snippet:**
 
@@ -60,67 +51,17 @@ func main() {
 // This test should fail initially.
 ```
 
-### Step 3: Add Failing Test for Field Access in `if-ok` Assertion
+### Step 2: Enhance the Evaluator (`evalTypeSwitchStmt`)
 
-Add a test case that defines a struct with a field, uses an `if-ok` type assertion, and accesses the field. The field's value could be another function call to make tracing easier to verify.
+Modify `symgo/evaluator/evaluator_eval_type_switch_stmt.go` to make the test pass.
 
-**Example Test Snippet:**
+1.  **Get Original Value**: At the beginning of `evalTypeSwitchStmt`, evaluate the expression being switched on (e.g., `i` in `i.(type)`) to get the underlying `object.Object`.
+2.  **Clone in `case`**: Inside the loop over `case` clauses, when creating the new variable `v`, instead of creating a new `SymbolicPlaceholder`, **clone** the original object obtained in step 1.
+3.  **Set Type Info**: On the cloned object, set the `TypeInfo` and `FieldType` to match the `case`'s type. This ensures the variable `v` has both the correct value *and* the correct narrowed type for that specific scope.
+4.  **Handle `default`**: In the `default` case, the variable `v` should be a clone of the original object with its original type.
 
-```go
-// In test file
-const ifOkFieldAccessSource = `
-package main
+This approach mirrors the successful implementation for `if-ok` assertions and leverages the existing `Clone()` functionality.
 
-func get_name() string { return "Alice" }
-func inspect(s string) {} // Intrinsic
+### Step 3: Verify and Finalize
 
-type User struct {
-	Name string
-}
-
-func main() {
-	var i any = User{Name: get_name()}
-	if v, ok := i.(User); ok {
-		inspect(v.Name) // This field access should be traced
-	}
-}
-`
-// Test logic would register intrinsics for get_name() and inspect()
-// and assert that inspect() was called with the result of get_name().
-// This test should also fail initially.
-```
-
-### Step 4: Add Tests for Pointer Receivers and Other Edge Cases
-
-Expand the test suite to cover:
--   Types with pointer receivers (e.g., `func (g *Greeter) Greet()`).
--   Accessing members on embedded structs within a type assertion.
--   Multiple `case` blocks in a type switch.
-
-### Step 5: Enhance the Evaluator
-
-Modify the `symgo` evaluator to make the tests pass. The likely areas for modification are:
-
--   **`evalSelectorExpr`**: When evaluating `v.Greet()`, `v` will resolve to a `SymbolicPlaceholder`. The logic must robustly use the `TypeInfo` attached to this placeholder.
--   **`evalSymbolicSelection`**: This helper function will likely be the primary focus. It receives the `SymbolicPlaceholder` and must correctly delegate to the `accessor` to find the method or field.
--   **`accessor`**: Ensure `findMethodOnType` and `findFieldOnType` work correctly when given the `TypeInfo` from a symbolic placeholder. This includes handling both value and pointer receiver methods correctly based on how the variable is defined.
-
-The core of the implementation will be ensuring that the `TypeInfo` stored on the symbolic variable is fully utilized during method and field resolution, successfully connecting the type-narrowed variable to its members.
-
-#### Refined Implementation Strategy: Two-Stage Member Lookup
-
-As per a more detailed analysis, simply narrowing the type is insufficient for symbolic analysis. The correct approach is a two-stage lookup for member access on variables that might have been type-asserted:
-
-1.  **Primary Lookup (Interface):** First, attempt to resolve the member (method or field) on the variable's static interface type. This is the standard path and covers cases where the method is part of the interface definition.
-2.  **Secondary Lookup (Concrete Type):** If the member is not found on the interface, the evaluator must then check if the variable's value is a `SymbolicPlaceholder` created by a type assertion (`if-ok` or `type-switch`). If so, it should use the concrete `TypeInfo` stored on that placeholder to attempt a second lookup.
-
-This ensures that the evaluator can trace calls to both interface methods and methods specific to the concrete type, which is the core goal of this feature. The implementation will focus on enhancing `evalSelectorExpr` and its helpers to perform this dual-lookup logic.
-
-**Handling Scan Policies:**
-The implementation must be robust with respect to `symgo`'s scan policy. The tests should cover the following scenarios:
-1.  **Intra-Policy Assertion:** The type assertion occurs in a package that is within the primary analysis scope, and the target type (`T`) is also defined within that scope. This is the baseline case where full source is available.
-2.  **Extra-Policy Assertion:** The type assertion occurs in a package within the primary analysis scope, but the target type `T` is defined in an external package that is *not* part of the source-scanned policy. `symgo` should still be able to symbolically trace method calls on the narrowed variable, likely by creating a `SymbolicPlaceholder` for the method's result based on a shallow scan of the external type's definition.
-
-### Step 6: Verify and Finalize
-
-Once all new tests pass and existing tests continue to pass, the feature is complete. The implementation has been successfully guided and verified by the test suite.
+Once all new tests pass and existing tests continue to pass, the feature is complete.

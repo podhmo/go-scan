@@ -112,7 +112,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Import Path Heuristic**: Enhanced the heuristic for guessing package names from import paths. It now generates multiple candidates (e.g., for `"github.com/mattn/go-isatty"`, it produces `["isatty", "goisatty"]`) and checks each one, making symbol resolution for unscanned packages more robust and flexible. It now also handles suffixes like `-go` (e.g., `"github.com/stripe/stripe-go/v79"` -> `stripe`).
 
 ### `symgo`: Enhance Type-Narrowed Member Access ([docs/plan-symgo-type-switch.md](./docs/plan-symgo-type-switch.md))
-- [ ] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.
+- [-] Implement support for method calls and field access on variables narrowed by type switches and `if-ok` assertions.
+  - [x] **`if-ok` Assertions**: The evaluator now correctly handles member access on variables narrowed using the `v, ok := i.(T)` idiom. This was achieved by introducing a `Clone() Object` method to the `object.Object` interface, which preserves the concrete value of the variable across the assertion.
+  - [ ] **`type-switch` Statements**: Support for member access within `switch v := i.(type)` blocks is still pending.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

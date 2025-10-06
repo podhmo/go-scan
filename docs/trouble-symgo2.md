@@ -1,76 +1,69 @@
-# Trouble Report: `symgo` Evaluator Robustness Issues
+# `symgo`: Method Call on Pointer Return Value Fails
 
-This document details several distinct bugs in the `symgo` evaluator that cause symbolic execution to halt prematurely. These issues were discovered during the analysis of a large, real-world Go codebase and represent gaps in the evaluator's ability to robustly handle common Go patterns and unexpected states. According to the principles in `docs/analysis-symgo-implementation.md`, the evaluator should favor returning symbolic placeholders over crashing to ensure analysis can complete.
+This document outlines a bug in the `symgo` evaluator where it fails to resolve method calls on pointer types returned directly from functions.
 
-## 1. Fluent API / Method Chaining Failure
+## 1. Problem
 
--   **Symptom**: `expected a package, instance, or pointer on the left side of selector, but got FUNCTION`
--   **Example Code**:
-    ```go
-    // Simplified from kingpin library usage
-    app.Flag("debug", "Enable debug mode.").Bool()
-    ```
--   **Root Cause**: The evaluator processes `app.Flag(...)` and the result is an `*object.Function` with the receiver `app` bound to it. When it then tries to evaluate `.Bool()`, the left-hand side of the selector is a function object, which `evalSelectorExpr` does not handle.
--   **Proposed Solution**: `evalSelectorExpr` should check if the left-hand object is a function with a bound receiver. If so, it should unwrap the receiver and continue the evaluation on that object.
+The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer that was returned from a function.
 
-## 2. Method on Named Slice Failure
+**Error Log:**
+```
+level=ERROR msg="undefined method or field: String for pointer type RETURN_VALUE"
+```
 
--   **Symptom**: `expected a package, instance, or pointer on the left side of selector, but got SLICE`
--   **Example Code**:
-    ```go
-    type MySlice []int
-    func (s MySlice) Sum() int { /* ... */ }
+**Example Go Code:**
+```go
+// timeutil/date.go
+package timeutil
 
-    s := MySlice{1, 2, 3}
-    s.Sum() // Fails here
-    ```
--   **Root Cause**: `evalSelectorExpr` lacks a `case` for `*object.Slice`. Additionally, `evalCompositeLit` was not correctly associating the alias type info (`MySlice`) with the created slice object, preventing method resolution.
--   **Proposed Solution**:
-    1.  Fix `evalCompositeLit` to attach the alias's `TypeInfo` to the `*object.Slice`.
-    2.  Add a `case *object.Slice:` to `evalSelectorExpr` that uses the `accessor` to find and resolve methods on the named slice type.
+type Date string
 
-## 3. Invalid Indirect Dereference
+func (d Date) String() string {
+    return string(d)
+}
 
--   **Symptom**: `invalid indirect of ...` (for `nil`, `instance`, `package`, etc.)
--   **Example Code**:
-    ```go
-    var p *int // p is nil
-    _ = *p     // Causes "invalid indirect of nil"
-    ```
--   **Root Cause**: `evalStarExpr` (which handles the `*` operator) receives an object that cannot be dereferenced (e.g., `*object.Nil`). Instead of returning a symbolic placeholder for the result, it panics.
--   **Proposed Solution**: `evalStarExpr` should be modified to check the type of the operand. If the operand is not a pointer or is a nil pointer, it should return a `*object.SymbolicPlaceholder` instead of erroring out, allowing analysis to continue.
+// main.go
+package main
 
-## 4. Unsupported Unary Operation
+func GetDate() *timeutil.Date {
+    d := timeutil.Date("2024-01-01")
+    return &d
+}
 
--   **Symptom**: `unary operator - not supported for type UNRESOLVED_FUNCTION`
--   **Example Code**:
-    ```go
-    // Assume some.UnresolvedFunc() returns an unresolved function placeholder
-    x := -some.UnresolvedFunc()
-    ```
--   **Root Cause**: `evalUnaryExpr` does not handle cases where the operand is a symbolic or unresolved type. It attempts to perform the operation directly, which fails.
--   **Proposed Solution**: `evalUnaryExpr` should check if the operand is a concrete numeric type. If not, it should return a new `*object.SymbolicPlaceholder` representing the result of the unary operation.
+func main() {
+    // This call fails during symgo analysis
+    s := GetDate().String()
+}
+```
+In standard Go, this is perfectly valid. The `String()` method, which has a value receiver `(d Date)`, is correctly called on the pointer `*timeutil.Date` via automatic pointer dereferencing. The `symgo` engine fails to replicate this behavior.
 
-## 5. `len()` on Unsupported Types
+## 2. Root Cause Analysis
 
--   **Symptom**: `argument to \`len\` not supported, got INSTANCE` (or `POINTER`, `VARIADIC`, etc.)
--   **Example Code**:
-    ```go
-    // Assume getSymbolic() returns an *object.Instance
-    x := getSymbolic()
-    _ = len(x)
-    ```
--   **Root Cause**: The built-in intrinsic for `len()` only handles concrete slice, map, and string objects. When it receives a symbolic placeholder, it fails.
--   **Proposed Solution**: The `len()` intrinsic should be updated to handle symbolic placeholders by returning a new placeholder representing the length (e.g., `<Symbolic: len of ...>`).
+The issue lies in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function, which handles expressions like `x.y`.
 
-## 6. Incorrect Symbol Resolution for `recover`
+1.  **Function Call Evaluation:** The call to `GetDate()` is evaluated first. The `symgo` engine correctly determines it returns a pointer to a `Date` object. The result is wrapped in an `*object.ReturnValue`.
+2.  **Selector Expression Evaluation:** The `evalSelectorExpr` function is then called to resolve `.String()`.
+    -   It correctly unwraps the `*object.ReturnValue` at the beginning of the function, so the expression it analyzes (`left`) becomes an `*object.Pointer`.
+    -   It enters the `case *object.Pointer:` block.
+    -   Inside this block, it inspects the pointer's `Value` (the `pointee`).
+3.  **The Failure:** The `pointee` in this scenario is an `*object.Instance` of `Date`. However, the logic inside the `case *object.Pointer:` block does not check for registered intrinsics, which are essential for testing and for handling certain standard library functions. It attempts to resolve the method directly from type information, but because the test relies on an intrinsic, the call is never registered.
 
--   **Symptom**: `not a function: PACKAGE` when calling `recover()`
--   **Root Cause**: The evaluator incorrectly resolves the identifier `recover` to an imported package that happens to be named `recover` instead of prioritizing the Go built-in `recover` function.
--   **Proposed Solution**: The evaluator's identifier resolution logic must be updated to check for built-in functions **before** checking for package names in the current scope.
+As a result, the test assertion fails. The original user-reported error was slightly different but stemmed from the same core issue: incomplete logic for handling pointer receivers.
 
-## 7. `identifier not found` during test analysis
+## 3. Proposed Solution
 
--   **Symptom**: `identifier not found: opts`
--   **Root Cause**: This is likely a scoping issue within the code being analyzed, where a variable is used before it's declared in a way the evaluator doesn't anticipate.
--   **Proposed Solution**: While this might indicate an issue in the target code, the evaluator could be made more resilient. `evalIdent` could be modified to return a symbolic placeholder for an unfound identifier instead of a fatal error, allowing analysis to proceed further. This is a lower priority fix.
+The fix is to enhance the `case *object.Pointer:` block in `evalSelectorExpr`.
+
+1.  **Unwrap ReturnValue:** Add a check to see if the `pointee` is of type `*object.ReturnValue` and unwrap it. This handles cases where a function returns a pointer to a pointer.
+2.  **Add Intrinsic Checks:** Before resolving the method from type info, add checks for registered intrinsics for both pointer (`(*T).Method`) and value (`(T).Method`) receivers, mirroring the logic that already exists for `*object.Instance` receivers.
+
+This change will make the symbolic evaluator correctly model Go's automatic pointer dereferencing for method calls and ensure that intrinsics for pointer types are correctly resolved.
+
+## 4. Plan
+
+1.  **[COMPLETED]** Create this document (`docs/trouble-symgo2.md`).
+2.  **[COMPLETED]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
+3.  **[COMPLETED]** Run tests to confirm the failure.
+4.  **[COMPLETED]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
+5.  **[COMPLETED]** Run tests to verify the fix and check for regressions.
+6.  **[COMPLETED]** Update `TODO.md`.

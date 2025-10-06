@@ -453,3 +453,8 @@ func (i *Interpreter) CalledInterfaceMethodsForTest() map[string][]object.Object
 func (i *Interpreter) SeenPackagesForTest() map[string]*goscan.Package {
 	return i.eval.SeenPackagesForTest()
 }
+
+// PackageEnvForTest is a test helper to get a package's environment.
+func (i *Interpreter) PackageEnvForTest(pkgPath string) (*object.Environment, bool) {
+	return i.eval.PackageEnvForTest(pkgPath)
+}

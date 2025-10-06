@@ -13,11 +13,20 @@ import (
 func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Object {
 	switch n.Kind {
 	case token.INT:
-		i, err := strconv.ParseInt(n.Value, 0, 64)
-		if err != nil {
+		// Try parsing as int64 first.
+		if i, err := strconv.ParseInt(n.Value, 0, 64); err == nil {
+			return &object.Integer{Value: i}
+		} else {
+			// If it fails, check if it's a range error. If so, try uint64.
+			numErr, ok := err.(*strconv.NumError)
+			if ok && numErr.Err == strconv.ErrRange {
+				if u, err := strconv.ParseUint(n.Value, 0, 64); err == nil {
+					return &object.UnsignedInteger{Value: u}
+				}
+			}
+			// For any other error, or if uint64 parsing also fails, return an error.
 			return e.newError(ctx, n.Pos(), "could not parse %q as integer", n.Value)
 		}
-		return &object.Integer{Value: i}
 	case token.STRING:
 		s, err := strconv.Unquote(n.Value)
 		if err != nil {

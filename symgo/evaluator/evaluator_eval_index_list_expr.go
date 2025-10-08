@@ -17,7 +17,7 @@ func (e *Evaluator) evalIndexListExpr(ctx context.Context, node *ast.IndexListEx
 	// Handle generic instantiation `F[T, U]`
 	if fn, ok := left.(*object.Function); ok {
 		if fn.Def != nil && len(fn.Def.TypeParams) > 0 {
-			return e.evalGenericInstantiation(ctx, fn, node.Indices, node.Pos(), pkg)
+			return e.evalGenericInstantiation(ctx, fn, node.Indices, node.Pos(), env, pkg)
 		}
 	}
 	if t, ok := left.(*object.Type); ok {

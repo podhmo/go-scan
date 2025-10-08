@@ -107,10 +107,10 @@ This `todo.md` will focus on the more immediate and concrete enhancements listed
     -   *Full, robust resolution of complex `go.mod` scenarios (including inter-module replacements) is a significant challenge, further discussed in [./dream2.md](./dream2.md).*
 -   **Complexity of `ImportManager.Add`:**
     -   The alias generation logic in `ImportManager.Add` has several checks and fallback mechanisms. While aiming for correctness, its complexity might indicate potential edge cases that need thorough testing.
--   **Clarity of Scanner Method Behaviors (`ScanFiles`, `ScanPackage`, `ScanPackageByImport`):**
-    -   The interaction between the instance-level `visitedFiles` set, the instance-level `packageCache` (for `ScanPackageByImport` and `ScanPackage`), and the persistent `symbolCache` can be intricate.
+-   **Clarity of Scanner Method Behaviors (`ScanFiles`, `ScanPackageFromFilePath`, `ScanPackageFromImportPath`):**
+    -   The interaction between the instance-level `visitedFiles` set, the instance-level `packageCache` (for `ScanPackageFromImportPath` and `ScanPackageFromFilePath`), and the persistent `symbolCache` can be intricate.
     -   The design choice for `ScanFiles` not to update the `packageCache` (as it represents partial information) should be clearly documented for users.
-    -   The "no merge" principle for `PackageInfo` objects returned by different scan calls means that obtaining a "complete" or "fully merged" view of a package might require a specific final scan (e.g., `ScanPackageByImport` after other partial scans) or careful orchestration by the user.
+    -   The "no merge" principle for `PackageInfo` objects returned by different scan calls means that obtaining a "complete" or "fully merged" view of a package might require a specific final scan (e.g., `ScanPackageFromImportPath` after other partial scans) or careful orchestration by the user.
 -   **Scanning and Resolution of External Dependencies:**
     -   The current `ExternalTypeOverride` mechanism allows treating external types as other Go types. A more advanced (and potentially optional) feature would be to fully scan and resolve types from external dependencies (via `go.mod`).
     -   *This is a significant feature, with performance and complexity implications, further explored in [./dream2.md](./dream2.md).*

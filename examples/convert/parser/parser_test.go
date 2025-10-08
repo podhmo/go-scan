@@ -17,12 +17,12 @@ import (
 
 // MockResolver is a mock implementation of PackageResolver for tests.
 type MockResolver struct {
-	ScanPackageByImportFunc func(ctx context.Context, importPath string) (*scanner.PackageInfo, error)
+	ScanPackageFromImportPathFunc func(ctx context.Context, importPath string) (*scanner.PackageInfo, error)
 }
 
-func (m *MockResolver) ScanPackageByImport(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
-	if m.ScanPackageByImportFunc != nil {
-		return m.ScanPackageByImportFunc(ctx, importPath)
+func (m *MockResolver) ScanPackageFromImportPath(ctx context.Context, importPath string) (*scanner.PackageInfo, error) {
+	if m.ScanPackageFromImportPathFunc != nil {
+		return m.ScanPackageFromImportPathFunc(ctx, importPath)
 	}
 	return nil, nil // Default mock behavior
 }
@@ -96,9 +96,9 @@ type MyTime time.Time
 		t.Fatalf("goscan.New() failed: %v", err)
 	}
 
-	pkg, err := s.ScanPackage(context.Background(), tmpdir)
+	pkg, err := s.ScanPackageFromFilePath(context.Background(), tmpdir)
 	if err != nil {
-		t.Fatalf("ScanPackage() failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePath() failed: %v", err)
 	}
 
 	got, err := Parse(context.Background(), s, pkg)

@@ -1,0 +1,66 @@
+package evaluator
+
+import (
+	"context"
+	"go/ast"
+	"go/token"
+	"strconv"
+	"strings"
+
+	"github.com/podhmo/go-scan/symgo/object"
+)
+
+func (e *Evaluator) evalBasicLit(ctx context.Context, n *ast.BasicLit) object.Object {
+	switch n.Kind {
+	case token.INT:
+		// Try parsing as int64 first.
+		if i, err := strconv.ParseInt(n.Value, 0, 64); err == nil {
+			return &object.Integer{Value: i}
+		} else {
+			// If it fails, check if it's a range error. If so, try uint64.
+			numErr, ok := err.(*strconv.NumError)
+			if ok && numErr.Err == strconv.ErrRange {
+				if u, err := strconv.ParseUint(n.Value, 0, 64); err == nil {
+					return &object.UnsignedInteger{Value: u}
+				}
+			}
+			// For any other error, or if uint64 parsing also fails, return an error.
+			return e.newError(ctx, n.Pos(), "could not parse %q as integer", n.Value)
+		}
+	case token.STRING:
+		s, err := strconv.Unquote(n.Value)
+		if err != nil {
+			return e.newError(ctx, n.Pos(), "could not unquote string %q", n.Value)
+		}
+		return &object.String{Value: s}
+	case token.CHAR:
+		s, err := strconv.Unquote(n.Value)
+		if err != nil {
+			return e.newError(ctx, n.Pos(), "could not unquote char %q", n.Value)
+		}
+		// A char literal unquotes to a string containing the single character.
+		// We take the first (and only) rune from that string.
+		if len(s) == 0 {
+			return e.newError(ctx, n.Pos(), "invalid empty char literal %q", n.Value)
+		}
+		runes := []rune(s)
+		return &object.Integer{Value: int64(runes[0])}
+	case token.FLOAT:
+		f, err := strconv.ParseFloat(n.Value, 64)
+		if err != nil {
+			return e.newError(ctx, n.Pos(), "could not parse %q as float", n.Value)
+		}
+		return &object.Float{Value: f}
+	case token.IMAG:
+		// The value is like "123i", "0.5i", etc.
+		// We need to parse the numeric part.
+		imagStr := strings.TrimSuffix(n.Value, "i")
+		f, err := strconv.ParseFloat(imagStr, 64)
+		if err != nil {
+			return e.newError(ctx, n.Pos(), "could not parse %q as imaginary", n.Value)
+		}
+		return &object.Complex{Value: complex(0, f)}
+	default:
+		return e.newError(ctx, n.Pos(), "unsupported literal type: %s", n.Kind)
+	}
+}

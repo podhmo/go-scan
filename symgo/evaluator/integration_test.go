@@ -48,17 +48,22 @@ func main() {
 			eval.Eval(ctx, file, env, pkg)
 		}
 
+		pkgEnv, ok := eval.PackageEnvForTest(pkg.ImportPath)
+		if !ok {
+			return fmt.Errorf("package env not found for %q", pkg.ImportPath)
+		}
+
 		intrinsic := &object.Intrinsic{
-			Fn: func(args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, args ...object.Object) object.Object {
 				if len(args) > 0 {
 					inspectedType = args[0]
 				}
 				return nil
 			},
 		}
-		env.Set("inspect_type", intrinsic)
+		pkgEnv.Set("inspect_type", intrinsic)
 
-		mainFuncObj, ok := env.Get("main")
+		mainFuncObj, ok := pkgEnv.Get("main")
 		if !ok {
 			return fmt.Errorf("main function not found in environment")
 		}

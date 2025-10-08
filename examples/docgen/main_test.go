@@ -239,11 +239,11 @@ func TestDocgen_fullParameters(t *testing.T) {
 
 	tracer := &recordingTracer{visitedNodePositions: make(map[token.Pos]bool)}
 
-	visit := func(node ast.Node) {
-		if node == nil {
+	visit := func(event symgo.TraceEvent) {
+		if event.Node == nil {
 			return
 		}
-		tracer.visitedNodePositions[node.Pos()] = true
+		tracer.visitedNodePositions[event.Node.Pos()] = true
 	}
 
 	// This test is based on the scenario described in `docs/trouble-docgen.md`.
@@ -298,7 +298,7 @@ func TestDocgen_fullParameters(t *testing.T) {
 
 	// Assert that the tracer visited all nodes in the target handler.
 	// This confirms the symbolic execution engine is not skipping parts of the function.
-	scannedPkg, err := s.ScanPackageByImport(ctx, apiPath)
+	scannedPkg, err := s.ScanPackageFromImportPath(ctx, apiPath)
 	if err != nil {
 		t.Fatalf("Could not re-scan package to find handler AST: %v", err)
 	}

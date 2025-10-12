@@ -22,7 +22,7 @@ func main() {
 		cwd      string
 		dryRun   bool
 		inspect  bool
-		logLevel = slog.LevelInfo
+		logLevel = slog.LevelWarn
 	)
 
 	flag.StringVar(&cwd, "cwd", ".", "current working directory")

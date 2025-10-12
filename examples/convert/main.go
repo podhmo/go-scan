@@ -37,7 +37,7 @@ func main() {
 		dryRun        = flag.Bool("dry-run", false, "don't write files, just print to stdout")
 		inspect       = flag.Bool("inspect", false, "enable inspection logging for annotations")
 		buildTags     = flag.String("tags", "", "build tags to use when running the code generator")
-		logLevel      = slog.LevelInfo
+		logLevel      = slog.LevelWarn
 	)
 	flag.TextVar(&logLevel, "log-level", &logLevel, "set log level (debug, info, warn, error)")
 	flag.Usage = func() {

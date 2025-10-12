@@ -31,7 +31,7 @@ func main() {
 		patternsFile string
 		entrypoint   string
 		extraPkgs    stringSlice
-		logLevel     = slog.LevelInfo
+		logLevel     = slog.LevelWarn
 	)
 	flag.StringVar(&format, "format", "json", "Output format (json or yaml)")
 	flag.StringVar(&patternsFile, "patterns", "", "Path to a Go file with custom pattern configurations")

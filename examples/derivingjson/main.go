@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/derivingjson/gen"
@@ -21,7 +22,7 @@ func main() {
 		cwd      string
 		dryRun   bool
 		inspect  bool
-		logLevel = slog.LevelInfo
+		logLevel = slog.LevelWarn
 	)
 
 	flag.StringVar(&cwd, "cwd", ".", "current working directory")

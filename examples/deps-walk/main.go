@@ -32,7 +32,7 @@ func main() {
 		test        bool
 		dryRun      bool
 		inspect     bool
-		logLevel    = slog.LevelInfo
+		logLevel    = slog.LevelWarn
 	)
 
 	// No -start-pkg flag, positional arguments are used instead

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert-define/internal"
@@ -15,35 +14,6 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-// logLevelVar is a custom flag.Value implementation for slog.LevelVar
-type logLevelVar struct {
-	levelVar *slog.LevelVar
-}
-
-func (v *logLevelVar) String() string {
-	if v.levelVar == nil {
-		return ""
-	}
-	return v.levelVar.Level().String()
-}
-
-func (v *logLevelVar) Set(s string) error {
-	var level slog.Level
-	switch strings.ToLower(s) {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		return fmt.Errorf("unknown log level: %s", s)
-	}
-	v.levelVar.Set(level)
-	return nil
-}
 
 func main() {
 	var (
@@ -53,7 +23,8 @@ func main() {
 		buildTags  = flag.String("tags", "", "build tags to use when running the code generator")
 		logLevel   = new(slog.LevelVar)
 	)
-	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
+	logLevel.Set(slog.LevelWarn) // Set default level
+	flag.TextVar(logLevel, "log-level", logLevel, "set log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: convert-define -file <definitions.go> [-output <filename>]\n")
 		flag.PrintDefaults()

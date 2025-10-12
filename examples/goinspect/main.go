@@ -50,7 +50,9 @@ func main() {
 	includeUnexported := flag.Bool("include-unexported", false, "Include unexported functions as entry points")
 	shortFormat := flag.Bool("short", false, "Use short format for output")
 	expandFormat := flag.Bool("expand", false, "Use expand format for output with UIDs")
-	logLevel := flag.String("log-level", "warn", "Log level (debug, info, warn, error)")
+	var logLevel = new(slog.LevelVar)
+	logLevel.Set(slog.LevelWarn) // Set default level
+	flag.TextVar(logLevel, "log-level", logLevel, "Log level (debug, info, warn, error)")
 
 	flag.Parse()
 
@@ -59,20 +61,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	var level slog.Level
-	switch *logLevel {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		log.Fatalf("Unknown log level: %s", *logLevel)
-	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
 	if err := run(context.Background(), os.Stdout, logger, pkgPatterns, withPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)

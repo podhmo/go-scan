@@ -16,35 +16,6 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
-// logLevelVar is a custom flag.Value implementation for slog.LevelVar
-type logLevelVar struct {
-	levelVar *slog.LevelVar
-}
-
-func (v *logLevelVar) String() string {
-	if v.levelVar == nil {
-		return ""
-	}
-	return v.levelVar.Level().String()
-}
-
-func (v *logLevelVar) Set(s string) error {
-	var level slog.Level
-	switch strings.ToLower(s) {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		return fmt.Errorf("unknown log level: %s", s)
-	}
-	v.levelVar.Set(level)
-	return nil
-}
 
 func main() {
 	var (
@@ -54,10 +25,11 @@ func main() {
 		logLevel = new(slog.LevelVar)
 	)
 
+	logLevel.Set(slog.LevelWarn) // Set default level
 	flag.StringVar(&cwd, "cwd", ".", "current working directory")
 	flag.BoolVar(&dryRun, "dry-run", false, "don't write files, just print to stdout")
 	flag.BoolVar(&inspect, "inspect", false, "enable inspection logging for annotations")
-	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
+	flag.TextVar(logLevel, "log-level", logLevel, "set log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: derivingbind [options] <file_or_dir_path_1> [file_or_dir_path_2 ...]\n")
 		fmt.Fprintf(os.Stderr, "Example (file): derivingbind examples/derivingbind/testdata/simple/models.go\n")

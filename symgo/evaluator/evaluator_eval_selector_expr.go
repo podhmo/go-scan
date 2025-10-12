@@ -557,6 +557,13 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 		return &object.SymbolicPlaceholder{
 			Reason: fmt.Sprintf("selection from unresolved type %s.%s", val.PkgPath, val.TypeName),
 		}
+	case *object.Slice, *object.Integer, *object.String, *object.Float, *object.Complex, *object.Boolean:
+		// Attempting to select a field or method on a primitive type is invalid.
+		// Instead of returning a hard error, return a placeholder to allow analysis to continue.
+		e.logc(ctx, slog.LevelWarn, "invalid selector on primitive value", "type", left.Type(), "selector", n.Sel.Name)
+		return &object.SymbolicPlaceholder{
+			Reason: fmt.Sprintf("invalid selector on %s value", left.Type()),
+		}
 	default:
 		return e.newError(ctx, n.Pos(), "expected a package, instance, or pointer on the left side of selector, but got %s", left.Type())
 	}

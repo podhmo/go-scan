@@ -33,7 +33,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
     - **Functions and Data Structures**: Supports user-defined functions, rich error reporting with stack traces, and composite types including structs, slices, and maps.
     - **Advanced Language Features**: Includes full support for pointers (`&`, `*`), method definitions on structs, interface definitions and dynamic dispatch, struct embedding, and basic generics. The interpreter's `for` loops now correctly create per-iteration variables, preventing common closure-related bugs, and aligning with modern Go semantics.
     - **Go Interoperability**: Provides a robust bridge to Go, allowing scripts to call Go functions, access Go variables, and unmarshal script results back into Go structs via `Result.As()`. Lazy, on-demand loading of imported Go packages is also supported.
-- **Final API for `convert` Tool**: A new IDE-native method for configuring the `convert` tool using a `define` package. This allows for type-safe, statically valid Go code for defining conversion rules, improving the developer experience over the previous annotation-based system.
+- **Final API for `convert` Tool**: A new IDE-native method for aconfiguring the `convert` tool using a `define` package. This allows for type-safe, statically valid Go code for defining conversion rules, improving the developer experience over the previous annotation-based system.
 - **Parallel go-scan**: Implemented concurrent parsing and made the core scanner thread-safe.
 - **Automated Minigo Bindings Generation**: Created a tool to automatically generate `minigo` bindings for Go packages, including initial support for several standard library packages. ([docs/plan-minigo-gen-bindings.md](./docs/plan-minigo-gen-bindings.md)) (now integrated as `minigo gen-bindings`)
 - **MiniGo REPL**: Added a REPL for interactive script evaluation. ([docs/plan-minigo-repl.md](./docs/plan-minigo-repl.md))
@@ -129,7 +129,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
   - [x] Prevent `invalid indirect` errors from nil pointer dereferencing.
 - [ ] **Medium Priority**:
   - [x] Support `uint64` and large integer constants to prevent overflow.
-  - [ ] Improve type inference to fix selector type errors.
+  - [x] Improve type inference to fix selector type errors.
   - [ ] Implement missing operators for `complex` types.
 - [ ] **Low Priority**:
   - [ ] Support parsing of large hex literals (related to `uint64` support).

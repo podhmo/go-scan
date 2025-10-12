@@ -27,24 +27,20 @@ func (s *stringSlice) Set(value string) error {
 
 func main() {
 	var (
-		debug        bool
 		format       string
 		patternsFile string
 		entrypoint   string
 		extraPkgs    stringSlice
+		logLevel     = slog.LevelWarn
 	)
-	flag.BoolVar(&debug, "debug", false, "Enable debug logging for the analysis")
 	flag.StringVar(&format, "format", "json", "Output format (json or yaml)")
 	flag.StringVar(&patternsFile, "patterns", "", "Path to a Go file with custom pattern configurations")
 	flag.StringVar(&entrypoint, "entrypoint", "NewServeMux", "The entrypoint function name")
 	flag.Var(&extraPkgs, "include-pkg", "Specify an external package to treat as internal (can be used multiple times)")
+	flag.TextVar(&logLevel, "log-level", &logLevel, "set log level (debug, info, warn, error)")
 	flag.Parse()
 
-	logLevel := slog.LevelInfo
-	if debug {
-		logLevel = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: &logLevel}))
 
 	if err := run(logger, format, patternsFile, entrypoint, extraPkgs); err != nil {
 		logger.Error("docgen failed", "error", err)

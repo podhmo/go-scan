@@ -16,35 +16,6 @@ import (
 	goscan "github.com/podhmo/go-scan"
 )
 
-// logLevelVar is a custom flag.Value implementation for slog.LevelVar
-type logLevelVar struct {
-	levelVar *slog.LevelVar
-}
-
-func (v *logLevelVar) String() string {
-	if v.levelVar == nil {
-		return ""
-	}
-	return v.levelVar.Level().String()
-}
-
-func (v *logLevelVar) Set(s string) error {
-	var level slog.Level
-	switch strings.ToLower(s) {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		return fmt.Errorf("unknown log level: %s", s)
-	}
-	v.levelVar.Set(level)
-	return nil
-}
 
 func main() {
 	var (
@@ -61,7 +32,7 @@ func main() {
 		test        bool
 		dryRun      bool
 		inspect     bool
-		logLevel    = new(slog.LevelVar)
+		logLevel    = slog.LevelWarn
 	)
 
 	// No -start-pkg flag, positional arguments are used instead
@@ -78,7 +49,7 @@ func main() {
 	flag.BoolVar(&test, "test", false, "Include test files in the analysis")
 	flag.BoolVar(&dryRun, "dry-run", false, "don't write to output file, just print to stdout")
 	flag.BoolVar(&inspect, "inspect", false, "enable inspection logging")
-	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
+	flag.TextVar(&logLevel, "log-level", &logLevel, "set log level (debug, info, warn, error)")
 	flag.Parse()
 
 	startPkgs := flag.Args()
@@ -87,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	opts := slog.HandlerOptions{Level: logLevel}
+	opts := slog.HandlerOptions{Level: &logLevel}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
 	slog.SetDefault(logger)
 

@@ -90,7 +90,7 @@ func main() {
 
 `evaluator` 側のデバッグを継続し、`evalGenDecl` や `evalAssignStmt` などで、`scanner` から渡された `TypeInfo` がどのように処理されているかを追跡する必要がある。問題は `scanner` と `evaluator` の両方にまたがる、より複雑なものであることが判明した。
 
-## `type-switch` で `*object.Function` の型情報が失われる問題
+## `find-orphans` でジェネリック型のメソッド解決時にクラッシュする問題
 
 -   **発見日**: 2025-10-13
 -   **関連**: `find-orphans`, `symgo`
@@ -98,18 +98,18 @@ func main() {
 
 ### 現象
 
-`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際、`e2e` テスト (`make -C examples/find-orphans e2e`) を実行すると、`undefined method or field: WithReceiver for pointer type INSTANCE` というエラーが出力されていた。
+`find-orphans` ツールを実行すると、`undefined method or field: WithReceiver for pointer type INSTANCE` というエラーでクラッシュしていた。
 
-このエラーは、`interface{}` 型に格納された `*object.Function` を `type-switch` で元の型にキャストしようとした際に発生していた。
+このエラーは、`symgo` のエバリュエーターがジェネリック型（例: `type G[T any] struct{}`）のインスタンスに対してメソッド呼び出し（例: `g.Do()`）を解決しようとする際に発生していた。
 
 ### 原因
 
-根本原因は、`symgo/scanner` パッケージが `type MyFunc func()` のような関数型エイリアスをパースする際に、そのエイリアス名 (`MyFunc`) とパッケージパスを、`TypeInfo` が内包する `FunctionInfo` 構造体に正しく伝播させていなかったことにある。
+エバリュエーターの `accessor.go` 内にある `findDirectMethodOnType` 関数が、メソッド解決の過程で `getOrResolveFunction` を呼び出す。ジェネリック型のメソッドの場合、この関数は具象的な `*object.Function` ではなく、ジェネリック関数のインスタンスを表す `*object.INSTANCE` を返すことがあった。
 
-これにより、`symgo/evaluator` が `MyFunc` 型の `TypeInfo` を解決しようとしても、`scanner` から得られる情報にエイリアス名が含まれていないため、解決に失敗していた。その結果、`evalGenDecl` で `*object.Function` に正しい `TypeInfo` が設定されず、後の `evalTypeSwitchStmt` での型比較が失敗し、`default` 節にフォールバックして `*object.Instance` が生成され、エラーを引き起こしていた。
+しかし、`findDirectMethodOnType` の後続のコードは、返り値が常に `*object.Function` 型であると想定しており、`*object.INSTANCE` 型を適切に処理できていなかった。`*object.INSTANCE` 型のオブジェクトに対して `WithReceiver` メソッドを呼び出そうとした結果、`undefined method` エラーが発生し、クラッシュにつながっていた。
 
 ### 解決策
 
-`scanner/scanner.go` の `fillTypeInfoFromSpec` 関数を修正した。`*ast.FuncType` を処理するケースで、親の `TypeInfo` が持つエイリアス名とパッケージパスを、新しく生成される `FunctionInfo` に明示的にコピーするようにした。
+`symgo/evaluator/accessor.go` の `findDirectMethodOnType` 関数を修正した。`getOrResolveFunction` から返されたオブジェクトに対して、`*object.Function` への直接の型アサーションを行うのではなく、`type switch` を使用して `*object.INSTANCE` 型である可能性を考慮するようにした。
 
-この修正により、`scanner` は関数型エイリアスの情報を完全に保持するようになり、`evaluator` はそれを正しく解決できるようになった。結果として、`evaluator` 側の修正は不要となり、`scanner` の修正のみで `find-orphans` のe2eテストが成功することが確認された。
+`*object.INSTANCE` 型であった場合、その `Underlying` フィールドに格納されている実際の `*object.Function` を取り出して使用する。この修正により、ジェネリック型のメソッドが正しく解決され、`WithReceiver` が呼び出せるようになり、クラッシュが解消された。

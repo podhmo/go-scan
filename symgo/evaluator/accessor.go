@@ -182,9 +182,22 @@ func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner
 	// Get the base function object (without a receiver).
 	// This might be cached or resolved on the fly.
 	baseFnObj := a.eval.getOrResolveFunction(ctx, pkgObj, methodInfo)
-	baseFn, ok := baseFnObj.(*object.Function)
-	if !ok {
-		return nil, fmt.Errorf("resolved method %q is not a function object", methodName)
+
+	var baseFn *object.Function
+	switch fn := baseFnObj.(type) {
+	case *object.Function:
+		baseFn = fn
+	case *object.Instance:
+		// If it's an instance of a generic function, the actual function
+		// might be in the 'Underlying' field.
+		if underlyingFn, ok := fn.Underlying.(*object.Function); ok {
+			baseFn = underlyingFn
+		}
+	}
+
+	if baseFn == nil {
+		a.eval.logc(ctx, slog.LevelError, "resolved method is not a function object", "method", methodName, "got", fmt.Sprintf("%T", baseFnObj))
+		return nil, fmt.Errorf("resolved method %q is not a function object, but %T", methodName, baseFnObj)
 	}
 
 	// Create a new function object with the receiver and its position bound.

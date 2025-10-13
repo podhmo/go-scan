@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
 	"go/printer"
+	"go/token"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -693,6 +697,11 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		if _, err := interp.Apply(ctx, ep, args, ep.Package); err != nil {
 			slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
 			// We continue to the next entry point even if one fails.
+			var symgoErr *symgo.Error
+			if errors.As(err, &symgoErr) && symgoErr.Pos != token.NoPos {
+				dumpStack(os.Stderr, a.s.Fset(), symgoErr.CallStack)
+			}
+			panic(err) // For now, panic to get a full stack trace during debugging.
 		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
@@ -932,4 +941,41 @@ func isTestFunction(def *scanner.FunctionInfo) bool {
 	// We don't need to check the import path alias here, as go/parser resolves
 	// the identifier to the original package name (`testing`).
 	return ident.Name == "testing" && sel.Sel.Name == "T"
+}
+
+func dumpStack(w io.Writer, fset *token.FileSet, callStack []*object.CallFrame) {
+	fmt.Fprintln(w, "----------------------------------------")
+	fmt.Fprintln(w, "analysis target stack:")
+	for i := len(callStack) - 1; i >= 0; i-- {
+		frame := callStack[i]
+		posStr := ""
+		if frame.Pos.IsValid() {
+			posStr = fset.Position(frame.Pos).String()
+		}
+		fmt.Fprintf(w, "  at %s (%s)\n", frame.Function, posStr)
+
+		{
+			if frame.Pos.IsValid() {
+				position := fset.Position(frame.Pos)
+				f, err := os.Open(position.Filename)
+				if err != nil {
+					fmt.Fprintln(w, "       (failed to open source file:", err, ")")
+					f.Close()
+					continue
+				}
+				s := bufio.NewScanner(f)
+				lineno := 1
+				for s.Scan() {
+					if lineno == position.Line {
+						fmt.Fprintf(w, "       > %d: %s\n", lineno, s.Text())
+					} else if lineno >= position.Line-2 && lineno <= position.Line+2 {
+						fmt.Fprintf(w, "         %d: %s\n", lineno, s.Text())
+					}
+					lineno++
+				}
+				f.Close()
+			}
+		}
+	}
+	fmt.Fprintln(w, "----------------------------------------")
 }

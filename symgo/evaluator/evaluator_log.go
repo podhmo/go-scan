@@ -1,12 +1,9 @@
 package evaluator
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
-	"os"
 	"runtime"
 
 	"github.com/podhmo/go-scan/symgo/object"
@@ -54,50 +51,4 @@ func (e *Evaluator) logcWithCallerDepth(ctx context.Context, level slog.Level, d
 	}
 
 	e.logger.Log(ctx, level, msg, args...)
-
-	// Optionally dump the call stack on errors for debugging.
-	if dumpStackEnabled && level >= slog.LevelError {
-		dumpStack(e, os.Stderr)
-		panic("dump stack for debug")
-	}
-}
-
-// dumpStackEnabled controls whether to dump the call stack on errors.
-var dumpStackEnabled = os.Getenv("SYMGO_DUMP_STACK") != ""
-
-func dumpStack(e *Evaluator, w io.Writer) {
-	fmt.Fprintln(w, "----------------------------------------")
-	fmt.Fprintln(w, "analysis target stack:")
-	for i := len(e.callStack) - 1; i >= 0; i-- {
-		frame := e.callStack[i]
-		posStr := ""
-		if e.scanner != nil && e.scanner.Fset() != nil && frame.Pos.IsValid() {
-			posStr = e.scanner.Fset().Position(frame.Pos).String()
-		}
-		fmt.Fprintf(w, "  at %s (%s)\n", frame.Function, posStr)
-
-		{
-			if frame.Pos.IsValid() {
-				position := e.scanner.Fset().Position(frame.Pos)
-				f, err := os.Open(position.Filename)
-				if err != nil {
-					fmt.Fprintln(w, "       (failed to open source file:", err, ")")
-					f.Close()
-					continue
-				}
-				s := bufio.NewScanner(f)
-				lineno := 1
-				for s.Scan() {
-					if lineno == position.Line {
-						fmt.Fprintf(w, "       > %d: %s\n", lineno, s.Text())
-					} else if lineno >= position.Line-2 && lineno <= position.Line+2 {
-						fmt.Fprintf(w, "         %d: %s\n", lineno, s.Text())
-					}
-					lineno++
-				}
-				f.Close()
-			}
-		}
-	}
-	fmt.Fprintln(w, "----------------------------------------")
 }

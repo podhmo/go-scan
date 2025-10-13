@@ -2,9 +2,11 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"log/slog"
+	"os"
 
 	scan "github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -30,7 +32,10 @@ func (e *Evaluator) evalFile(ctx context.Context, file *ast.File, env *object.En
 		case *ast.GenDecl:
 			switch d.Tok {
 			case token.VAR:
-				e.evalGenDecl(ctx, d, targetEnv, pkg)
+				result := e.evalGenDecl(ctx, d, targetEnv, pkg)
+				if isError(result) {
+					fmt.Fprintf(os.Stderr, "!!!!!!!@@error: %s\n", result.Inspect())
+				}
 			case token.TYPE:
 				e.evalTypeDecl(ctx, d, targetEnv, pkg)
 			}

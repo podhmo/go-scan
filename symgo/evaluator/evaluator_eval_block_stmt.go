@@ -2,7 +2,9 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
+	"os"
 
 	scan "github.com/podhmo/go-scan/scanner"
 	"github.com/podhmo/go-scan/symgo/object"
@@ -31,7 +33,10 @@ func (e *Evaluator) evalBlockStmt(ctx context.Context, block *ast.BlockStmt, env
 		}
 
 		switch result.(type) {
-		case *object.ReturnValue, *object.Error, *object.PanicError, *object.Break, *object.Continue:
+		case *object.Error:
+			fmt.Fprintf(os.Stderr, "!!!!!!!!!error: %s\n", result.Inspect())
+			return result
+		case *object.ReturnValue, *object.PanicError, *object.Break, *object.Continue:
 			return result
 		}
 	}

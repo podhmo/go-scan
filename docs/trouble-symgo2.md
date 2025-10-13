@@ -1,10 +1,10 @@
-# Troubleshooting symgo: undefined method WithReceiver
+# `symgo`: Metacircular analysis fails for method calls on `*object.Function`
 
 This document tracks the investigation into the `undefined method or field: WithReceiver for pointer type INSTANCE` error.
 
 ## Error Reproduction
 
-The error is triggered by running the `find-orphans` end-to-end test:
+The error is triggered by running the `find-orphans` end-to-end test, which causes `symgo` to analyze its own source code.
 
 ```bash
 make -C examples/find-orphans
@@ -12,30 +12,10 @@ make -C examples/find-orphans
 
 The output log contains the following error:
 ```
-time=2025-10-13T11:22:26.440Z level=ERROR msg="undefined method or field: WithReceiver for pointer type INSTANCE" in_func=findDirectMethodOnType in_func_pos=/app/symgo/evaluator/accessor.go:126:20 exec_pos=/app/symgo/evaluator/evaluator_eval_selector_expr.go:520 pos=/app/symgo/evaluator/accessor.go:191:13
+level=ERROR msg="undefined method or field: WithReceiver for pointer type INSTANCE" in_func=findDirectMethodOnType in_func_pos=/app/symgo/evaluator/accessor.go:126:20 exec_pos=/app/symgo/evaluator/evaluator_eval_selector_expr.go:520 pos=/app/symgo/evaluator/accessor.go:191:13
 ```
 
-## Debugging
-
-I modified `symgo/evaluator/evaluator_log.go` to panic on error and dump the symbolic call stack.
-
-### Panic Output
-
-```
-time=2025-10-13T11:23:37.060Z level=ERROR msg="undefined method or field: WithReceiver for pointer type INSTANCE" in_func=findDirectMethodOnType in_func_pos=/app/symgo/evaluator/accessor.go:126:20 exec_pos=/app/symgo/evaluator/evaluator_eval_selector_expr.go:520 pos=/app/symgo/evaluator/accessor.go:191:13
-panic: terminating due to error: undefined method or field: WithReceiver for pointer type INSTANCE
-
-goroutine 1 [running]:
-github.com/podhmo/go-scan/symgo/evaluator.(*Evaluator).logcWithCallerDepth(0xc000866000, {0x6a0ee0, 0x80f420}, 0x8, 0x2, {0xc003f6e050, 0x41}, {0xc003f94118, 0x2, 0x2})
-	/app/symgo/evaluator/evaluator_log.go:57 +0x6e5
-github.com/podhmo/go-scan/symgo/evaluator.(*Evaluator).newError(0xc000866000, {0x6a0ee0, 0x80f420}, 0x38e999, {0x657910, 0x31}, {0xc003f94b18, 0x2, 0x2})
-	/app/symgo/evaluator/evaluator_new_error.go:18 +0x245
-github.com/podhmo/go-scan/symgo/evaluator.(*Evaluator).evalSelectorExpr(0xc000866000, {0x6a0ee0, 0x80f420}, 0xc0011415a8, 0xc003f4f150, 0xc0013ab700)
-	/app/symgo/evaluator/evaluator_eval_selector_expr.go:520 +0x2813
-... (omitted for brevity) ...
-```
-
-### Analysis
+## Root Cause Analysis
 
 The runtime stack trace shows the panic originates in `evalSelectorExpr`. The key log entries are:
 - `in_func=findDirectMethodOnType`: The evaluator was *analyzing* this function.
@@ -52,8 +32,27 @@ The error message `undefined method or field: WithReceiver for pointer type INST
 
 The fundamental issue is the incorrect symbolic representation of `*object.Function` during self-analysis.
 
-### Proposed Solution
+## Proposed Solution
 
 The fix is to make the evaluator correctly handle this metacircular case. Inside `evalSelectorExpr`, the `case *object.Pointer:` block should be modified. The `switch` statement on the `pointee` (the dereferenced object) needs a new case: `case *object.Function:`.
 
 This new case would specifically handle method calls on pointers to function objects. When the selector is `WithReceiver`, it would recognize this as a valid "meta-call" and return a new, callable `*object.Function`, allowing the analysis to proceed correctly.
+
+## Code to Reproduce
+
+A minimal Go code snippet to trigger this specific bug within a `symgo` test would look something like this:
+
+```go
+package mytest
+
+import "github.com/podhmo/go-scan/symgo/object"
+
+func F(fn *object.Function) {
+	// This selector expression is what causes the failure during
+	// symbolic execution. The evaluator incorrectly represents `fn`
+	// as a pointer to an INSTANCE, not a pointer to a FUNCTION.
+	_ = fn.WithReceiver(nil, 0)
+}
+```
+
+When the `symgo` evaluator analyzes this function `F`, it will fail with the `undefined method: WithReceiver` error because it dereferences the pointer to `fn` and gets a symbolic `*object.Instance` instead of the expected `*object.Function`.

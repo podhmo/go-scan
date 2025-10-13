@@ -1,58 +1,67 @@
-# `symgo`: Metacircular analysis fails for method calls on `*object.Function`
+# `symgo` のトラブルシューティング (2)
 
-This document tracks the investigation into the `undefined method or field: WithReceiver for pointer type INSTANCE` error.
+## `panic(nil)` がクラッシュを引き起こす問題
 
-## Error Reproduction
+-   **発見日**: 2024-07-25
+-   **関連**: `goinspect`, `find-orphans`
+-   **ステータス**: <span style="color:green; font-weight:bold">解決済み</span> (2024-07-25)
 
-The error is triggered by running the `find-orphans` end-to-end test, which causes `symgo` to analyze its own source code.
+### 現象
 
-```bash
-make -C examples/find-orphans
-```
+`symgo` が `panic(nil)` を含むコードを分析すると、`evaluator.Eval` 内で Go のランタイムパニック（nil ポインタ逆参照）が発生し、分析全体がクラッシュする。
 
-The output log contains the following error:
-```
-level=ERROR msg="undefined method or field: WithReceiver for pointer type INSTANCE" in_func=findDirectMethodOnType in_func_pos=/app/symgo/evaluator/accessor.go:126:20 exec_pos=/app/symgo/evaluator/evaluator_eval_selector_expr.go:520 pos=/app/symgo/evaluator/accessor.go:191:13
-```
+### 原因
 
-## Root Cause Analysis
-
-The runtime stack trace shows the panic originates in `evalSelectorExpr`. The key log entries are:
-- `in_func=findDirectMethodOnType`: The evaluator was *analyzing* this function.
-- `pos=/app/symgo/evaluator/accessor.go:191:13`: The specific AST node being analyzed was `boundFn := baseFn.WithReceiver(receiver, receiverPos)`.
-
-The error message `undefined method or field: WithReceiver for pointer type INSTANCE` reveals the root cause. This is a metacircular analysis problem.
-
-1.  The `symgo` evaluator is analyzing its own source code, specifically `accessor.go`.
-2.  It encounters the selector expression `baseFn.WithReceiver`.
-3.  To evaluate this, it first evaluates the left-hand side, `baseFn`.
-4.  Due to a flaw in how the evaluator represents its own internal types, the symbolic object for the `baseFn` variable (which is an `*object.Function` at runtime) is incorrectly created as an `*object.Pointer` pointing to an `*object.Instance` (where `TypeName` is "Function"), instead of an `*object.Pointer` pointing to an `*object.Function`.
-5.  The `evalSelectorExpr` function then handles the `*object.Pointer`. It dereferences it, gets the `*object.Instance`, and tries to find the method `WithReceiver` on it.
-6.  This fails because the `*object.Instance` type does not have a `WithReceiver` method.
-
-The fundamental issue is the incorrect symbolic representation of `*object.Function` during self-analysis.
-
-## Proposed Solution
-
-The fix is to make the evaluator correctly handle this metacircular case. Inside `evalSelectorExpr`, the `case *object.Pointer:` block should be modified. The `switch` statement on the `pointee` (the dereferenced object) needs a new case: `case *object.Function:`.
-
-This new case would specifically handle method calls on pointers to function objects. When the selector is `WithReceiver`, it would recognize this as a valid "meta-call" and return a new, callable `*object.Function`, allowing the analysis to proceed correctly.
-
-## Code to Reproduce
-
-A minimal Go code snippet to trigger this specific bug within a `symgo` test would look something like this:
+`evalPanicStmt` は `panic` の引数を評価するが、その引数が `nil` の場合、`e.Eval` は `object.NIL` を返す。しかし、`evalPanicStmt` の後続のコードは、この返り値が常に有効なオブジェクト（`Inspect()` メソッドを持つ）であることを期待していたため、`object.NIL` の `Inspect()` を呼び出そうとしてランタイムパニックが発生していた。
 
 ```go
-package mytest
-
-import "github.com/podhmo/go-scan/symgo/object"
-
-func F(fn *object.Function) {
-	// This selector expression is what causes the failure during
-	// symbolic execution. The evaluator incorrectly represents `fn`
-	// as a pointer to an INSTANCE, not a pointer to a FUNCTION.
-	_ = fn.WithReceiver(nil, 0)
+// symgo/evaluator/evaluator.go: evalPanicStmt
+func (e *Evaluator) evalPanicStmt(ctx context.Context, n *ast.PanicStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+	// ...
+	val := e.Eval(ctx, n.X, env, pkg)
+	if isError(val) {
+		return val
+	}
+	// ここで `val` が object.NIL になりうる
+	e.logc(ctx, slog.LevelDebug, "panic statement evaluated", "value", val.Inspect()) // val.Inspect() でパニック
+	return &object.PanicError{Value: val}
 }
 ```
 
-When the `symgo` evaluator analyzes this function `F`, it will fail with the `undefined method: WithReceiver` error because it dereferences the pointer to `fn` and gets a symbolic `*object.Instance` instead of the expected `*object.Function`.
+### 解決策
+
+`evalPanicStmt` 内で、`e.Eval` から返された値が `object.NIL` であるかどうかをチェックする処理を追加した。`object.NIL` の場合は、`PanicError` の `Value` フィールドにそのまま `object.NIL` を設定する。これにより、`Inspect()` の呼び出しが回避され、クラッシュしなくなった。
+
+## `find-orphans` が自己分析時にクラッシュする問題
+
+-   **発見日**: 2024-07-26
+-   **関連**: `find-orphans`, `symgo`
+-   **ステータス**: <span style="color:green; font-weight:bold">解決済み</span> (2025-10-13)
+
+### 現象
+
+`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際、またはそれと同様の状況で、関数型エイリアスに定義されたメソッドがポインタ経由で呼び出されると、エバリュエーターが `undefined method or field` エラーを発生させていた。
+
+### 原因
+
+根本原因は、関数リテラルが、名前付きの関数型（例: `type MyFunc func()`）を返り値とする関数から返される際に、その名前付きの型の情報 (`TypeInfo`) が、結果の `*object.Function` に関連付けられていなかったことにある。
+
+```go
+func getFn() MyFunc { // MyFunc は type MyFunc func()
+    return func() {} // この時点で返される *object.Function は MyFunc の TypeInfo を持たない
+}
+
+func main() {
+    fn := getFn() // fn の *object.Variable には MyFunc の型情報があるが...
+    fn_ptr := &fn
+    fn_ptr.WithReceiver() // ここで fn_ptr の先の Function の TypeInfo が見つからずエラー
+}
+```
+
+このため、後続の `evalSelectorExpr` がメソッドを解決しようとしても、レシーバの `TypeInfo` が見つからず、失敗していた。
+
+### 解決策
+
+`evalReturnStmt` を修正し、値が返される際に、その値が `*object.Function` であり、かつ呼び出し元の関数のシグネチャが名前付きの関数型を返すよう定義されている場合、その名前付きの型の `TypeInfo` を `*object.Function` に設定するようにした。
+
+この修正により、`*object.Function` は自身の型情報を正しく保持するようになり、後続のメソッド呼び出しが正しく解決されるようになった。この修正で、`find-orphans` の自己分析時に発生していた `INSTANCE` エラーも解消されたことから、より複雑な状況で発生していたエラーも、この `TypeInfo` の欠落が根本原因であったことが確認された。

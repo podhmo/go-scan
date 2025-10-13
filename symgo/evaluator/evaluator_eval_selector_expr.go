@@ -448,6 +448,20 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			pointee = ret.Value
 		}
 
+		// --- NEW: Unwrap Instance holding a Function ---
+		// During metacircular analysis, a pointer to a function might be wrapped
+		// in an Instance. We need to unwrap it to get to the actual function,
+		// and critically, transfer the TypeInfo from the wrapper to the function.
+		if inst, ok := pointee.(*object.Instance); ok {
+			if fn, isFunc := inst.Underlying.(*object.Function); isFunc {
+				if fn.TypeInfo() == nil && inst.TypeInfo() != nil {
+					fn.SetTypeInfo(inst.TypeInfo())
+				}
+				pointee = fn // Use the underlying function for method resolution.
+			}
+		}
+		// --- End NEW ---
+
 		// Generalize pointer method lookup. The pointee can be an Instance, a Map, etc.
 		// As long as it has TypeInfo, we can find its methods.
 		if typeInfo := pointee.TypeInfo(); typeInfo != nil {

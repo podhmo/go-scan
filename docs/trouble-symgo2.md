@@ -70,22 +70,22 @@ func main() {
 
 -   **発見日**: 2025-10-13
 -   **関連**: `find-orphans`, `symgo`
--   **ステータス**: <span style="color:red; font-weight:bold">未解決</span>
+-   **ステータス**: <span style="color:green; font-weight:bold">解決済み</span> (2025-10-13)
 
 ### 現象
 
-`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際、`e2e` テスト (`make -C examples/find-orphans e2e`) を実行すると、`undefined method or field: WithReceiver for pointer type INSTANCE` というエラーが出力される。
+`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際、`e2e` テスト (`make -C examples/find-orphans e2e`) を実行すると、`undefined method or field: WithReceiver for pointer type INSTANCE` というエラーが出力されていた。
 
-このエラーは、`interface{}` 型に格納された `*object.Function` を `type-switch` で元の型にキャストしようとした際に発生する。
+このエラーは、`interface{}` 型に格納された `*object.Function` を `type-switch` で元の型にキャストしようとした際に発生していた。
 
-### 調査の経緯と結論
+### 原因
 
-当初は `symgo/evaluator` の `evalTypeSwitchStmt` や `evalGenDecl` に問題があると仮説を立て、修正を試みたが解決しなかった。
+根本原因は、`symgo/scanner` パッケージが `type MyFunc func()` のような関数型エイリアスをパースする際に、そのエイリアス名 (`MyFunc`) とパッケージパスを、`TypeInfo` が内包する `FunctionInfo` 構造体に正しく伝播させていなかったことにある。
 
-より詳細な調査の結果、問題の根本原因は `symgo/scanner` パッケージにあると特定された。
+これにより、`symgo/evaluator` が `MyFunc` 型の `TypeInfo` を解決しようとしても、`scanner` から得られる情報にエイリアス名が含まれていないため、解決に失敗していた。その結果、`evalGenDecl` で `*object.Function` に正しい `TypeInfo` が設定されず、後の `evalTypeSwitchStmt` での型比較が失敗し、`default` 節にフォールバックして `*object.Instance` が生成され、エラーを引き起こしていた。
 
-1.  **`scanner` の問題の特定**: `type MyFunc func()` のような関数型エイリアスをスキャンする単体テストを作成したところ、`scanner` が生成した `TypeInfo` の `Func` フィールド (`*scanner.FunctionInfo`) に、エイリアス名 (`MyFunc`) とパッケージパスが設定されていないことが判明した。これにより、後続の `symgo` の評価器がこの型を正しく解決できず、`nil` を返していた。これが、`evalGenDecl` で `TypeInfo` が設定されない直接の原因であった。
-2.  **`scanner` の修正**: `scanner/scanner.go` の `fillTypeInfoFromSpec` 関数を修正し、関数型エイリアスの名前とパッケージパスを、内包する `FunctionInfo` に伝播させるようにした。これにより、`scanner` の単体テストは成功した。
-3.  **問題の残留**: しかし、`scanner` の修正だけでは、`find-orphans` のe2eテストは依然として失敗した。これは、`scanner` の修正によって `evaluator` が `TypeInfo` を解決できるようになったものの、その後の `evaluator` 内での `TypeInfo` のハンドリング（特に `evalGenDecl` と `evalTypeSwitchStmt`）にも別の問題が存在することを示唆している。
+### 解決策
 
-`scanner` と `evaluator` の両方にまたがる複雑な問題であり、単純な修正では解決できないことが確認された。この問題の完全な解決には、両レイヤー間での型情報の受け渡しに関する、より広範な見直しが必要である。
+`scanner/scanner.go` の `fillTypeInfoFromSpec` 関数を修正した。`*ast.FuncType` を処理するケースで、親の `TypeInfo` が持つエイリアス名とパッケージパスを、新しく生成される `FunctionInfo` に明示的にコピーするようにした。
+
+この修正により、`scanner` は関数型エイリアスの情報を完全に保持するようになり、`evaluator` はそれを正しく解決できるようになった。結果として、`evaluator` 側の修正は不要となり、`scanner` の修正のみで `find-orphans` のe2eテストが成功することが確認された。

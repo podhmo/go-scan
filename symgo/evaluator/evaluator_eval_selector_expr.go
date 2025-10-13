@@ -448,75 +448,71 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 			pointee = ret.Value
 		}
 
-		// Generalize pointer method lookup. The pointee can be an Instance, a Map, etc.
-		// As long as it has TypeInfo, we can find its methods.
-		if typeInfo := pointee.TypeInfo(); typeInfo != nil {
-			typeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
+		// Dispatch based on the type of the object the pointer points to.
+		switch p := pointee.(type) {
+		case *object.Instance, *object.Map, *object.Slice, *object.Struct: // Types that can have methods via type info.
+			if typeInfo := p.TypeInfo(); typeInfo != nil {
+				typeName := fmt.Sprintf("%s.%s", typeInfo.PkgPath, typeInfo.Name)
 
-			// First, check for intrinsics on both pointer and value receivers.
-			// Go allows calling a value-receiver method on a pointer.
-			key := fmt.Sprintf("(*%s).%s", typeName, n.Sel.Name)
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				self := val // Receiver is the pointer itself
-				fn := func(ctx context.Context, args ...object.Object) object.Object {
-					return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+				// Check for intrinsics first.
+				key := fmt.Sprintf("(*%s).%s", typeName, n.Sel.Name)
+				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+					return &object.Intrinsic{Fn: func(ctx context.Context, args ...object.Object) object.Object {
+						return intrinsicFn(ctx, append([]object.Object{val}, args...)...)
+					}}
 				}
-				return &object.Intrinsic{Fn: fn}
-			}
-			key = fmt.Sprintf("(%s).%s", typeName, n.Sel.Name)
-			if intrinsicFn, ok := e.intrinsics.Get(key); ok {
-				self := val // Receiver is still the pointer
-				fn := func(ctx context.Context, args ...object.Object) object.Object {
-					return intrinsicFn(ctx, append([]object.Object{self}, args...)...)
+				key = fmt.Sprintf("(%s).%s", typeName, n.Sel.Name)
+				if intrinsicFn, ok := e.intrinsics.Get(key); ok {
+					return &object.Intrinsic{Fn: func(ctx context.Context, args ...object.Object) object.Object {
+						return intrinsicFn(ctx, append([]object.Object{val}, args...)...)
+					}}
 				}
-				return &object.Intrinsic{Fn: fn}
-			}
 
-			// If no intrinsic, resolve the method/field from type info.
-			// The receiver for the method call is the pointer itself (`val`), not the pointee.
-			method, methodErr := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
-			if methodErr == nil && method != nil {
-				return method
-			}
+				// Resolve method/field from type info. Receiver is the pointer `val`.
+				method, methodErr := e.accessor.findMethodOnType(ctx, typeInfo, n.Sel.Name, env, val, n.X.Pos())
+				if methodErr == nil && method != nil {
+					return method
+				}
 
-			// Also check for fields if the underlying type is a struct.
-			var field *scan.FieldInfo
-			var fieldErr error
-			if typeInfo.Struct != nil {
-				field, fieldErr = e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
-				if fieldErr == nil && field != nil {
-					// When accessing a field via a pointer, the receiver is the pointee.
-					return e.resolver.ResolveSymbolicField(ctx, field, pointee)
+				var field *scan.FieldInfo
+				var fieldErr error
+				if typeInfo.Struct != nil {
+					field, fieldErr = e.accessor.findFieldOnType(ctx, typeInfo, n.Sel.Name)
+					if fieldErr == nil && field != nil {
+						return e.resolver.ResolveSymbolicField(ctx, field, p)
+					}
+				}
+
+				if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
+					return &object.AmbiguousSelector{Receiver: val, Sel: n.Sel}
+				}
+				if fieldErr == ErrUnresolvedEmbedded {
+					e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", typeName)
+					return &object.SymbolicPlaceholder{Reason: "assumed field"}
+				}
+				if methodErr == ErrUnresolvedEmbedded {
+					e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", typeName)
+					return &object.SymbolicPlaceholder{Reason: "assumed method"}
 				}
 			}
-
-			if methodErr == ErrUnresolvedEmbedded && fieldErr == ErrUnresolvedEmbedded {
-				return &object.AmbiguousSelector{
-					Receiver: val,
-					Sel:      n.Sel,
-				}
+		case *object.Function:
+			// This is the key fix: handle calling a method on a pointer to a function object.
+			// This happens when symgo analyzes its own code, e.g., `baseFn.WithReceiver(...)`
+			// where `baseFn` is `*object.Function`.
+			if n.Sel.Name == "WithReceiver" {
+				// We can't actually *call* WithReceiver here, as that would require arguments.
+				// Instead, we return a new function that represents the "bound" method.
+				// For the purpose of call-graph analysis, what matters is that we return a callable object.
+				boundFn := p.Clone().(*object.Function)
+				// The receiver of this "meta-call" is the function itself (the pointee).
+				boundFn.Receiver = p
+				return boundFn
 			}
-
-			if fieldErr == ErrUnresolvedEmbedded {
-				e.logc(ctx, slog.LevelWarn, "assuming field exists on unresolved embedded type", "field_name", n.Sel.Name, "type_name", typeName)
-				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed field %s on type with unresolved embedded part", n.Sel.Name)}
-			}
-			if methodErr == ErrUnresolvedEmbedded {
-				e.logc(ctx, slog.LevelWarn, "assuming method exists on unresolved embedded type", "method_name", n.Sel.Name, "type_name", typeName)
-				return &object.SymbolicPlaceholder{Reason: fmt.Sprintf("assumed method %s on type with unresolved embedded part", n.Sel.Name)}
-			}
+		case *object.SymbolicPlaceholder:
+			return e.evalSymbolicSelection(ctx, p, n.Sel, env, val, n.X.Pos())
 		}
 
-		// Handle pointers to symbolic placeholders, which can occur with pointers to unresolved types.
-		if sp, ok := pointee.(*object.SymbolicPlaceholder); ok {
-			// The logic for selecting from a symbolic placeholder is already well-defined.
-			// We can simulate calling that logic with the pointee. The receiver for any
-			// method call is the pointer `val`, not the placeholder `sp`.
-			// This is effectively doing `(*p).N` where `*p` is a symbolic value.
-			return e.evalSymbolicSelection(ctx, sp, n.Sel, env, val, n.X.Pos())
-		}
-
-		// If the pointee is not an instance or nothing is found, fall through to the error.
+		// If no case matched or the lookups failed, we have an error.
 		return e.newError(ctx, n.Pos(), "undefined method or field: %s for pointer type %s", n.Sel.Name, pointee.Type())
 
 	case *object.Nil:

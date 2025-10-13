@@ -70,6 +70,30 @@ func main() {
 
 -   **発見日**: 2025-10-13
 -   **関連**: `find-orphans`, `symgo`
+-   **ステータス**: <span style="color:orange; font-weight:bold">部分的修正</span>
+
+### 現象
+
+`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際、`e2e` テスト (`make -C examples/find-orphans e2e`) を実行すると、`undefined method or field: WithReceiver for pointer type INSTANCE` というエラーが出力される。
+
+このエラーは、`interface{}` 型に格納された `*object.Function` を `type-switch` で元の型にキャストしようとした際に発生する。
+
+### 調査と部分的な修正
+
+1.  **根本原因の特定**: 問題の根本原因は、`symgo/scanner` パッケージが `type MyFunc func()` のような関数型エイリアスをパースする際に、そのエイリアス名 (`MyFunc`) とパッケージパスを、`TypeInfo` が内包する `FunctionInfo` 構造体に正しく伝播させていなかったことにあると特定した。これにより、`symgo/evaluator` はこの型の `TypeInfo` を解決できずにいた。
+
+2.  **`scanner` の修正**: `scanner/scanner.go` の `fillTypeInfoFromSpec` 関数を修正し、関数型エイリアスの名前とパッケージパスを、内包する `FunctionInfo` に伝播させるようにした。この修正は、専用の単体テスト (`scanner_func_alias_test.go`) によって検証され、`scanner` レイヤーの問題が解決したことが確認された。
+
+3.  **残存する `evaluator` の問題**: しかし、`scanner` の修正後も、`find-orphans` のe2eテストでは依然として同じエラーが発生する。これは、`scanner` が正しい `TypeInfo` を提供するようになったにもかかわらず、`evaluator` がその情報を `type-switch` の評価に至るまでのどこかの段階で失っているか、あるいは正しく利用できていないことを示している。
+
+### 次のステップ
+
+`evaluator` 側のデバッグを継続し、`evalGenDecl` や `evalAssignStmt` などで、`scanner` から渡された `TypeInfo` がどのように処理されているかを追跡する必要がある。問題は `scanner` と `evaluator` の両方にまたがる、より複雑なものであることが判明した。
+
+## `type-switch` で `*object.Function` の型情報が失われる問題
+
+-   **発見日**: 2025-10-13
+-   **関連**: `find-orphans`, `symgo`
 -   **ステータス**: <span style="color:green; font-weight:bold">解決済み</span> (2025-10-13)
 
 ### 現象

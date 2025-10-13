@@ -118,7 +118,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
 
-- [x] **`find-orphans`: Fix metacircular analysis bug**: Fixed a bug where method calls on `*object.Function` failed during a `type-switch`. The root cause was that the `scanner` did not correctly propagate the alias name (e.g., `MyFunc`) to the underlying `FunctionInfo` when parsing a function type alias (`type MyFunc func()`). This prevented the `evaluator` from resolving the type correctly. The fix ensures this information is propagated in `scanner.fillTypeInfoFromSpec`. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
+- [-] **`find-orphans`: Fix metacircular analysis bug**: Partially fixed a bug where method calls on `*object.Function` failed during a `type-switch`. The root cause in the `scanner` (which failed to parse function type aliases correctly) has been fixed. However, a secondary bug in the `evaluator` still prevents the end-to-end test from passing. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
 
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.

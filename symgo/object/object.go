@@ -779,6 +779,7 @@ func (c *Channel) Clone() Object {
 type Environment struct {
 	store map[string]Object
 	outer *Environment
+	pkg   *Package
 }
 
 // Object pools for reusing common objects
@@ -892,6 +893,10 @@ func (e *Environment) Release() {
 	if e.outer == nil {
 		envPool.Put(e)
 	}
+}
+
+func (e *Environment) Package() *Package {
+	return e.pkg
 }
 
 // --- MultiReturn Object ---

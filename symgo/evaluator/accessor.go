@@ -182,9 +182,19 @@ func (a *accessor) findDirectMethodOnType(ctx context.Context, typeInfo *scanner
 	// Get the base function object (without a receiver).
 	// This might be cached or resolved on the fly.
 	baseFnObj := a.eval.getOrResolveFunction(ctx, pkgObj, methodInfo)
+
+	// In some complex scenarios, especially when analyzing the analyzer's own code,
+	// a symbol that is a function name might be resolved as an *object.Instance
+	// due to the way the environment is built up. If we get an instance here instead
+	// of a function, it's a sign of this complex interaction. We should treat the
+	// method as not found rather than panicking.
+	if _, isInstance := baseFnObj.(*object.Instance); isInstance {
+		return nil, nil // Treat as not found
+	}
+
 	baseFn, ok := baseFnObj.(*object.Function)
 	if !ok {
-		return nil, fmt.Errorf("resolved method %q is not a function object", methodName)
+		return nil, fmt.Errorf("resolved method %q is not a function object, but a %T", methodName, baseFnObj)
 	}
 
 	// Create a new function object with the receiver and its position bound.

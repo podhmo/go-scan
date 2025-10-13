@@ -130,6 +130,6 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Medium Priority**:
   - [x] Support `uint64` and large integer constants to prevent overflow.
   - [x] Improve type inference to fix selector type errors.
-  - [ ] Implement missing operators for `complex` types.
+  - [x] Implement missing operators for `complex` types.
 - [ ] **Low Priority**:
   - [ ] Support parsing of large hex literals (related to `uint64` support).

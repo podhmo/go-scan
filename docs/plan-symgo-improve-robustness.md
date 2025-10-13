@@ -298,6 +298,9 @@ Related to the const_overflow issue.
 
 ### Unknown Operator
 
+> [!NOTE]
+> This feature has been implemented. The `symgo` evaluator now supports equality operators (`==`, `!=`) on complex numbers. A dedicated float expression handler has also been added to correctly process float-specific operators (e.g., `>`, `<`) and prevent them from being incorrectly routed to the complex handler.
+
 **Priority:** Medium
 
 **Description:** Unsupported operator for complex types

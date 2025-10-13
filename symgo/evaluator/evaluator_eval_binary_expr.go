@@ -39,11 +39,63 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 	case lType == object.COMPLEX_OBJ || rType == object.COMPLEX_OBJ:
 		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	case lType == object.FLOAT_OBJ || rType == object.FLOAT_OBJ:
-		// For now, treat float operations as complex to simplify.
-		// A more complete implementation would have a separate float path.
-		return e.evalComplexInfixExpression(ctx, node.Pos(), node.Op, left, right)
+		return e.evalFloatInfixExpression(ctx, node.Pos(), node.Op, left, right)
 	default:
 		return &object.SymbolicPlaceholder{Reason: "binary expression"}
+	}
+}
+
+func (e *Evaluator) evalFloatInfixExpression(ctx context.Context, pos token.Pos, op token.Token, left, right object.Object) object.Object {
+	if _, ok := left.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: "float operation with symbolic operand"}
+	}
+	if _, ok := right.(*object.SymbolicPlaceholder); ok {
+		return &object.SymbolicPlaceholder{Reason: "float operation with symbolic operand"}
+	}
+
+	var lval, rval float64
+
+	switch l := left.(type) {
+	case *object.Float:
+		lval = l.Value
+	case *object.Integer:
+		lval = float64(l.Value)
+	default:
+		return e.newError(ctx, pos, "invalid left operand for float expression: %s", left.Type())
+	}
+
+	switch r := right.(type) {
+	case *object.Float:
+		rval = r.Value
+	case *object.Integer:
+		rval = float64(r.Value)
+	default:
+		return e.newError(ctx, pos, "invalid right operand for float expression: %s", right.Type())
+	}
+
+	switch op {
+	case token.ADD:
+		return &object.Float{Value: lval + rval}
+	case token.SUB:
+		return &object.Float{Value: lval - rval}
+	case token.MUL:
+		return &object.Float{Value: lval * rval}
+	case token.QUO:
+		return &object.Float{Value: lval / rval}
+	case token.EQL:
+		return nativeBoolToBooleanObject(lval == rval)
+	case token.NEQ:
+		return nativeBoolToBooleanObject(lval != rval)
+	case token.LSS:
+		return nativeBoolToBooleanObject(lval < rval)
+	case token.LEQ:
+		return nativeBoolToBooleanObject(lval <= rval)
+	case token.GTR:
+		return nativeBoolToBooleanObject(lval > rval)
+	case token.GEQ:
+		return nativeBoolToBooleanObject(lval >= rval)
+	default:
+		return e.newError(ctx, pos, "unknown float operator: %s", op)
 	}
 }
 
@@ -88,6 +140,10 @@ func (e *Evaluator) evalComplexInfixExpression(ctx context.Context, pos token.Po
 		return &object.Complex{Value: lval * rval}
 	case token.QUO:
 		return &object.Complex{Value: lval / rval}
+	case token.EQL:
+		return nativeBoolToBooleanObject(lval == rval)
+	case token.NEQ:
+		return nativeBoolToBooleanObject(lval != rval)
 	default:
 		return e.newError(ctx, pos, "unknown complex operator: %s", op)
 	}

@@ -60,6 +60,98 @@ func main() { add(1, 2) }
 	}
 }
 
+func TestEval_MethodCallOnFuncPointer(t *testing.T) {
+	t.Skip("TODO: This test fails because the evaluator does not correctly propagate TypeInfo to function objects when they are assigned to variables of a named function type. See docs/trouble-symgo2.md for details.")
+	// This test reproduces a bug found during metacircular analysis where
+	// a method call on a pointer to a function object was failing.
+	// e.g., `var fn_ptr *MyFuncType; fn_ptr.WithReceiver(...)`
+	files := map[string]string{
+		"go.mod": "module example.com/m",
+		"main.go": `
+package main
+
+// Define a function type and a method on its pointer receiver.
+type MyFunc func()
+func (f *MyFunc) WithReceiver() {}
+
+// getFn returns a function of the defined type.
+func getFn() MyFunc {
+	return func() {}
+}
+
+func main() {
+	fn := getFn()
+	fn_ptr := &fn
+	fn_ptr.WithReceiver()
+}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	var withReceiverCalled bool
+
+	action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
+		mainPkg := pkgs[0]
+		if mainPkg.Name != "main" {
+			for _, p := range pkgs {
+				if p.Name == "main" {
+					mainPkg = p
+					break
+				}
+			}
+		}
+
+		eval := New(s, s.Logger, nil, func(pkgPath string) bool { return true })
+
+		// Register an intrinsic to track if the method call is successful.
+		intrinsicKey := "(*example.com/m.MyFunc).WithReceiver"
+		eval.RegisterIntrinsic(intrinsicKey, func(ctx context.Context, args ...object.Object) object.Object {
+			withReceiverCalled = true
+			return nil
+		})
+
+		// Evaluate all files in the main package to populate the environment.
+		for _, file := range mainPkg.AstFiles {
+			if res := eval.Eval(ctx, file, nil, mainPkg); res != nil && isError(res) {
+				return fmt.Errorf("evaluation of file failed: %v", res)
+			}
+		}
+
+		// Find and execute the main function.
+		pkgEnv, ok := eval.PackageEnvForTest("example.com/m")
+		if !ok {
+			return fmt.Errorf("could not get package env for 'example.com/m'")
+		}
+		mainFuncObj, ok := pkgEnv.Get("main")
+		if !ok {
+			return fmt.Errorf("main function not found")
+		}
+		mainFunc, ok := mainFuncObj.(*object.Function)
+		if !ok {
+			return fmt.Errorf("main is not a function, but %T", mainFuncObj)
+		}
+
+		// Before the fix, this applyFunction call would return an error like
+		// "undefined method or field: WithReceiver for pointer type INSTANCE"
+		// because it was misinterpreting the pointer to a function.
+		result := eval.applyFunction(ctx, mainFunc, []object.Object{}, mainPkg, token.NoPos)
+		if result != nil && isError(result) {
+			return fmt.Errorf("applyFunction failed with an unexpected error: %v", result)
+		}
+
+		return nil
+	}
+
+	if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {
+		t.Fatalf("scantest.Run() failed: %v", err)
+	}
+
+	if !withReceiverCalled {
+		t.Error("expected WithReceiver method to be called, but it was not")
+	}
+}
+
 func TestEvalCallExpr_MethodOnPointerReturnValue(t *testing.T) {
 	// This test reproduces a bug where a method call on a pointer that is
 	// directly returned from a function would fail.

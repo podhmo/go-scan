@@ -24,6 +24,9 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 
 			// Evaluate the source object `x`
 			originalObj := e.forceEval(ctx, e.Eval(ctx, typeAssert.X, env, pkg), pkg)
+			if ret, ok := originalObj.(*object.ReturnValue); ok {
+				originalObj = ret.Value
+			}
 			if isError(originalObj) {
 				return originalObj
 			}
@@ -130,6 +133,9 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 					continue
 				}
 				val := multiRet.Values[i]
+				if ret, ok := val.(*object.ReturnValue); ok {
+					val = ret.Value
+				}
 				e.assignIdentifier(ctx, ident, val, n.Tok, env) // Use the statement's token (:= or =)
 			}
 		}

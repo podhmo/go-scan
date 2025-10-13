@@ -92,6 +92,15 @@ func (e *Evaluator) evalGenDecl(ctx context.Context, node *ast.GenDecl, env *obj
 					if ret, ok := val.(*object.ReturnValue); ok {
 						val = ret.Value
 					}
+
+					// This is the key fix for methods on named function types.
+					// If we are assigning a function literal to a variable with an explicit
+					// named function type (e.g., `var f MyFunc = func(){}`), we must
+					// propagate the `TypeInfo` of the named type (`MyFunc`) to the
+					// underlying `*object.Function` object.
+					if fn, ok := val.(*object.Function); ok && resolvedTypeInfo != nil {
+						fn.SetTypeInfo(resolvedTypeInfo)
+					}
 				} else {
 					placeholder := &object.SymbolicPlaceholder{Reason: "uninitialized variable"}
 					if staticFieldType != nil {

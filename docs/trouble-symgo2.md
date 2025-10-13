@@ -32,27 +32,10 @@ The error message `undefined method or field: WithReceiver for pointer type INST
 
 The fundamental issue is the incorrect symbolic representation of `*object.Function` during self-analysis.
 
-## Proposed Solution
+## Resolution
 
-The fix is to make the evaluator correctly handle this metacircular case. Inside `evalSelectorExpr`, the `case *object.Pointer:` block should be modified. The `switch` statement on the `pointee` (the dereferenced object) needs a new case: `case *object.Function:`.
+The issue was resolved by implementing the proposed solution. A new `case *object.Function:` was added to the `switch` statement within the `case *object.Pointer:` block in `symgo/evaluator/evaluator_eval_selector_expr.go`.
 
-This new case would specifically handle method calls on pointers to function objects. When the selector is `WithReceiver`, it would recognize this as a valid "meta-call" and return a new, callable `*object.Function`, allowing the analysis to proceed correctly.
+This new case handles method calls on a pointer to a function object. Specifically, when the selector is `WithReceiver`, the evaluator now recognizes this as a valid "meta-call." Instead of attempting to find the method on an `*object.Instance`, it clones the underlying `*object.Function`, binds the receiver to it, and returns the new function object. This allows the symbolic analysis to proceed without error.
 
-## Code to Reproduce
-
-A minimal Go code snippet to trigger this specific bug within a `symgo` test would look something like this:
-
-```go
-package mytest
-
-import "github.com/podhmo/go-scan/symgo/object"
-
-func F(fn *object.Function) {
-	// This selector expression is what causes the failure during
-	// symbolic execution. The evaluator incorrectly represents `fn`
-	// as a pointer to an INSTANCE, not a pointer to a FUNCTION.
-	_ = fn.WithReceiver(nil, 0)
-}
-```
-
-When the `symgo` evaluator analyzes this function `F`, it will fail with the `undefined method: WithReceiver` error because it dereferences the pointer to `fn` and gets a symbolic `*object.Instance` instead of the expected `*object.Function`.
+A regression test, `TestMetaCircularAnalysis_MethodCallOnFunctionPointer`, was added to the `symgo/evaluator` package (as an external `evaluator_test` package to avoid import cycles). This test forces the evaluator to analyze its own code, specifically targeting the code path that triggered the bug, ensuring that the fix remains effective and preventing future regressions.

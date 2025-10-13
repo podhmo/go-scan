@@ -1,69 +1,58 @@
-# `symgo`: Method Call on Pointer Return Value Fails
+# `symgo`: Metacircular analysis fails for method calls on `*object.Function`
 
-This document outlines a bug in the `symgo` evaluator where it fails to resolve method calls on pointer types returned directly from functions.
+This document tracks the investigation into the `undefined method or field: WithReceiver for pointer type INSTANCE` error.
 
-## 1. Problem
+## Error Reproduction
 
-The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer that was returned from a function.
+The error is triggered by running the `find-orphans` end-to-end test, which causes `symgo` to analyze its own source code.
 
-**Error Log:**
+```bash
+make -C examples/find-orphans
 ```
-level=ERROR msg="undefined method or field: String for pointer type RETURN_VALUE"
+
+The output log contains the following error:
+```
+level=ERROR msg="undefined method or field: WithReceiver for pointer type INSTANCE" in_func=findDirectMethodOnType in_func_pos=/app/symgo/evaluator/accessor.go:126:20 exec_pos=/app/symgo/evaluator/evaluator_eval_selector_expr.go:520 pos=/app/symgo/evaluator/accessor.go:191:13
 ```
 
-**Example Go Code:**
+## Root Cause Analysis
+
+The runtime stack trace shows the panic originates in `evalSelectorExpr`. The key log entries are:
+- `in_func=findDirectMethodOnType`: The evaluator was *analyzing* this function.
+- `pos=/app/symgo/evaluator/accessor.go:191:13`: The specific AST node being analyzed was `boundFn := baseFn.WithReceiver(receiver, receiverPos)`.
+
+The error message `undefined method or field: WithReceiver for pointer type INSTANCE` reveals the root cause. This is a metacircular analysis problem.
+
+1.  The `symgo` evaluator is analyzing its own source code, specifically `accessor.go`.
+2.  It encounters the selector expression `baseFn.WithReceiver`.
+3.  To evaluate this, it first evaluates the left-hand side, `baseFn`.
+4.  Due to a flaw in how the evaluator represents its own internal types, the symbolic object for the `baseFn` variable (which is an `*object.Function` at runtime) is incorrectly created as an `*object.Pointer` pointing to an `*object.Instance` (where `TypeName` is "Function"), instead of an `*object.Pointer` pointing to an `*object.Function`.
+5.  The `evalSelectorExpr` function then handles the `*object.Pointer`. It dereferences it, gets the `*object.Instance`, and tries to find the method `WithReceiver` on it.
+6.  This fails because the `*object.Instance` type does not have a `WithReceiver` method.
+
+The fundamental issue is the incorrect symbolic representation of `*object.Function` during self-analysis.
+
+## Proposed Solution
+
+The fix is to make the evaluator correctly handle this metacircular case. Inside `evalSelectorExpr`, the `case *object.Pointer:` block should be modified. The `switch` statement on the `pointee` (the dereferenced object) needs a new case: `case *object.Function:`.
+
+This new case would specifically handle method calls on pointers to function objects. When the selector is `WithReceiver`, it would recognize this as a valid "meta-call" and return a new, callable `*object.Function`, allowing the analysis to proceed correctly.
+
+## Code to Reproduce
+
+A minimal Go code snippet to trigger this specific bug within a `symgo` test would look something like this:
+
 ```go
-// timeutil/date.go
-package timeutil
+package mytest
 
-type Date string
+import "github.com/podhmo/go-scan/symgo/object"
 
-func (d Date) String() string {
-    return string(d)
-}
-
-// main.go
-package main
-
-func GetDate() *timeutil.Date {
-    d := timeutil.Date("2024-01-01")
-    return &d
-}
-
-func main() {
-    // This call fails during symgo analysis
-    s := GetDate().String()
+func F(fn *object.Function) {
+	// This selector expression is what causes the failure during
+	// symbolic execution. The evaluator incorrectly represents `fn`
+	// as a pointer to an INSTANCE, not a pointer to a FUNCTION.
+	_ = fn.WithReceiver(nil, 0)
 }
 ```
-In standard Go, this is perfectly valid. The `String()` method, which has a value receiver `(d Date)`, is correctly called on the pointer `*timeutil.Date` via automatic pointer dereferencing. The `symgo` engine fails to replicate this behavior.
 
-## 2. Root Cause Analysis
-
-The issue lies in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function, which handles expressions like `x.y`.
-
-1.  **Function Call Evaluation:** The call to `GetDate()` is evaluated first. The `symgo` engine correctly determines it returns a pointer to a `Date` object. The result is wrapped in an `*object.ReturnValue`.
-2.  **Selector Expression Evaluation:** The `evalSelectorExpr` function is then called to resolve `.String()`.
-    -   It correctly unwraps the `*object.ReturnValue` at the beginning of the function, so the expression it analyzes (`left`) becomes an `*object.Pointer`.
-    -   It enters the `case *object.Pointer:` block.
-    -   Inside this block, it inspects the pointer's `Value` (the `pointee`).
-3.  **The Failure:** The `pointee` in this scenario is an `*object.Instance` of `Date`. However, the logic inside the `case *object.Pointer:` block does not check for registered intrinsics, which are essential for testing and for handling certain standard library functions. It attempts to resolve the method directly from type information, but because the test relies on an intrinsic, the call is never registered.
-
-As a result, the test assertion fails. The original user-reported error was slightly different but stemmed from the same core issue: incomplete logic for handling pointer receivers.
-
-## 3. Proposed Solution
-
-The fix is to enhance the `case *object.Pointer:` block in `evalSelectorExpr`.
-
-1.  **Unwrap ReturnValue:** Add a check to see if the `pointee` is of type `*object.ReturnValue` and unwrap it. This handles cases where a function returns a pointer to a pointer.
-2.  **Add Intrinsic Checks:** Before resolving the method from type info, add checks for registered intrinsics for both pointer (`(*T).Method`) and value (`(T).Method`) receivers, mirroring the logic that already exists for `*object.Instance` receivers.
-
-This change will make the symbolic evaluator correctly model Go's automatic pointer dereferencing for method calls and ensure that intrinsics for pointer types are correctly resolved.
-
-## 4. Plan
-
-1.  **[COMPLETED]** Create this document (`docs/trouble-symgo2.md`).
-2.  **[COMPLETED]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
-3.  **[COMPLETED]** Run tests to confirm the failure.
-4.  **[COMPLETED]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
-5.  **[COMPLETED]** Run tests to verify the fix and check for regressions.
-6.  **[COMPLETED]** Update `TODO.md`.
+When the `symgo` evaluator analyzes this function `F`, it will fail with the `undefined method: WithReceiver` error because it dereferences the pointer to `fn` and gets a symbolic `*object.Instance` instead of the expected `*object.Function`.

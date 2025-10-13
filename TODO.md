@@ -118,6 +118,10 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
 
+### `find-orphans`: Fix metacircular analysis bug
+- [ ] **`undefined method or field: WithReceiver for pointer type INSTANCE`**: The `find-orphans` tool fails when `symgo` analyzes its own source code. The root cause is that `evalSelectorExpr` in the evaluator doesn't correctly handle method calls on pointers to `*object.Function` during metacircular analysis, misinterpreting them as pointers to `*object.Instance`. The fix requires adding a `case *object.Function:` to the `switch` statement within the `case *object.Pointer:` block in `symgo/evaluator/evaluator_eval_selector_expr.go`.
+  - **Status**: Blocked. Unable to apply the necessary patch to the file.
+
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.
 - [x] **Handle `not a function: NIL`**: Fixed "not a function: NIL" errors that occurred during symbolic execution of test files. The root cause was that the tracer would explore an unreachable code path (e.g., inside an `if f != nil` block when `f` is nil) and then raise a fatal error when trying to evaluate the `nil` function call. The fix was to make the function call evaluator (`evalCallExpr`) gracefully handle being passed a `nil` object by returning early, allowing analysis to continue without crashing. ([docs/trouble-symgo.md](./docs/trouble-symgo.md))

@@ -52,12 +52,41 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 				return e.newError(ctx, typeAssert.Pos(), "could not resolve type for type assertion: %s", typeNameBuf.String())
 			}
 
-			// For the success path of the assertion, the value for `v` is the original object itself.
-			// We clone it to avoid modifying the original variable's value and to correctly set the
-			// static type information for the new variable `v`.
+			// For the success path of the assertion, the value for `v` is derived from the original object.
 			// The `if` statement evaluator is responsible for branching and handling the `!ok` case.
-			valueForV := originalObj.Clone()
-			valueForV.SetFieldType(fieldType) // Set static type for the new variable `v`.
+			var valueForV object.Object
+
+			resolvedType := e.resolver.ResolveType(ctx, fieldType)
+
+			// Special handling for assertion to a pointer to a named function type,
+			// a scenario common in metacircular analysis.
+			if ptr, isPtr := originalObj.(*object.Pointer); isPtr {
+				if fn, isFn := ptr.Value.(*object.Function); isFn {
+					// We must clone both the pointer and the function. The crucial step is
+					// setting the new type info on the *cloned function object* itself,
+					// so that methods defined on the named function type can be resolved.
+					clonedFn := fn.Clone().(*object.Function)
+					clonedFn.SetTypeInfo(resolvedType)
+					clonedFn.SetFieldType(fieldType)
+
+					// Create a new pointer pointing to our newly typed function.
+					clonedPtr := ptr.Clone().(*object.Pointer)
+					clonedPtr.Value = clonedFn
+					clonedPtr.SetFieldType(fieldType)
+					clonedPtr.SetTypeInfo(resolvedType)
+
+					valueForV = clonedPtr
+				}
+			}
+
+			if valueForV == nil {
+				// Fallback to original logic for other types of assertions (e.g., to struct pointers).
+				// We clone the original object to avoid modifying its state and to correctly
+				// set the new static type information for the variable `v`.
+				valueForV = originalObj.Clone()
+				valueForV.SetFieldType(fieldType)
+				valueForV.SetTypeInfo(resolvedType)
+			}
 
 			// For the success path, `ok` is true.
 			valueForOk := object.TRUE
@@ -133,9 +162,6 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 					continue
 				}
 				val := multiRet.Values[i]
-				if ret, ok := val.(*object.ReturnValue); ok {
-					val = ret.Value
-				}
 				e.assignIdentifier(ctx, ident, val, n.Tok, env) // Use the statement's token (:= or =)
 			}
 		}

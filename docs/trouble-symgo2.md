@@ -69,70 +69,30 @@ This change will make the symbolic evaluator correctly model Go's automatic poin
 6.  **[COMPLETED]** Update `TODO.md`.
 
 ---
-# `symgo`: Method Call on Pointer to Named Function Type Fails
-
-This document outlines a bug where method calls on pointers to named function types fail during metacircular analysis (i.e., when `symgo` analyzes its own logic).
+# (UNRESOLVED) `find-orphans` Fails with Metacircular Analysis Error
 
 ## 1. Problem
 
-When analyzing code that involves a type assertion to a pointer-to-named-function-type, the `symgo` evaluator fails with an `undefined method or field` error. This scenario is particularly triggered when `symgo` analyzes its own test code or internal logic which uses these patterns.
+The `find-orphans` tool, when run via `make -C examples/find-orphans`, consistently fails with an error indicating a failure in metacircular analysis (the `symgo` engine analyzing its own code).
 
 **Error Log:**
 ```
-level=ERROR msg="undefined method or field: WithReceiver for pointer type FUNCTION"
+level=ERROR msg="undefined method or field: WithReceiver for pointer type INSTANCE"
 ```
 
-**Example Go Code:**
-```go
-package main
-
-// A named function type with a method
-type MyFunc func()
-func (f *MyFunc) WithReceiver(r interface{}) *MyFunc {
-	return f
-}
-
-// A function returning the type as an interface{}
-func Get() interface{} {
-	var f MyFunc = func() {}
-	return &f
-}
-
-func main() {
-	// Type assertion to the pointer type
-	f, ok := Get().(*MyFunc)
-	if !ok {
-		return
-	}
-	// This call fails during symgo analysis
-	f.WithReceiver(nil)
-}
-```
+The log indicates the error occurs within a `type switch case` when the evaluator tries to resolve a method on what it believes is an `*object.Instance`, but the method (`WithReceiver`) belongs to the `*object.Function` type.
 
 ## 2. Root Cause Analysis
 
-The problem was a combination of two distinct issues in the evaluator:
+The issue stems from a fundamental challenge in `symgo`'s design: how it represents its own internal object types during analysis.
 
-1.  **Missing `TypeInfo` Propagation in `evalGenDecl`**: When the statement `var f MyFunc = func() {}` was evaluated, the `*object.Function` created for the `func() {}` literal was not being assigned the `TypeInfo` of `MyFunc`. Without this type information, the evaluator had no way of knowing that methods like `WithReceiver` were associated with it.
+1.  **Type-Switch Evaluation**: The error is triggered inside `evalTypeSwitchStmt`. When analyzing Go code that contains a `type-switch`, `symgo` correctly identifies the type in each `case` statement.
+2.  **Metacircular Clash**: When the code being analyzed is `symgo`'s own source, a `case` might be of type `*object.Function`. The `scanner` correctly identifies `object.Function` as a `struct` (because it is defined as a struct in Go).
+3.  **Incorrect Object Creation**: Consequently, `evalTypeSwitchStmt` enters a code path that creates an `*object.Instance` to represent the variable in the `case` block, because it resolved the type to `StructKind`.
+4.  **Method Call Failure**: Later, when the analyzer encounters a method call on this variable (e.g., `baseFn.WithReceiver(...)`), it tries to find the method on the `*object.Instance`. The instance does not have the `WithReceiver` method, leading to the "undefined method" error.
 
-2.  **Incorrect `ReturnValue` Handling in `evalAssignStmt`**: When the type assertion `f, ok := Get().(*MyFunc)` was evaluated, the `Get()` function call correctly returned a `*object.Pointer`. However, this result was wrapped in an `*object.ReturnValue` by the call evaluation logic. The `evalAssignStmt` function failed to "unwrap" this `ReturnValue` before processing the type assertion. As a result, it was attempting to clone the `ReturnValue` object itself, not the `Pointer` object inside it, leading to incorrect object types being assigned to `f`.
+The core problem is that the evaluator creates a generic `Instance` to represent a very specific internal type (`Function`) that has its own unique behavior and methods within the evaluator's object model. The evaluator lacks a mechanism to distinguish between a regular struct and its own internal types during this process.
 
-These two issues combined meant that even if one was fixed, the other would still cause the analysis to fail, which complicated the debugging process.
+## 3. Status
 
-## 3. Solution
-
-A two-part fix was implemented:
-
-1.  **In `evaluator_eval_gen_decl.go`**: The `evalGenDecl` function was modified. When it detects a `var` declaration where a function literal is being assigned to a variable with an explicit named type (e.g., `MyFunc`), it now correctly propagates the `TypeInfo` for that named type to the `*object.Function` object.
-
-2.  **In `evaluator_eval_assign_stmt.go`**: The `evalAssignStmt` function was modified. In the block that handles two-value type assertions (`v, ok := x.(T)`), a check was added to unwrap any `*object.ReturnValue` from the object being asserted (`x`) before any further processing.
-
-Together, these changes ensure that function objects receive their correct type information at their declaration site, and that type assertions correctly operate on the underlying values, not on temporary wrapper objects.
-
-## 4. Plan
-
-1.  **[COMPLETED]** Add a new regression test (`TestTypeAssertion_PointerToFuncType`) to `symgo/evaluator/` to reproduce the failure.
-2.  **[COMPLETED]** Implement the two-part fix in `evalGenDecl` and `evalAssignStmt`.
-3.  **[COMPLETED]** Verify that all tests pass.
-4.  **[COMPLETED]** Update this document.
-5.  **[COMPLETED]** Update `TODO.md`.
+**Unresolved.** Multiple attempts to fix this by patching `evalAssignStmt` and `evalGenDecl` were unsuccessful, as they did not address the core issue within `evalTypeSwitchStmt`. The problem requires a more profound change to how the evaluator handles its own types during symbolic execution, which is beyond the scope of simple patches.

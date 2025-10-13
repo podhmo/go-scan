@@ -44,9 +44,9 @@ func (e *Evaluator) evalPanicStmt(ctx context.Context, n *ast.PanicStmt, env *ob
 
 この問題は、関数型エイリアスに定義されたメソッドが、その型の変数へのポインタ経由で呼び出された場合に発生する。
 
-### 調査ログ
+### 調査ログ (2025-10-13)
 
-1.  **テストケースの作成**: `symgo/evaluator/call_test.go` に、問題を再現するためのテスト `TestEval_MethodCallOnFuncPointer` を追加した。このテストは、`type MyFunc func()` という型を定義し、そのポインタレシーバ `(f *MyFunc) WithReceiver()` を持つメソッドを定義する。`main` 関数内で、この型の変数をポインタ経由で呼び出す。
+1.  **テストケース**: `symgo/evaluator/call_test.go` に、問題を再現するためのテスト `TestEval_MethodCallOnFuncPointer` を追加済み。
 
     ```go
     // main.go の抜粋
@@ -60,19 +60,21 @@ func (e *Evaluator) evalPanicStmt(ctx context.Context, n *ast.PanicStmt, env *ob
     }
     ```
 
-2.  **エラーの確認**: テストを実行し、期待通り以下のエラーで失敗することを確認した。
-    `symgo runtime error: undefined method or field: WithReceiver for pointer type FUNCTION`
+2.  **詳細デバッグの実施**: `newError` を一時的に変更し、エラー発生時の解析コールスタックとGoランタイムスタックをファイルに出力するようにした。
 
-3.  **原因分析 (1) - `evalSelectorExpr`**: `TODO.md` の指示に基づき、`symgo/evaluator/evaluator_eval_selector_expr.go` の `case *object.Pointer:` ブロックを修正しようと試みた。ポインティが `*object.Function` である場合の処理を追加したが、状況は改善しなかった。
+3.  **ログ分析**:
+    -   **Goランタイムスタック**: `applyFunctionImpl` -> `evalCallExpr` -> `evalSelectorExpr` の順で呼び出され、`evalSelectorExpr` 内で `newError` が呼ばれていることを確認。これは想定通りの動作。
+    -   **symgo解析スタック**: エラー発生時、解析対象のコードは `main` 関数内にいることを確認。
+    -   **結論**: これまでの分析通り、`fn_ptr.WithReceiver()` のレシーバ (`fn_ptr`) を評価した結果である `*object.Pointer` が指す `*object.Function` に `TypeInfo` が設定されていないことが根本原因であると再確認した。
 
-4.  **原因分析 (2) - `TypeInfo` の欠落**: デバッグログを追加したところ、エラー発生時点でセレクタの左辺（`fn_ptr`）が指す `*object.Function` に `TypeInfo` が設定されていないことが判明した。`TypeInfo` がなければ、`accessor.findMethodOnType` はメソッドを見つけることができない。
-
-5.  **原因分析 (3) - `assignIdentifier`**: `TypeInfo` が設定されるべき場所は、値が変数に代入される時点であると推測。`symgo/evaluator/evaluator_eval_assign_stmt.go` の `assignIdentifier` 関数を修正し、`:=` での代入時に `MyFunc` 型の `TypeInfo` が `*object.Function` に伝播するように試みた。しかし、リファクタリングの過程でビルドエラーを繰り返し、最終的に修正を適用してもテストは成功しなかった。
-
-    -   **課題**: `fn := getFn()` のような代入（`token.DEFINE`）において、左辺の変数 `fn` の型（`MyFunc`）が `scanner` によって正しく解決されているにもかかわらず、その情報が `*object.Variable` の `FieldType` に設定されていない、あるいは設定されていても、右辺の `*object.Function` オブジェクトに伝播していない。この型情報の伝播が `symgo` の評価フローのどこかで行われるべきだが、その正確な場所の特定には至っていない。
+4.  **根本原因の深掘り**:
+    -   `TypeInfo` が失われるのは、`evalSelectorExpr` よりも前の段階である。
+    -   `fn := getFn()` という代入文が評価される際、`getFn()` が返す関数リテラル (`func() {}`) の評価結果である `*object.Function` は、それが `MyFunc` 型であるという文脈を持っていない。
+    -   `evalReturnStmt` を確認したが、ここでも型情報を付与する処理は行われていない。
+    -   `assignIdentifier` での代入時に `TypeInfo` を伝播させる修正を試みたが、`:=` の場合、左辺の変数の型情報がまだ確定していないため、右辺の `*object.Function` に正しい `TypeInfo` を設定できなかった。
 
 ### 現状の結論
 
-問題の根本原因は、関数リテラルが名前付きの関数型（例: `MyFunc`）の変数に代入される際に、その名前付きの型の情報（`TypeInfo`）が結果の `*object.Function` に関連付けられていないことにある。このため、後続のメソッド呼び出しの解決時に、レシーバの型情報が欠落し、メソッドが見つからずにエラーとなる。
+問題の根本原因は、関数リテラルが評価され、名前付きの関数型（例: `MyFunc`）の変数に代入されるまでの一連の評価フローのどこかで、その「名前付きの型」の情報が `*object.Function` オブジェクトに伝播・関連付けられていないことにある。
 
-`assignIdentifier` での修正が最も確実なアプローチと思われるが、現在の実装は複雑であり、正しい修正箇所の特定にはさらなる詳細なデバッグと `symgo` の評価フロー全体の深い理解が必要である。これ以上の試行は非効率と判断し、一旦調査を中断する。
+この問題を解決するには、`evalReturnStmt` や `assignIdentifier` を含む、より広範な評価フローの見直しが必要となる可能性が高い。`evalSelectorExpr` のみの修正では解決は困難。

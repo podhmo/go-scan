@@ -61,7 +61,6 @@ func main() { add(1, 2) }
 }
 
 func TestEval_MethodCallOnFuncPointer(t *testing.T) {
-	t.Skip("TODO: This test fails because the evaluator does not correctly propagate TypeInfo to function objects when they are assigned to variables of a named function type. See docs/trouble-symgo2.md for details.")
 	// This test reproduces a bug found during metacircular analysis where
 	// a method call on a pointer to a function object was failing.
 	// e.g., `var fn_ptr *MyFuncType; fn_ptr.WithReceiver(...)`

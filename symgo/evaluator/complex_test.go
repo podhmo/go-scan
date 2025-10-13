@@ -71,6 +71,26 @@ func TestEvalComplex(t *testing.T) {
 			source: `func main() { 2 * 3i }`,
 			want:   &object.Complex{Value: 6i},
 		},
+		{
+			name:   "complex == complex (true)",
+			source: `func main() { (1+2i) == (1+2i) }`,
+			want:   object.TRUE,
+		},
+		{
+			name:   "complex == complex (false)",
+			source: `func main() { (1+2i) == (2+3i) }`,
+			want:   object.FALSE,
+		},
+		{
+			name:   "complex != complex (true)",
+			source: `func main() { (1+2i) != (2+3i) }`,
+			want:   object.TRUE,
+		},
+		{
+			name:   "complex != complex (false)",
+			source: `func main() { (1+2i) != (1+2i) }`,
+			want:   object.FALSE,
+		},
 	}
 
 	for _, tt := range tests {
@@ -110,21 +130,29 @@ func TestEvalComplex(t *testing.T) {
 					return fmt.Errorf("expected return value, got %T", result)
 				}
 
-				wantComplex, ok := tt.want.(*object.Complex)
-				if !ok {
-					t.Fatalf("expected want to be *object.Complex, got %T", tt.want)
-				}
-				gotComplex, ok := ret.Value.(*object.Complex)
-				if !ok {
-					t.Fatalf("expected return value to be *object.Complex, got %T", ret.Value)
+				if wantComplex, ok := tt.want.(*object.Complex); ok {
+					gotComplex, ok := ret.Value.(*object.Complex)
+					if !ok {
+						t.Fatalf("expected return value to be *object.Complex, got %T", ret.Value)
+					}
+					complexComparer := cmp.Comparer(func(x, y complex128) bool {
+						return cmplx.Abs(x-y) < 1e-9
+					})
+					if diff := cmp.Diff(wantComplex.Value, gotComplex.Value, complexComparer); diff != "" {
+						t.Errorf("complex value mismatch (-want +got):\n%s", diff)
+					}
+				} else if wantBool, ok := tt.want.(*object.Boolean); ok {
+					gotBool, ok := ret.Value.(*object.Boolean)
+					if !ok {
+						t.Fatalf("expected return value to be *object.Boolean, got %T", ret.Value)
+					}
+					if diff := cmp.Diff(wantBool.Value, gotBool.Value); diff != "" {
+						t.Errorf("boolean value mismatch (-want +got):\n%s", diff)
+					}
+				} else {
+					t.Fatalf("unexpected want type %T", tt.want)
 				}
 
-				complexComparer := cmp.Comparer(func(x, y complex128) bool {
-					return cmplx.Abs(x-y) < 1e-9
-				})
-				if diff := cmp.Diff(wantComplex.Value, gotComplex.Value, complexComparer); diff != "" {
-					t.Errorf("complex value mismatch (-want +got):\n%s", diff)
-				}
 				return nil
 			}
 			if _, err := scantest.Run(t, t.Context(), dir, []string{"."}, action); err != nil {

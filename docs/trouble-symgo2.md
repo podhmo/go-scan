@@ -84,15 +84,14 @@ level=ERROR msg="undefined method or field: WithReceiver for pointer type INSTAN
 
 ### 調査の経緯と課題
 
-1.  **仮説**: `evalTypeSwitchStmt` の `case` 節の評価ロジックが、`*object.Function` のような `symgo` の内部オブジェクトを特別扱いしておらず、常に新しい `*object.Instance` や `*object.SymbolicPlaceholder` を生成してしまうことが原因であると仮定した。
-2.  **修正案**: `case` 節の型と `switch` 対象オブジェクトの具象型が一致する場合、新しいオブジェクトを生成する代わりに、元のオブジェクトを `Clone()` して型情報のみを更新するロジックを `evalTypeSwitchStmt` に追加した。
-3.  **問題の深化**: 上記の修正を加えても、テストは成功しなかった。デバッグログを追加して調査したところ、`switch` 対象オブジェクト (`originalObj`) の `TypeInfo.Name` が空文字列 `""` になっており、型比較が失敗していることが判明した。
-4.  **さらなる調査**: `originalObj` は `var fn MyFunc = func() {}` のように宣言された変数が `interface{}` を返す関数から返されたものであった。
-    -   `evalGenDecl` で変数 `fn` が宣言される際に、`*object.Function` オブジェクトに `MyFunc` の `TypeInfo` を設定する修正を追加した。
-    -   しかし、デバッグログで確認したところ、`evalGenDecl` の時点では `TypeInfo` が正しく設定されているように見えるにもかかわらず、その後の `evalTypeSwitchStmt` の時点では、**全く同じメモリアドレスのオブジェクトであるにもかかわらず `TypeInfo.Name` が失われている**という不可解な現象が確認された。
+根本原因は、`type MyFunc func()` のような関数型エイリアスが `scanner` によって正しくパースされておらず、その結果 `symgo` の評価器が `MyFunc` の `TypeInfo` を解決できずに `nil` を返してしまうことにある。
+
+1.  **問題の再現**: `type MyFunc func()` を定義し、その型の変数を `interface{}` に代入した後、`type-switch` で `MyFunc` にキャストバックする単体テストを作成した。このテストは、`case MyFunc:` にマッチせず、`default:` にフォールバックすることで失敗を再現した。
+2.  **原因の追跡**: 詳細なデバッグログにより、`evalGenDecl` 内で `MyFunc` 型を `resolver.ResolveType` で解決しようとした際に `nil` が返されていることを特定した。
+3.  **根本原因の特定**: `resolver.ResolveType` は内部で `scanner` の `fieldType.Resolve()` を呼び出している。`scanner` の `fillTypeInfoFromSpec` 関数が `type MyFunc func()` のような宣言を処理する際、生成される `TypeInfo` には `Kind = FuncKind` が設定されるが、`TypeInfo` の中の `Func` フィールド (`*FunctionInfo`) に、エイリアス名(`MyFunc`) やパッケージパスといった重要な情報が伝播されていなかった。これにより、後続の `Lookup` が失敗していた。
+4.  **修正の試み**: `scanner/scanner.go` の `fillTypeInfoFromSpec` を修正し、`typeInfo` から `funcInfo` へ名前とパッケージパスを伝播させた。しかし、この修正だけではテストは成功せず、`evaluator` 側にも変更が必要であることが示唆された。
+5.  **evaluator側の修正**: `evalGenDecl` と `evalTypeSwitchStmt` にも修正を加えたが、問題は解決しなかった。複数のレイヤーにまたがる複雑な状態管理の問題であり、単純な修正では対応できないことが判明した。
 
 ### 結論
 
-`evalGenDecl` で設定された `TypeInfo` が、`evalTypeSwitchStmt` に到達するまでの間に、予期せぬ副作用によって失われている可能性が非常に高い。しかし、その原因となる箇所の特定には至らなかった。`*object.Variable` と `*object.Function` の間での値の受け渡しや、`interface{}` 型への代入を処理する `evalAssignStmt` など、複数の箇所が関連している可能性が考えられるが、これ以上の調査は困難と判断した。
-
-この問題の解決には、`symgo` のオブジェクトモデルと状態管理に関する、より深いレベルの理解が必要となる。
+この問題は、`scanner` が関数型エイリアスの情報を `FunctionInfo` に完全に伝播させていないことに起因するが、それを修正しても `evaluator` 側での `TypeInfo` のハンドリングにさらなる問題があり、解決には至っていない。`scanner` と `evaluator` の間の型情報の受け渡しに関する、より広範な見直しが必要である。

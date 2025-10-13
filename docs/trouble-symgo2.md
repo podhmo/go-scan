@@ -40,41 +40,21 @@ func (e *Evaluator) evalPanicStmt(ctx context.Context, n *ast.PanicStmt, env *ob
 
 ### 現象
 
-`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際に、`symgo` エバリュエーターがクラッシュする。`TODO.md` によると、エラーは `undefined method or field: WithReceiver for pointer type INSTANCE` とされているが、最小再現テストケースでは `undefined method or field: WithReceiver for pointer type FUNCTION` というエラーが発生する。
+`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際に、`symgo` エバリュエーターがエラーを発生させる。ツール自体はクラッシュしないが、ログにエラーが出力される。
+
+-   **`TODO.md`での記述**: `undefined method or field: WithReceiver for pointer type INSTANCE`
+-   **最小再現テストでのエラー**: `undefined method or field: WithReceiver for pointer type FUNCTION`
 
 この問題は、関数型エイリアスに定義されたメソッドが、その型の変数へのポインタ経由で呼び出された場合に発生する。
 
 ### 調査ログ (2025-10-13)
 
-1.  **テストケース**: `symgo/evaluator/call_test.go` に、問題を再現するためのテスト `TestEval_MethodCallOnFuncPointer` を追加済み。
+1.  **最小再現テストの作成**: `symgo/evaluator/call_test.go` に、`... for pointer type FUNCTION` エラーを再現するテスト `TestEval_MethodCallOnFuncPointer` を追加した。
+2.  **原因分析**: 詳細なデバッグにより、このエラーの根本原因は、関数リテラルが名前付きの関数型（例: `MyFunc`）の変数に代入される際に、その「名前付きの型」の情報 (`TypeInfo`) が結果の `*object.Function` に関連付けられていないことにあると特定した。
+3.  **修正の試みと失敗**: `evalReturnStmt` を修正し、関数の返り値に `TypeInfo` を伝播させるアプローチを試みた。これにより最小再現テスト (`TestEval_MethodCallOnFuncPointer`) は成功した。
+4.  **`find-orphans`での再検証**: しかし、この修正を適用した状態で `make -C examples/find-orphans` を実行したところ、ログには依然として `... for pointer type INSTANCE` エラーが出力された。
+5.  **結論**: 私の修正は、より基本的な `FUNCTION` のケースは解決したが、`find-orphans` の自己分析時に発生する、より複雑な `INSTANCE` のケースは解決できなかった。根本原因は同じ（`TypeInfo`の欠落）だが、`*object.Function` が `*object.Instance` として誤認される、あるいは別のオブジェクトとして扱われる、より複雑な状態遷移が存在することを示唆している。
 
-    ```go
-    // main.go の抜粋
-    type MyFunc func()
-    func (f *MyFunc) WithReceiver() {}
+### 現状
 
-    func main() {
-        fn := getFn() // MyFunc 型の関数リテラルを返す
-        fn_ptr := &fn
-        fn_ptr.WithReceiver() // ここでエラーが発生する
-    }
-    ```
-
-2.  **詳細デバッグの実施**: `newError` を一時的に変更し、エラー発生時の解析コールスタックとGoランタイムスタックをファイルに出力するようにした。
-
-3.  **ログ分析**:
-    -   **Goランタイムスタック**: `applyFunctionImpl` -> `evalCallExpr` -> `evalSelectorExpr` の順で呼び出され、`evalSelectorExpr` 内で `newError` が呼ばれていることを確認。これは想定通りの動作。
-    -   **symgo解析スタック**: エラー発生時、解析対象のコードは `main` 関数内にいることを確認。
-    -   **結論**: これまでの分析通り、`fn_ptr.WithReceiver()` のレシーバ (`fn_ptr`) を評価した結果である `*object.Pointer` が指す `*object.Function` に `TypeInfo` が設定されていないことが根本原因であると再確認した。
-
-4.  **根本原因の深掘り**:
-    -   `TypeInfo` が失われるのは、`evalSelectorExpr` よりも前の段階である。
-    -   `fn := getFn()` という代入文が評価される際、`getFn()` が返す関数リテラル (`func() {}`) の評価結果である `*object.Function` は、それが `MyFunc` 型であるという文脈を持っていない。
-    -   `evalReturnStmt` を確認したが、ここでも型情報を付与する処理は行われていない。
-    -   `assignIdentifier` での代入時に `TypeInfo` を伝播させる修正を試みたが、`:=` の場合、左辺の変数の型情報がまだ確定していないため、右辺の `*object.Function` に正しい `TypeInfo` を設定できなかった。
-
-### 現状の結論
-
-問題の根本原因は、関数リテラルが評価され、名前付きの関数型（例: `MyFunc`）の変数に代入されるまでの一連の評価フローのどこかで、その「名前付きの型」の情報が `*object.Function` オブジェクトに伝播・関連付けられていないことにある。
-
-この問題を解決するには、`evalReturnStmt` や `assignIdentifier` を含む、より広範な評価フローの見直しが必要となる可能性が高い。`evalSelectorExpr` のみの修正では解決は困難。
+問題は未解決。`evalReturnStmt` の修正は不完全であったため元に戻した。ただし、基本的な `FUNCTION` のケースを再現するテストケース (`TestEval_MethodCallOnFuncPointer`) は、将来のデバッグのために `t.Skip()` 付きで残しておく価値がある。

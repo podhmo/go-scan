@@ -120,7 +120,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 
 ### `find-orphans`: Fix metacircular analysis bug
 - [ ] **`undefined method or field: WithReceiver for pointer type INSTANCE`**: The `find-orphans` tool fails when `symgo` analyzes its own source code. The root cause is that `evalSelectorExpr` in the evaluator doesn't correctly handle method calls on pointers to `*object.Function` during metacircular analysis, misinterpreting them as pointers to `*object.Instance`. The fix requires adding a `case *object.Function:` to the `switch` statement within the `case *object.Pointer:` block in `symgo/evaluator/evaluator_eval_selector_expr.go`.
-  - **Status**: Blocked. Unable to apply the necessary patch to the file.
+  - **Status**: Blocked. The minimal reproduction test fails with a `... for pointer type FUNCTION` error, while the full `find-orphans` run fails with `... for pointer type INSTANCE`. The root cause is the loss of `TypeInfo` for named function types, but the exact point of failure differs. A simple fix to `evalReturnStmt` solves the `FUNCTION` case but not the `INSTANCE` case. See `docs/trouble-symgo2.md` for a full investigation log.
 
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.

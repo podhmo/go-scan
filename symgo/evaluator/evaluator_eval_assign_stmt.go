@@ -276,20 +276,21 @@ func (e *Evaluator) assignIdentifier(ctx context.Context, ident *ast.Ident, val 
 	}
 
 	// If the variable's declared type is an interface, we should preserve that
-	// static type information on the variable itself. The concrete type of the
-	// assigned value is still available on `val` (which becomes `v.Value`).
-	var isLHSInterface bool
-	if ft := v.FieldType(); ft != nil {
-		if ti := e.resolver.ResolveType(ctx, ft); ti != nil {
-			isLHSInterface = ti.Kind == scan.InterfaceKind
-		}
+	// static type information on the variable itself, while tracking the new
+	// concrete type in PossibleTypes.
+	isLHSInterface := false
+	if v.TypeInfo() != nil && v.TypeInfo().Kind == scan.InterfaceKind {
+		isLHSInterface = true
 	}
 
 	v.Value = val
 	if !isLHSInterface {
+		// If the LHS is not an interface, its static type should conform to the RHS.
+		// We update the variable's TypeInfo to reflect the type of the value assigned.
 		v.SetTypeInfo(val.TypeInfo())
-		v.SetFieldType(val.FieldType())
 	}
+	// The FieldType is always updated as it might be more specific (e.g., pointer to struct).
+	v.SetFieldType(val.FieldType())
 	newFieldType := val.FieldType()
 
 	// Always accumulate possible types. Resetting the map can lead to lost

@@ -118,7 +118,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
 
+### `symgo`: Metacircular Analysis Bugs
 - [x] **`find-orphans`: Fix metacircular analysis bug**: Fixed a bug where method calls on pointers to named function types would fail. The root cause was that `TypeInfo` was not being propagated to function literals when they were returned from a function with a named function return type. The fix ensures this propagation happens in `evalReturnStmt`. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
+- [ ] **`type-switch` on `*object.Function`**: The evaluator fails with an `undefined method` error when performing a type switch on an `interface{}` containing a `*object.Function`. The root cause appears to be that the `TypeInfo` of the function object is lost somewhere between its declaration and its use in the `type-switch`, but the exact location of this state corruption has not been identified. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
 
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.

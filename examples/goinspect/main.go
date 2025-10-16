@@ -61,7 +61,7 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: &logLevel}))
-
+	slog.SetDefault(logger)
 	if err := run(context.Background(), os.Stdout, logger, pkgPatterns, withPatterns, targets, *trimPrefix, *includeUnexported, *shortFormat, *expandFormat); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
@@ -142,7 +142,6 @@ func setupTempModule(ctx context.Context, logger *slog.Logger, pkgPatterns, with
 
 	return tmpDir, cleanup, nil
 }
-
 
 func run(ctx context.Context, out io.Writer, logger *slog.Logger, pkgPatterns, withPatterns []string, targets []string, trimPrefix, includeUnexported, shortFormat, expandFormat bool) error {
 	inModuleMode := isModuleMode()

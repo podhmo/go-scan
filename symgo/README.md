@@ -113,36 +113,9 @@ tracer := symgo.TracerFunc(func(event symgo.TraceEvent) {
 interpreter, err := symgo.NewInterpreter(scanner, symgo.WithTracer(tracer))
 ```
 
-## Testing with `symgotest`
+## Testing
 
-The `symgotest` package offers helpers to streamline testing of `symgo`-based analyses. It provides convenient functions to run the interpreter on in-memory source code and make assertions on the results.
-
-```go
-import (
-	"context"
-	"testing"
-
-	"github.com/podhmo/go-scan/symgo/symgotest"
-)
-
-func TestMyAnalysis(t *testing.T) {
-	source := `
-package mypkg
-func Add(x, y int) int {
-    return x + y
-}
-`
-	ctx := context.Background()
-	r := symgotest.Run(t, ctx, source, "mypkg") // Run the analysis
-
-	// Assert that the 'Add' function was found
-	addFn, ok := r.Lookup("Add")
-	if !ok {
-		t.Fatal("Add function not found")
-	}
-	// ... more assertions on the function object
-}
-```
+The `symgotest` package provides helpers to streamline testing of `symgo`-based analyses. For more details, see the [`symgotest/README.md`](./symgotest/README.md).
 
 ## Basic Usage
 
@@ -158,7 +131,7 @@ import (
 
 	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgo/object"
+	"github.comcom/podhmo/go-scan/symgo/object"
 )
 
 func main() {

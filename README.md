@@ -156,36 +156,9 @@ s, err := goscan.New(
 ```
 When the scanner encounters `time.Time`, it will use your synthetic `TypeInfo` instead of parsing the "time" package. The resulting `scanner.FieldType` will have its `IsResolvedByConfig` flag set to `true`.
 
-## Testing with `scantest`
+## Testing
 
-The `scantest` package provides helpers for writing tests against `go-scan`. It simplifies the process of creating a scanner instance with in-memory source files and running assertions.
-
-```go
-import (
-    "testing"
-    "github.com/podhmo/go-scan/scantest"
-)
-
-func TestMyScanner(t *testing.T) {
-    source := `
-package mypkg
-type Person struct {
-    Name string
-}`
-
-    result := scantest.Scan(t, source, "mypkg")
-    if len(result.Packages) != 1 {
-        t.Fatalf("expected 1 package, got %d", len(result.Packages))
-    }
-
-    pkg := result.Packages[0]
-    person, ok := pkg.LookupType("Person")
-    if !ok {
-        t.Fatal("Person type not found")
-    }
-    // ... more assertions
-}
-```
+The `scantest` package provides helpers for writing tests against `go-scan`. For more details, see the [`scantest/README.md`](./scantest/README.md).
 
 ## More Examples
 

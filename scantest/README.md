@@ -1,109 +1,45 @@
-# Testing with `scantest`
+# scantest
 
-The `scantest` package provides a lightweight testing harness for tools built on top of `go-scan`. It simplifies the process of writing tests that involve parsing Go source files by managing temporary file creation and scanner invocation.
+The `scantest` package provides helpers for writing tests for tools built with the `go-scan` library. It simplifies the process of creating a `goscan.Scanner` instance with in-memory source files and running assertions against the scanned results.
 
-## Core Concepts
+## Quick Start
 
-The primary goal of `scantest` is to allow you to test your tool's logic against a set of virtual Go source files without needing to manage testdata directories manually. It provides two key helper functions:
+The main function is `scantest.Scan`, which takes a `*testing.T`, the source code to scan, and the name of the package. It returns a `ScanResult` containing the scanned packages and other relevant information.
 
--   `scantest.WriteFiles(t, files)`: Creates a temporary directory and writes a map of file paths to their content. It's perfect for setting up your test cases, including `go.mod` files and one or more Go source files.
--   `scantest.Run(t, dir, patterns, action)`: This is the main test runner. It initializes a `go-scan` scanner, scans the specified patterns within the given directory, and invokes your custom `ActionFunc` with the results.
-
-## How to Use `scantest`
-
-The typical workflow for testing a tool that uses `go-scan` involves these steps:
-
-1.  **Define Test Cases**: Create a table-driven test with each case defining a set of Go source files.
-2.  **Set Up Files**: In your test loop, use `scantest.WriteFiles` to create a temporary directory populated with your test source files.
-3.  **Implement the Action**: Create an `ActionFunc` that receives the `*scan.Scanner` and `[]*scan.Package` from `go-scan`. This is where you place the core logic of your test.
-4.  **Run the Test**: Call `scantest.Run` with the temporary directory and your action function.
-5.  **Assert Results**: Inside the `ActionFunc`, perform assertions on the data you extract from the `scan.Package` results.
-
-### Example: Testing an Annotation Parser
-
-Let's say you are building a tool that finds structs with a `@mytool:generate` annotation and records the struct name.
-
-First, you would define your tool's parsing logic. This function is what you want to test. It operates on the results of a `go-scan` scan, not on a specific file path.
+### Example
 
 ```go
-// mytool/parser.go
-
-package mytool
+package scantest_test
 
 import (
-    "strings"
-    scan "github.com/podhmo/go-scan"
-)
-
-// This is the function we want to test.
-// It takes the scan results and extracts the names of structs with the annotation.
-func ExtractAnnotatedStructs(pkgs []*scan.Package) []string {
-    var names []string
-    for _, pkg := range pkgs {
-        for _, t := range pkg.Types {
-            if strings.Contains(t.Doc, "@mytool:generate") {
-                names = append(names, t.Name)
-            }
-        }
-    }
-    return names
-}
-```
-
-Next, you would write a test for `ExtractAnnotatedStructs` using `scantest`.
-
-```go
-// mytool/parser_test.go
-
-package mytool
-
-import (
-	"context"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	scan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scantest"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestExtractAnnotatedStructs(t *testing.T) {
-	files := map[string]string{
-		"go.mod": "module example.com/hello",
-		"hello.go": `
-package hello
+func TestScantest(t *testing.T) {
+	source := `
+package mypkg
+type Person struct {
+    Name string
+}`
 
-// @mytool:generate
-type Foo struct {}
+	// scantest.Scan handles the boilerplate of setting up a scanner with an overlay.
+	result := scantest.Scan(t, source, "mypkg")
 
-type Bar struct {} // No annotation
+	// You can then make assertions on the result.
+	require.Len(t, result.Packages, 1, "expected one package to be scanned")
 
-// @mytool:generate
-type Baz struct {}
-`,
-	}
+	pkg := result.Packages[0]
+	person, ok := pkg.LookupType("Person")
+	require.True(t, ok, "Person type not found in package")
 
-	// 1. Set up the temporary directory and files.
-	dir, cleanup := scantest.WriteFiles(t, files)
-	defer cleanup()
-
-	// 2. Define the action to be performed on the scan results.
-	action := func(ctx context.Context, s *scan.Scanner, pkgs []*scan.Package) error {
-		// 3. Call the function you are testing.
-		got := ExtractAnnotatedStructs(pkgs)
-		want := []string{"Foo", "Baz"}
-
-		// 4. Assert the results.
-		if diff := cmp.Diff(want, got); diff != "" {
-			t.Errorf("ExtractAnnotatedStructs() mismatch (-want +got):\n%s", diff)
-		}
-		return nil
-	}
-
-	// 5. Run the test. scantest handles the scanning and calls our action.
-	if _, err := scantest.Run(t, dir, []string{"./..."}, action); err != nil {
-		t.Fatalf("scantest.Run() failed: %v", err)
-	}
+	assert.Equal(t, "Person", person.Name)
+	assert.Len(t, person.Struct.Fields, 1, "Person should have one field")
+	assert.Equal(t, "Name", person.Struct.Fields[0].Name)
 }
 ```
 
-This approach effectively decouples your tool's core logic from the file system and the `go-scan` boilerplate, leading to cleaner and more maintainable tests. Your parser logic is tested against the direct output of `go-scan`, which is exactly what it will receive in production.
+The `ScanResult` object provides easy access to the `goscan.Scanner` instance, the list of scanned packages, and any errors that occurred, making it easy to write focused and readable tests.

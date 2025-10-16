@@ -12,22 +12,33 @@ import (
 )
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
-	if symbolName, pkgPath, ok := e.getSymbolInfoForLog(fn); ok {
-		if e.resolver.ScanPolicy(pkgPath) {
-			slog.InfoContext(ctx, "** apply function",
-				"depth", len(e.callStack),
-				"symbol", symbolName,
-				"pkg", pkgPath,
-			)
-		}
-	}
-
 	if f, ok := fn.(*object.Function); ok {
 		if e.memoize && f.Decl != nil {
 			if cachedResult, found := e.memoizationCache[f.Decl.Pos()]; found {
+				if symbolName, pkgPath, ok := e.getSymbolInfoForLog(fn); ok {
+					if e.resolver.ScanPolicy(pkgPath) {
+						slog.InfoContext(ctx, fmt.Sprintf("**#%s apply function", strings.Repeat("#", len(e.callStack))),
+							"depth", len(e.callStack),
+							"symbol", symbolName,
+							"pkg", pkgPath,
+							"pos", callPos,
+						)
+					}
+				}
 				e.logc(ctx, slog.LevelDebug, "returning memoized result for function", "function", f.Name)
 				return cachedResult
 			}
+		}
+	}
+
+	if symbolName, pkgPath, ok := e.getSymbolInfoForLog(fn); ok {
+		if e.resolver.ScanPolicy(pkgPath) {
+			slog.InfoContext(ctx, fmt.Sprintf("***%s apply function", strings.Repeat("*", len(e.callStack))),
+				"depth", len(e.callStack),
+				"symbol", symbolName,
+				"pkg", pkgPath,
+				"pos", callPos,
+			)
 		}
 	}
 

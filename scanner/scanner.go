@@ -756,7 +756,12 @@ func (s *Scanner) fillTypeInfoFromSpec(ctx context.Context, typeInfo *TypeInfo, 
 		typeInfo.Interface = s.parseInterfaceType(childCtx, t, typeInfo.TypeParams, info, importLookup)
 	case *ast.FuncType:
 		typeInfo.Kind = FuncKind
-		typeInfo.Func = s.parseFuncType(childCtx, t, typeInfo.TypeParams, info, importLookup)
+		funcInfo := s.parseFuncType(childCtx, t, typeInfo.TypeParams, info, importLookup)
+		// Propagate the alias's name and package to the underlying FunctionInfo.
+		// This is crucial for resolving the TypeInfo of function aliases.
+		funcInfo.Name = typeInfo.Name
+		funcInfo.PkgPath = typeInfo.PkgPath
+		typeInfo.Func = funcInfo
 	default:
 		typeInfo.Kind = AliasKind
 		typeInfo.Underlying = s.TypeInfoFromExpr(childCtx, sp.Type, typeInfo.TypeParams, info, importLookup)

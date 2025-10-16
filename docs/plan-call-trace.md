@@ -24,49 +24,59 @@ Before performing an expensive analysis, the tool must first identify a minimal 
 
 ### Phase 2: Call Path Tracing (Symbolic Execution)
 
-With a well-defined scope, the tool will use the `symgo` engine to trace execution paths from all `main` functions within the scope. The core of the design lies in how function calls are intercepted and analyzed. Two approaches were considered during the design process.
+With a well-defined scope, the tool will use the `symgo` engine to trace execution paths from all `main` functions within the scope. The core of the design lies in how function calls are intercepted and analyzed. Three approaches were considered.
 
 #### Approach A: Targeted Intrinsic (Efficient but Flawed)
 
-This approach prioritizes performance by focusing only on calls to the target function.
+*   **Mechanism:** Use `RegisterIntrinsic` to register a specific intrinsic handler **only for the target function**.
+*   **Advantage:** Highly performant, as it ignores all other function calls.
+*   **Critical Flaw:** This approach **fails to trace calls made through interfaces**. If `main` calls a method on an interface `I`, and the target function is a method on a concrete type `T` that implements `I`, the intrinsic for `T.MyMethod` will never be triggered. The trace is lost.
 
-*   **Mechanism:** Use `RegisterIntrinsic` to register a specific intrinsic handler **only for the target function** (e.g., `example.com/mylib.MyFunction`).
-*   **Action:** When the intrinsic is triggered, it signifies a direct call. The tool would then capture the current call stack via `interpreter.CallStack()`.
-*   **Advantage:** Highly performant, as it ignores all other function calls during the analysis.
-*   **Critical Flaw:** This approach **fails to trace calls made through interfaces**. If `main` calls a method on an interface `I`, and the target function is a method on a concrete type `T` that implements `I`, the intrinsic for `T.MyMethod` will never be triggered. The trace is lost at the interface boundary. This makes the approach unsuitable for most real-world Go codebases.
+#### Approach B: Default Intrinsic with Post-Analysis (Robust Default)
 
-#### Approach B: Default Intrinsic with Post-Analysis (Robust and Recommended)
+This approach prioritizes correctness and completeness by inspecting all calls and resolving interface calls after the trace.
 
-This approach prioritizes correctness and completeness by inspecting all calls and resolving interface calls after the trace. **This is the recommended design.**
+*   **Mechanism:**
+    1. Use `RegisterDefaultIntrinsic` to intercept **all** function calls.
+    2. Inside the intrinsic, classify calls into "Direct Hits" (calls to the target function) and "Potential Hits" (calls to an interface method), recording the call stack for each.
+    3. After the trace, build an interface implementation map (like in `find-orphans`).
+    4. Connect "Potential Hits" to the target function if its receiver type implements the called interface.
+*   **Advantage:** Guarantees that all potential call paths through interfaces are discovered.
+*   **Trade-off:** This approach is conservative and may produce false positives. It reports that a call *could* happen, but doesn't prove that it *will* for a specific execution. For example, if an interface `I` is implemented by types `T1` and `T2`, and the target is `T1.Method`, this approach will flag any call to `I.Method` as a potential call path, even if the runtime instance is always `T2`.
 
-1.  **Symbolic Execution with a Default Intrinsic:** The tool will use `RegisterDefaultIntrinsic` to intercept **all** function calls that occur during the symbolic execution starting from each `main` entry point.
+#### Approach C: Guided Analysis via Type Binding (High-Precision, Future Enhancement)
 
-2.  **Call Classification and Recording:** Inside the default intrinsic, each function call will be classified and recorded:
-    *   **Direct Hits:** If the called function is the concrete target function, the current call stack (obtained via `interpreter.CallStack()`) is immediately recorded as a confirmed call path.
-    *   **Potential Hits (Interface Calls):** If the called function is an interface method, the tool will record the call stack and the fully-qualified name of the interface method (e.g., `"io.Writer.Write"`). These are stored separately as "potential paths."
+This approach aims to eliminate the false positives of Approach B by allowing the user to guide the analysis.
 
-3.  **Post-Trace Path Resolution:** After the symbolic execution from all `main` functions is complete, a final resolution step connects the potential paths:
-    *   **Build Interface Map:** The tool will build a map of all interfaces in the analysis scope to their concrete implementers. This logic can be adapted directly from `examples/find-orphans`.
-    *   **Connect Paths:** The tool iterates through the recorded "potential paths." For each path that ends in a call to an interface method (e.g., `I.Do`), it checks if the target function's receiver type (e.g., `T`) is a known implementer of that interface `I`.
-    *   If `T` implements `I`, the potential path is confirmed as a valid call path to the target function and is added to the final results.
+*   **Mechanism (Proposed `symgo` Enhancement):**
+    1.  Propose a new feature for the `symgo.Interpreter`: a method like `BindInterfaceToConcreteType(interfaceName, concreteName string)`.
+    2.  This would instruct `symgo` to assume that whenever it encounters a call to a method on `interfaceName`, it should proceed as if it were a call on `concreteName`.
+*   **`call-trace` Usage:**
+    1.  Expose a new CLI flag, e.g., `--bind-interface="io.Writer:*os.File"`.
+    2.  When this flag is used, `call-trace` would call the new `symgo` binding method.
+    3.  The analysis could then revert to the efficient **Approach A**, registering an intrinsic only for the concrete target function (e.g., `(*os.File).Write`), as `symgo` would now be able to resolve the interface call to the specified concrete type.
+*   **Advantage:** Eliminates false positives, providing an exact trace for a user-specified scenario.
+*   **Trade-off:** Requires manual configuration for each interface-to-concrete mapping the user wants to test. It also requires an enhancement to the core `symgo` library.
 
-This robust approach ensures that call paths are not lost when they go through an interface, providing a complete and accurate trace.
+### Conclusion on Approach
+
+**Approach B is the recommended design for the initial implementation.** It provides the most comprehensive results out-of-the-box, which aligns with the tool's primary goal of discovery. The risk of false positives is an acceptable trade-off for ensuring no potential call path is missed.
+
+**Approach C is a valuable future enhancement.** It would serve as a powerful "precision mode" for users who need to verify specific, known call paths and eliminate noise.
 
 ## 3. Technical Investigation & Feasibility
 
-A technical investigation was conducted to assess the viability of this design.
-
-*   **`symgo` Capabilities:** The `symgo` engine is a symbolic tracer that explores all possible code paths, making it suitable for this task. It correctly models interface calls as symbolic placeholders, which is the key behavior that enables Approach B.
+*   **`symgo` Capabilities:** `symgo` is well-suited for this task. Its ability to symbolically trace all paths and model interface calls is the foundation for the recommended approach.
 *   **Call Stack Access:** The core of the tool relies on accessing the full call stack. The `symgo/evaluator.Evaluator` maintains an internal `callStack`, but it is not publicly exposed. A minor, non-breaking change to the `symgo` library is required to add a public `CallStack()` method to the `symgo.Interpreter`.
 
 ## 4. Open Questions and Future Considerations
 
-1.  **Performance at Scale:** A key consideration is performance on large codebases. The recommended robust approach (Approach B) requires inspecting every function call. While correct, this is less performant than the flawed targeted approach. For very large projects, the overhead of the default intrinsic could be significant, and performance profiling will be important.
+1.  **Performance at Scale:** A key consideration is performance on large codebases. The recommended robust approach (Approach B) requires inspecting every function call. For very large projects, the overhead could be significant, and performance profiling will be important.
 
 2.  **Handling Dynamic Calls:** The `symgo` engine operates on static source code, which imposes certain limitations.
-    *   **Reflection:** Calls made via `reflect.ValueOf(fn).Call()` will likely not be detected. This should be documented as a known limitation of the tool.
+    *   **Reflection:** Calls made via `reflect.ValueOf(fn).Call()` will likely not be detected. This should be documented as a known limitation.
     *   **Cgo:** Function calls that cross the Cgo boundary will not be traced.
 
-3.  **Usability of Output:** The most effective way to present the results to the user should be considered. Options include a simple list of stack traces, a structured JSON format for machine processing, or a graph visualization for exploring call trees.
+3.  **Usability of Output:** The most effective way to present the results to the user should be considered. Options include a simple list of stack traces, a structured JSON format, or a graph visualization.
 
-4.  **Target Function Specification:** The CLI will need a robust way to parse the target function signature, including methods on both value and pointer receivers (e.g., `(T).Method` vs. `(*T).Method`).
+4.  **Target Function Specification:** The CLI will need a robust way to parse the target function signature, including methods on both value and pointer receivers.

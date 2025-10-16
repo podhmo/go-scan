@@ -52,3 +52,46 @@ func (e *Evaluator) logcWithCallerDepth(ctx context.Context, level slog.Level, d
 
 	e.logger.Log(ctx, level, msg, args...)
 }
+
+// getSymbolInfoForLog extracts a structured symbol name and package path from a function object for logging.
+func (e *Evaluator) getSymbolInfoForLog(fn object.Object) (symbolName string, pkgPath string, ok bool) {
+	switch fn := fn.(type) {
+	case *object.InstantiatedFunction:
+		// Unwrap and handle the underlying function.
+		return e.getSymbolInfoForLog(fn.Function)
+
+	case *object.Function:
+		if fn.Package == nil {
+			return "", "", false
+		}
+		pkgPath = fn.Package.ImportPath
+		if fn.Name != nil {
+			symbolName = fn.Name.Name
+		} else {
+			symbolName = "<closure>"
+		}
+
+		if fn.Receiver != nil {
+			receiverType := "unknown"
+			if t := fn.Receiver.TypeInfo(); t != nil {
+				receiverType = t.Name
+			} else if ft := fn.Receiver.FieldType(); ft != nil {
+				receiverType = ft.String()
+			}
+			symbolName = fmt.Sprintf("(%s).%s", receiverType, symbolName)
+		}
+		return symbolName, pkgPath, true
+
+	case *object.UnresolvedFunction:
+		return fn.FuncName, fn.PkgPath, true
+
+	case *object.SymbolicPlaceholder:
+		if fn.UnderlyingFunc != nil && fn.Package != nil {
+			return fn.UnderlyingFunc.Name, fn.Package.ImportPath, true
+		}
+		return "", "", false
+
+	default:
+		return "", "", false
+	}
+}

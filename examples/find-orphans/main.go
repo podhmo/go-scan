@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -147,7 +148,7 @@ func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace
 		logLevel.Set(slog.LevelWarn)
 	}
 	opts := &slog.HandlerOptions{
-		AddSource: verbose,
+		AddSource: verbose && false, // for debug
 		Level:     logLevel,
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, opts))
@@ -205,7 +206,7 @@ func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace
 	if err != nil {
 		return fmt.Errorf("could not resolve target packages: %w", err)
 	}
-	logger.DebugContext(ctx, "resolved target packages for reporting", "count", len(targetPackages), "packages", keys(targetPackages))
+	logger.InfoContext(ctx, "* resolved target packages for reporting", "count", len(targetPackages))
 
 	// Resolve all packages for scanning (the analysis scope).
 	// This is defined by --primary-analysis-scope if provided, otherwise it's the whole workspace.
@@ -217,7 +218,7 @@ func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace
 	if err != nil {
 		return fmt.Errorf("could not resolve scan packages: %w", err)
 	}
-	logger.DebugContext(ctx, "resolved scan packages for analysis", "count", len(scanPackages), "packages", keys(scanPackages))
+	logger.InfoContext(ctx, "* resolved scan packages for analysis", "count", len(scanPackages))
 
 	// Now create the main scanner
 	var scannerOpts []goscan.ScannerOption
@@ -641,7 +642,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	for _, ep := range analysisFns {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-		slog.DebugContext(ctx, "analyzing from function", "function", epName)
+		slog.InfoContext(ctx, "** analyzing entry point", "function", epName)
 
 		args := []object.Object{}
 		// If the entry point is a test function, provide a symbolic *testing.T.
@@ -691,8 +692,13 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 
 		if _, err := interp.Apply(ctx, ep, args, ep.Package); err != nil {
-			slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
 			// We continue to the next entry point even if one fails.
+			var symgoErr *symgo.Error
+			if errors.As(err, &symgoErr) {
+				// already logged
+			} else {
+				slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
+			}
 		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")

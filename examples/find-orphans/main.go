@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -29,6 +30,7 @@ func main() {
 		workspace            = flag.String("workspace-root", "", "scan all Go modules found under a given directory")
 		verbose              = flag.Bool("v", false, "enable verbose output")
 		asJSON               = flag.Bool("json", false, "output orphans in JSON format")
+		debug                = flag.Bool("debug", false, "enable debug output")
 		mode                 = flag.String("mode", "auto", "analysis mode: auto, app, or lib")
 		excludeDirs          stringSliceFlag
 		primaryAnalysisScope stringSliceFlag
@@ -57,7 +59,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := run(ctx, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil, primaryAnalysisScope); err != nil {
+	if err := run(ctx, *debug, *all, *includeTests, *workspace, *verbose, *asJSON, *mode, startPatterns, excludeDirs, nil, primaryAnalysisScope); err != nil {
 		slog.ErrorContext(ctx, "toplevel", "error", err)
 		os.Exit(1)
 	}
@@ -136,15 +138,17 @@ func discoverModules(ctx context.Context, root string, excludeDirs []string) ([]
 	return modules, nil
 }
 
-func run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {
+func run(ctx context.Context, debug bool, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {
 	logLevel := new(slog.LevelVar)
-	if verbose {
+	if debug {
 		logLevel.Set(slog.LevelDebug)
-	} else {
+	} else if verbose {
 		logLevel.Set(slog.LevelInfo)
+	} else {
+		logLevel.Set(slog.LevelWarn)
 	}
 	opts := &slog.HandlerOptions{
-		AddSource: verbose,
+		AddSource: verbose && false, // for debug
 		Level:     logLevel,
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, opts))
@@ -172,7 +176,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		if len(moduleDirs) == 0 {
 			return fmt.Errorf("no go.mod files found in workspace root %s", workspace)
 		}
-		slog.DebugContext(ctx, "creating locators for workspace", "count", len(moduleDirs), "modules", moduleDirs)
+		logger.DebugContext(ctx, "creating locators for workspace", "count", len(moduleDirs), "modules", moduleDirs)
 		for _, dir := range moduleDirs {
 			loc, err := locator.New(dir, locatorOpts...)
 			if err != nil {
@@ -194,7 +198,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 		locators = append(locators, loc)
 	}
 	for _, loc := range locators {
-		slog.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
+		logger.InfoContext(ctx, "* scan module", "module", loc.ModulePath())
 	}
 
 	// Resolve the target packages for reporting. This is always from the positional args.
@@ -202,7 +206,7 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	if err != nil {
 		return fmt.Errorf("could not resolve target packages: %w", err)
 	}
-	slog.DebugContext(ctx, "resolved target packages for reporting", "count", len(targetPackages), "packages", keys(targetPackages))
+	logger.InfoContext(ctx, "* resolved target packages for reporting", "count", len(targetPackages))
 
 	// Resolve all packages for scanning (the analysis scope).
 	// This is defined by --primary-analysis-scope if provided, otherwise it's the whole workspace.
@@ -214,12 +218,13 @@ func run(ctx context.Context, all bool, includeTests bool, workspace string, ver
 	if err != nil {
 		return fmt.Errorf("could not resolve scan packages: %w", err)
 	}
-	slog.DebugContext(ctx, "resolved scan packages for analysis", "count", len(scanPackages), "packages", keys(scanPackages))
+	logger.InfoContext(ctx, "* resolved scan packages for analysis", "count", len(scanPackages))
 
 	// Now create the main scanner
 	var scannerOpts []goscan.ScannerOption
 	scannerOpts = append(scannerOpts, goscan.WithIncludeTests(includeTests))
 	scannerOpts = append(scannerOpts, goscan.WithGoModuleResolver())
+	scannerOpts = append(scannerOpts, goscan.WithLogger(logger))
 
 	if workspace != "" {
 		scannerOpts = append(scannerOpts, goscan.WithModuleDirs(moduleDirs))
@@ -443,7 +448,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	}
 	slog.InfoContext(ctx, "analysis phase", "packages", len(a.packages))
 
-	interfaceMap := buildInterfaceMap(a.packages)
+	interfaceMap := buildInterfaceMap(a.ctx, a.s, a.packages)
 	slog.DebugContext(ctx, "built interface map", "interfaces", len(interfaceMap))
 
 	// Use the user-provided primary analysis scope if available, otherwise default to all scanned packages.
@@ -455,6 +460,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 	interpreterOptions := []symgo.Option{
 		symgo.WithLogger(slog.Default()),
 		symgo.WithPrimaryAnalysisScope(analysisScopePatterns...),
+		symgo.WithMemoization(true), // Enable memoization for performance
 	}
 	if a.scanPolicy != nil {
 		interpreterOptions = append(interpreterOptions, symgo.WithScanPolicy(a.scanPolicy))
@@ -504,32 +510,36 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 				}
 			}
 
-			if fn.UnderlyingMethod != nil {
-				methodName := fn.UnderlyingMethod.Name
-				var implementerTypes []*scanner.FieldType
+			if fn.UnderlyingFunc != nil {
+				// Case 1: It's an interface method call placeholder (it has a receiver).
 				if fn.Receiver != nil {
-					receiverTypeInfo := fn.Receiver.TypeInfo()
-					if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
-						ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
-						if allImplementers, ok := interfaceMap[ifaceName]; ok {
-							for _, ti := range allImplementers {
-								implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
+					methodName := fn.UnderlyingFunc.Name
+					var implementerTypes []*scanner.FieldType
+					if fn.Receiver != nil {
+						receiverTypeInfo := fn.Receiver.TypeInfo()
+						if receiverTypeInfo != nil && receiverTypeInfo.Kind == scanner.InterfaceKind {
+							ifaceName := fmt.Sprintf("%s.%s", receiverTypeInfo.PkgPath, receiverTypeInfo.Name)
+							if allImplementers, ok := interfaceMap[ifaceName]; ok {
+								for _, ti := range allImplementers {
+									implementerTypes = append(implementerTypes, &scanner.FieldType{Definition: ti})
+								}
 							}
 						}
 					}
+					for _, implFt := range implementerTypes {
+						a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
+					}
+				} else { // Case 2: It's a regular function placeholder (no receiver).
+					if fn.Package != nil {
+						fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
+						usageMap[fullName] = true
+					}
 				}
-				for _, implFt := range implementerTypes {
-					a.markMethodAsUsed(ctx, usageMap, implFt, methodName)
-				}
-			}
-			if fn.UnderlyingFunc != nil && fn.Package != nil && fn.UnderlyingFunc.Receiver == nil {
-				fullName := fmt.Sprintf("%s.%s", fn.Package.ImportPath, fn.UnderlyingFunc.Name)
-				usageMap[fullName] = true
 			}
 		}
 	}
 
-	interp.RegisterDefaultIntrinsic(func(i *symgo.Interpreter, args []object.Object) object.Object {
+	interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 		// The intrinsic is triggered for every function call.
 		// We need to mark the function being called (args[0]) as used.
 		// We also need to check if any of the arguments themselves are function
@@ -557,7 +567,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 
 		for _, fnInfo := range pkg.Functions {
-			funcObj, ok := interp.FindObject(fnInfo.Name)
+			funcObj, ok := interp.FindObjectInPackage(ctx, pkg.ImportPath, fnInfo.Name)
 			if !ok {
 				slog.DebugContext(ctx, "could not find function object in interpreter", "function", fnInfo.Name, "package", pkg.ImportPath)
 				continue
@@ -632,7 +642,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 
 	for _, ep := range analysisFns {
 		epName := getFullName(a.s, ep.Package, &scanner.FunctionInfo{Name: ep.Name.Name, AstDecl: ep.Decl})
-		slog.DebugContext(ctx, "analyzing from function", "function", epName)
+		slog.InfoContext(ctx, "** analyzing entry point", "function", epName)
 
 		args := []object.Object{}
 		// If the entry point is a test function, provide a symbolic *testing.T.
@@ -640,7 +650,7 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		if !isAppMode && a.includeTests && isTestFunction(ep.Def) {
 			// Lazily load the type info for *testing.T once.
 			if testingT_FieldType == nil {
-				testingPkg, err := a.s.ScanPackageByImport(ctx, "testing")
+				testingPkg, err := a.s.ScanPackageFromImportPath(ctx, "testing")
 				if err != nil {
 					slog.WarnContext(ctx, "could not scan 'testing' package, cannot create symbolic *testing.T", "error", err)
 				} else {
@@ -682,11 +692,20 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 
 		if _, err := interp.Apply(ctx, ep, args, ep.Package); err != nil {
-			slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
 			// We continue to the next entry point even if one fails.
+			var symgoErr *symgo.Error
+			if errors.As(err, &symgoErr) {
+				// already logged
+			} else {
+				slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
+			}
 		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")
+
+	// Finalize the analysis to resolve any collected interface method calls.
+	slog.InfoContext(ctx, "finalizing analysis for interface resolution")
+	interp.Finalize(ctx)
 
 	type Orphan struct {
 		Name     string `json:"name"`
@@ -825,7 +844,7 @@ func (a *analyzer) Visit(pkg *goscan.PackageImports) ([]string, error) {
 	if pkg.ImportPath == "C" {
 		return nil, nil
 	}
-	fullPkg, err := a.s.ScanPackageByImport(a.ctx, pkg.ImportPath)
+	fullPkg, err := a.s.ScanPackageFromImportPath(a.ctx, pkg.ImportPath)
 	if err != nil {
 		slog.WarnContext(a.ctx, "could not scan package", "package", pkg.ImportPath, "error", err)
 		return nil, nil // Continue even if a package fails to scan
@@ -863,11 +882,10 @@ func getFullName(s *goscan.Scanner, pkg *scanner.PackageInfo, fn *scanner.Functi
 	return fmt.Sprintf("%s.%s", pkg.ImportPath, fn.Name)
 }
 
-func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*scanner.TypeInfo {
+func buildInterfaceMap(ctx context.Context, s *goscan.Scanner, packages map[string]*scanner.PackageInfo) map[string][]*scanner.TypeInfo {
 	interfaceMap := make(map[string][]*scanner.TypeInfo)
 	var allInterfaces []*scanner.TypeInfo
 	var allStructs []*scanner.TypeInfo
-	packageOfStruct := make(map[*scanner.TypeInfo]*scanner.PackageInfo)
 
 	for _, pkg := range packages {
 		for _, t := range pkg.Types {
@@ -875,7 +893,6 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 				allInterfaces = append(allInterfaces, t)
 			} else if t.Kind == scanner.StructKind {
 				allStructs = append(allStructs, t)
-				packageOfStruct[t] = pkg
 			}
 		}
 	}
@@ -885,8 +902,7 @@ func buildInterfaceMap(packages map[string]*scanner.PackageInfo) map[string][]*s
 		var implementers []*scanner.TypeInfo
 
 		for _, strct := range allStructs {
-			pkgInfo := packageOfStruct[strct]
-			if goscan.Implements(strct, iface, pkgInfo) {
+			if s.Implements(ctx, strct, iface) {
 				implementers = append(implementers, strct)
 			}
 		}

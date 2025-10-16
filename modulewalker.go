@@ -43,20 +43,20 @@ type ModuleWalker struct {
 	mu                  sync.RWMutex
 }
 
-// ScanPackageImports scans a single Go package identified by its import path,
+// ScanPackageFromFilePathImports scans a single Go package identified by its import path,
 // parsing only the package clause and import declarations for efficiency.
 // It returns a lightweight PackageImports struct containing the package name
 // and a list of its direct dependencies.
 // Results are cached in memory for the lifetime of the ModuleWalker instance.
-func (w *ModuleWalker) ScanPackageImports(ctx context.Context, importPath string) (*scanner.PackageImports, error) {
+func (w *ModuleWalker) ScanPackageFromFilePathImports(ctx context.Context, importPath string) (*scanner.PackageImports, error) {
 	w.mu.RLock()
 	cachedPkg, found := w.packageImportsCache[importPath]
 	w.mu.RUnlock()
 	if found {
-		slog.DebugContext(ctx, "ScanPackageImports CACHE HIT", slog.String("importPath", importPath))
+		slog.DebugContext(ctx, "ScanPackageFromFilePathImports CACHE HIT", slog.String("importPath", importPath))
 		return cachedPkg, nil
 	}
-	slog.DebugContext(ctx, "ScanPackageImports CACHE MISS", slog.String("importPath", importPath))
+	slog.DebugContext(ctx, "ScanPackageFromFilePathImports CACHE MISS", slog.String("importPath", importPath))
 
 	pkgDirAbs, err := w.locator.FindPackageDir(importPath)
 	if err != nil {
@@ -65,7 +65,7 @@ func (w *ModuleWalker) ScanPackageImports(ctx context.Context, importPath string
 
 	allGoFilesInPkg, err := listGoFilesForWalker(pkgDirAbs, w.IncludeTests)
 	if err != nil {
-		return nil, fmt.Errorf("ScanPackageImports: failed to list go files in %s: %w", pkgDirAbs, err)
+		return nil, fmt.Errorf("ScanPackageFromFilePathImports: failed to list go files in %s: %w", pkgDirAbs, err)
 	}
 
 	if len(allGoFilesInPkg) == 0 {
@@ -81,9 +81,9 @@ func (w *ModuleWalker) ScanPackageImports(ctx context.Context, importPath string
 		return pkgInfo, nil
 	}
 
-	pkgImports, err := w.scanner.ScanPackageImports(ctx, allGoFilesInPkg, pkgDirAbs, importPath)
+	pkgImports, err := w.scanner.ScanPackageFromFilePathImports(ctx, allGoFilesInPkg, pkgDirAbs, importPath)
 	if err != nil {
-		return nil, fmt.Errorf("ScanPackageImports: scanning imports for %s failed: %w", importPath, err)
+		return nil, fmt.Errorf("ScanPackageFromFilePathImports: scanning imports for %s failed: %w", importPath, err)
 	}
 
 	w.mu.Lock()
@@ -145,7 +145,7 @@ func (w *ModuleWalker) FindImporters(ctx context.Context, targetImportPath strin
 		}
 
 		// Now we can use the existing efficient scanner method.
-		pkgImports, err := w.ScanPackageImports(ctx, currentPkgImportPath)
+		pkgImports, err := w.ScanPackageFromFilePathImports(ctx, currentPkgImportPath)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
 			return nil // continue
@@ -233,7 +233,7 @@ func (w *ModuleWalker) FindImportersAggressively(ctx context.Context, targetImpo
 		}
 
 		// Now we can use the existing efficient scanner method to confirm.
-		pkgImports, err := w.ScanPackageImports(ctx, currentPkgImportPath)
+		pkgImports, err := w.ScanPackageFromFilePathImports(ctx, currentPkgImportPath)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to scan potential importer package, skipping", "importPath", currentPkgImportPath, "error", err)
 			continue
@@ -303,7 +303,7 @@ func (w *ModuleWalker) BuildReverseDependencyMap(ctx context.Context) (map[strin
 		if relPath == "." {
 			currentPkgImportPath = modulePath
 		}
-		pkgImports, err := w.ScanPackageImports(ctx, currentPkgImportPath)
+		pkgImports, err := w.ScanPackageFromFilePathImports(ctx, currentPkgImportPath)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to scan package imports, skipping", "importPath", currentPkgImportPath, "error", err)
 			return nil
@@ -332,7 +332,7 @@ func (w *ModuleWalker) BuildReverseDependencyMap(ctx context.Context) (map[strin
 
 // Walk performs a dependency graph traversal starting from a set of root packages
 // identified by the input patterns.
-// It uses the efficient ScanPackageImports method to fetch dependencies at each step.
+// It uses the efficient ScanPackageFromFilePathImports method to fetch dependencies at each step.
 // The provided Visitor's Visit method is called for each discovered package,
 // allowing the caller to inspect the package and control which of its dependencies
 // are followed next.
@@ -355,7 +355,7 @@ func (w *ModuleWalker) Walk(ctx context.Context, visitor Visitor, patterns ...st
 		}
 		visited[currentImportPath] = struct{}{}
 
-		pkgImports, err := w.ScanPackageImports(ctx, currentImportPath)
+		pkgImports, err := w.ScanPackageFromFilePathImports(ctx, currentImportPath)
 		if err != nil {
 			// For a visualization tool, it might be better to log and continue.
 			// However, for a generic utility, failing fast is safer.

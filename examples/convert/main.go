@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/generator"
@@ -14,35 +13,6 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-// logLevelVar is a custom flag.Value implementation for slog.LevelVar
-type logLevelVar struct {
-	levelVar *slog.LevelVar
-}
-
-func (v *logLevelVar) String() string {
-	if v.levelVar == nil {
-		return ""
-	}
-	return v.levelVar.Level().String()
-}
-
-func (v *logLevelVar) Set(s string) error {
-	var level slog.Level
-	switch strings.ToLower(s) {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		return fmt.Errorf("unknown log level: %s", s)
-	}
-	v.levelVar.Set(level)
-	return nil
-}
 
 type FileWriter interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
@@ -67,9 +37,9 @@ func main() {
 		dryRun        = flag.Bool("dry-run", false, "don't write files, just print to stdout")
 		inspect       = flag.Bool("inspect", false, "enable inspection logging for annotations")
 		buildTags     = flag.String("tags", "", "build tags to use when running the code generator")
-		logLevel      = new(slog.LevelVar)
+		logLevel      = slog.LevelWarn
 	)
-	flag.Var(&logLevelVar{levelVar: logLevel}, "log-level", "set log level (debug, info, warn, error)")
+	flag.TextVar(&logLevel, "log-level", &logLevel, "set log level (debug, info, warn, error)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: convert -pkg <package_path> [-cwd <dir>] [-output <filename>] [-pkgname <name>] [-output-pkgpath <path>]\n")
 		flag.PrintDefaults()
@@ -81,7 +51,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	opts := slog.HandlerOptions{Level: logLevel}
+	opts := slog.HandlerOptions{Level: &logLevel}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
 	slog.SetDefault(logger)
 
@@ -111,8 +81,8 @@ func run(ctx context.Context, pkgpath, workdir, output, pkgname, outputPkgPath s
 		return fmt.Errorf("failed to create scanner: %w", err)
 	}
 
-	// Use ScanPackageByImport to leverage the scanner's configured locator.
-	scannedPkg, err := s.ScanPackageByImport(ctx, pkgpath)
+	// Use ScanPackageFromImportPath to leverage the scanner's configured locator.
+	scannedPkg, err := s.ScanPackageFromImportPath(ctx, pkgpath)
 	if err != nil {
 		return fmt.Errorf("failed to scan package %q: %w", pkgpath, err)
 	}

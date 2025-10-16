@@ -8,15 +8,15 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestScanPackageImports(t *testing.T) {
+func TestScanPackageFromFilePathImports(t *testing.T) {
 	s, err := New(WithWorkDir("./testdata/walk"))
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 
-	pkg, err := s.Walker.ScanPackageImports(context.Background(), "github.com/podhmo/go-scan/testdata/walk/a")
+	pkg, err := s.Walker.ScanPackageFromFilePathImports(context.Background(), "github.com/podhmo/go-scan/testdata/walk/a")
 	if err != nil {
-		t.Fatalf("ScanPackageImports failed: %v", err)
+		t.Fatalf("ScanPackageFromFilePathImports failed: %v", err)
 	}
 
 	if pkg.Name != "a" {

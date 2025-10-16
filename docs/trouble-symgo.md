@@ -1,71 +1,65 @@
-# Symgo Engine Troubleshooting and Fixes
+# Investigation and Resolution of "not a function: NIL" Error in `symgo`
 
-This document tracks issues found and fixed in the `symgo` symbolic execution engine, serving as a log for future development and debugging.
+## 1. The Initial Problem
 
-## 1. Nested Function Calls
+When running `make -C examples/find-orphans`, an error `level=ERROR msg="not a function: NIL"` was logged to `find-orphans.out`. This error occurred during the analysis of `examples/minigo/main_test.go`.
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/nested_function_calls`
--   **Code**: `add(add(1, 2), 3)`
--   **Status**: **Fixed**
+## 2. Investigation and Incorrect Hypotheses
 
-### Problem Description
+### Hypothesis 1: Flaw in `if` Statement Evaluation Logic
 
-The test for nested function calls was failing because the intrinsic (mock) for the `add` function was never being called. The evaluator was instead trying to evaluate the *actual* body of the `add` function.
+Initially, the problem was thought to be that `symgo` explored the `then` block of an `if` statement even when the condition was concretely false, such as in `if f != nil { f() }` where `f` was nil.
 
-### Root Cause Analysis
+Based on this hypothesis, `evalIfStmt` and `evalBinaryExpr` were modified to prune unreachable branches when a condition resolved to a concrete boolean value.
 
-The root cause was the lookup order within the `evalIdent` function, which is responsible for resolving identifiers like `add`. The function was implemented to check the local environment for a function declaration *before* checking the intrinsic registry.
+However, this approach caused the repository's entire test suite to fail. `symgo` is a symbolic execution engine (a tracer), and **it is designed to intentionally explore all branches**. Therefore, this fix contradicted `symgo`'s fundamental design.
 
-1.  The evaluator would first parse the file and place an `*object.Function` for `add` into the environment.
-2.  The test would then register an `*object.Intrinsic` for `add`.
-3.  When `evalIdent` was called for `add`, it would find the `*object.Function` in the environment first and return it, never reaching the code that checks for the intrinsic.
+### Hypothesis 2: State Corruption Between Function Calls
 
-### Solution
+Another hypothesis was that in a sequence of calls like `helper(myFunc1)` -> `helper(nil)` -> `helper(myFunc2)`, the arguments from the `helper(nil)` call were improperly affecting the subsequent `helper(myFunc2)` call (i.e., state corruption).
 
-The fix was to reverse the lookup order in `evalIdent`. The function now checks for a registered intrinsic **first**, and only if one is not found does it proceed to check the environment. This allows tests to correctly override and mock functions that exist in the package being analyzed. This change was made in `symgo/evaluator/evaluator.go`.
+However, detailed debugging confirmed that the environment (scope) was correctly isolated between calls, and no state corruption was occurring.
 
-## 2. Method Calls on Composite Literals
+## 3. The True Root Cause
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/method_call_on_a_struct_literal`
--   **Code**: `S{}.Do()`
--   **Status**: **Fixed**
+It is correct, by design, for `symgo` as a symbolic tracer to explore unreachable paths (such as the call to `f()` when `f` is `nil`).
 
-### Problem Description
+The real issue was that **the exploration of this unreachable path resulted in a fatal error when attempting to call a `nil` function, which halted the entire analysis**. In symbolic execution, such a case should not be treated as a fatal error but should instead gracefully terminate the evaluation of that specific path.
 
-The evaluator could not handle a method call where the receiver was a composite literal (a struct being instantiated directly, like `S{}`). The test failed because the `Do` method's intrinsic was never found or called.
+## 4. The Final Solution
 
-### Root Cause Analysis
+To resolve this, a targeted fix was implemented that is minimal in scope and aligns with the principles of symbolic execution.
 
-The issue was two-fold:
+In the function call processing stage, `evalCallExpr` (in `symgo/evaluator/evaluator_eval_call_expr.go`), a check is added for the object being called. If the object is `*object.Nil`, the evaluation immediately terminates and returns `nil` *before* calling `applyFunction`, which would have produced the fatal error.
 
-1.  **Missing `CompositeLit` Evaluation**: The main `Eval` function did not have a case for `*ast.CompositeLit` nodes. When the evaluator encountered `S{}`, it didn't know what to do with it and couldn't produce a symbolic object that `evalSelectorExpr` could use.
-2.  **Incomplete Type Name Resolution**: The initial implementation for handling composite literals did not correctly form a fully-qualified type name (e.g., `example.com/me.S`). It resolved the type name to just `S`, which caused a mismatch with the key used to register the intrinsic in the test.
+This allows the engine to explore unreachable paths without crashing, ensuring the analysis continues normally.
 
-### Solution
+## 5. Verifying the Corrected Behavior
 
-The fix involved several changes in `symgo/evaluator/evaluator.go`:
+This fix ensures that `symgo` behaves correctly even in the following scenario.
 
-1.  A new case for `*ast.CompositeLit` was added to the `Eval` function's switch statement.
-2.  A new function, `evalCompositeLit`, was implemented. This function uses the `scanner` to resolve the type of the literal and creates a symbolic `*object.Instance` to represent it.
-3.  The logic within `evalCompositeLit` was refined to correctly construct a fully-qualified type name by combining the package's import path with the type's local name, ensuring it matches the intrinsic keys.
-4.  The `evalSelectorExpr` function was also improved to check for methods on both value (`(T).Method`) and pointer (`(*T).Method`) receivers, making it more robust.
+**Scenario:**
+```go
+if f != nil {
+    f()
+    g()
+}
+```
 
-## 3. Method Chaining
+**Evaluation flow when `f` is `nil`:**
 
--   **Test Case**: `TestEvalCallExpr_VariousPatterns/method_chaining`
--   **Code**: `NewGreeter("world").WithName("gopher").Greet()`
--   **Status**: **Fixed**
+1.  `symgo` explores the `if` block as designed.
+2.  The first statement, `f()`, is evaluated.
+3.  `evalCallExpr` detects that `f` is `nil` and gracefully terminates the evaluation for this statement, returning `nil` without causing an error.
+4.  The evaluation of the block is not interrupted, and it proceeds to the next statement, `g()`.
+5.  `g()` is analyzed normally.
 
-### Problem Description
+This ensures that a `nil` function call encountered during the exploration of an unreachable path does not prevent subsequent statements from being analyzed, guaranteeing consistent behavior as a tracer.
 
-The test for method chaining was failing. The final method in the chain, `Greet`, was never being called, and the test assertions failed as a result.
+## 6. Final Verification
 
-### Root Cause Analysis
-
-The problem was a simple but crucial error in the test setup. The keys used to register the intrinsics for the `Greeter` methods were not using fully-qualified type names. For example, the test was registering `(*main.Greeter).Greet` instead of the correct `(*example.com/me.Greeter).Greet`.
-
-The evaluator was correctly resolving the types and looking for the fully-qualified keys, but since the test had registered the wrong keys, no match was found.
-
-### Solution
-
-The fix was to update the "method chaining" test case in `symgo/evaluator/evaluator_call_test.go` to use programmatically-generated, fully-qualified names for the intrinsic keys. This was done by using `fmt.Sprintf` with the package's import path (`pkg.ImportPath`) to build the correct keys at test runtime. This ensures the keys registered in the test match the keys the evaluator is looking for, allowing the method chain to be resolved correctly.
+After implementing the fix, the original end-to-end test was run again:
+```bash
+make -C examples/find-orphans
+```
+The command completed successfully. A subsequent check confirmed that the output file `examples/find-orphans/find-orphans.out` no longer contained any `level=ERROR` logs, verifying that the fix resolved the initial problem.

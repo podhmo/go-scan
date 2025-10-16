@@ -300,9 +300,11 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, pkgPatterns, w
 		// If no targets, use functions from packages specified by --pkg as potential entry points.
 		for _, f := range allFunctions {
 			// A function is an entry point if it's in a --pkg package
-			// AND (it's exported OR --include-unexported is set).
+			// AND (it's exported OR --include-unexported is set OR it's a special function).
 			if _, isEntryPointPkg := entrypointPkgPaths[f.PkgPath]; isEntryPointPkg {
-				if includeUnexported || ast.IsExported(f.Name) {
+				// Special cases: `init` is always an entry point, and so is `main` in a `main` package.
+				isSpecial := (f.Name == "init") || (f.Name == "main" && f.Pkg.Name == "main")
+				if includeUnexported || ast.IsExported(f.Name) || isSpecial {
 					entryPoints = append(entryPoints, f)
 				}
 			}

@@ -95,6 +95,10 @@ func TestGoInspect(t *testing.T) {
 			pkgPatterns:  []string{"./testdata/src/myapp"},
 			withPatterns: []string{"./testdata/src/another"},
 		},
+		{
+			name:        "special_funcs",
+			pkgPatterns: []string{"./testdata/src/special/..."},
+		},
 	}
 
 	for _, tc := range testCases {

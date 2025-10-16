@@ -3,5 +3,6 @@ func (*Person).Greet() #1
 [accessor] func (*Person).String() #3
 func (*Service).Do(Greeter) #4
   func .Greet() #5
-func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #6
-  [recursive] func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #6
+func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.main() #6
+func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #7
+  [recursive] func github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Recursive(int) #7

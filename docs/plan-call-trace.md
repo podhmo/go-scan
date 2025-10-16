@@ -24,7 +24,7 @@ Before performing an expensive analysis, the tool must first identify a minimal 
 
 ### Phase 2: Call Path Tracing (Symbolic Execution)
 
-With a well-defined scope, the tool will use the `symgo` engine to trace execution paths from all `main` functions within the scope. The core of the design lies in how function calls are intercepted and analyzed. Two approaches were considered.
+With a well-defined scope, the tool will use the `symgo` engine to trace execution paths from all `main` functions within the scope. The core of the design lies in how function calls are intercepted and analyzed. Two approaches were considered during the design process.
 
 #### Approach A: Targeted Intrinsic (Efficient but Flawed)
 
@@ -61,12 +61,12 @@ A technical investigation was conducted to assess the viability of this design.
 
 ## 4. Open Questions and Future Considerations
 
-1.  **Performance at Scale:** The recommended robust approach (Approach B) requires inspecting every function call via a default intrinsic. While correct, this is less performant than the flawed targeted approach. For very large codebases, the overhead of the default intrinsic could be significant. Performance profiling will be important.
+1.  **Performance at Scale:** A key consideration is performance on large codebases. The recommended robust approach (Approach B) requires inspecting every function call. While correct, this is less performant than the flawed targeted approach. For very large projects, the overhead of the default intrinsic could be significant, and performance profiling will be important.
 
-2.  **Handling Dynamic Calls:** This remains a key consideration. The `symgo` engine operates on static source code.
-    *   **Reflection:** Calls made via `reflect.ValueOf(fn).Call()` will likely not be detected. This should be documented as a known limitation.
+2.  **Handling Dynamic Calls:** The `symgo` engine operates on static source code, which imposes certain limitations.
+    *   **Reflection:** Calls made via `reflect.ValueOf(fn).Call()` will likely not be detected. This should be documented as a known limitation of the tool.
     *   **Cgo:** Function calls that cross the Cgo boundary will not be traced.
 
-3.  **Usability of Output:** What is the most effective way to present the results to the user? Options include a simple list of stack traces, a structured JSON format, or a graph visualization.
+3.  **Usability of Output:** The most effective way to present the results to the user should be considered. Options include a simple list of stack traces, a structured JSON format for machine processing, or a graph visualization for exploring call trees.
 
-4.  **Target Function Specification:** The CLI needs a robust way to parse the target function signature, including methods on both value and pointer receivers.
+4.  **Target Function Specification:** The CLI will need a robust way to parse the target function signature, including methods on both value and pointer receivers (e.g., `(T).Method` vs. `(*T).Method`).

@@ -419,11 +419,6 @@ func isCallable(obj object.Object) bool {
 }
 
 func (e *Evaluator) Apply(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo) object.Object {
-	fnName := fmt.Sprintf("%T", fn)
-	if ident, ok := fn.(*object.Function); ok && ident.Name != nil {
-		fnName = ident.Name.Name
-	}
-	slog.InfoContext(ctx, "*** apply", "package", pkg.ImportPath, "function", fnName, "args", args)
 	return e.applyFunction(ctx, fn, args, pkg, token.NoPos)
 }
 

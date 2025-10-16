@@ -1,104 +1,64 @@
-# `symgotest`
+# symgotest
 
-`symgotest` is a testing library designed specifically for the `symgo` symbolic execution engine. Its primary goal is to improve the testing experience by reducing boilerplate and providing powerful, built-in debugging capabilities.
+The `symgotest` package provides helpers to streamline testing of `symgo`-based analyses. It offers a convenient way to run the `symgo.Interpreter` on a set of in-memory source files and make assertions on the resulting state.
 
-The core philosophy of `symgotest` is **debugging-first**. It aims to reduce boilerplate and provide clear, actionable insights when a test fails.
+## Quick Start
 
-## Features
+The primary function is `symgotest.Run`, which takes a `*testing.T`, a `TestCase`, and an action function. The `TestCase` struct defines all the inputs for the test run, including source code, entry point, and options. The action function receives the `Result` of the execution for your assertions.
 
-- **Reduced Boilerplate**: Abstracts away the repetitive setup of scanners, interpreters, and in-memory file systems.
-- **Deterministic Failure Reporting**: Turns hangs and infinite loops into deterministic test failures by enforcing a configurable execution step limit.
-- **Execution Tracing**: Automatically captures a trace of evaluation steps, printing a detailed report on failure to pinpoint the exact cause.
-- **Type-Safe Assertion Helper**: Provides a generic helper, `AssertAs`, to simplify assertions on return values.
-
-## Usage
-
-### Basic Test
-
-The main entry point is `symgotest.Run`. It handles all the setup and teardown for a test case. The `symgotest.AssertAs` helper simplifies checking the type of the result.
+### Example
 
 ```go
+package symgotest_test
+
 import (
+	"context"
 	"testing"
 
 	"github.com/podhmo/go-scan/symgo/object"
 	"github.com/podhmo/go-scan/symgo/symgotest"
 )
 
-func TestNewUser(t *testing.T) {
+func TestSymgotest(t *testing.T) {
+	// 1. Define the test case.
 	tc := symgotest.TestCase{
+		// Source files for the test. A go.mod is usually needed.
 		Source: map[string]string{
-			"go.mod": "module example.com",
-			"me/me.go": `
-package me
-type User struct { Name string }
-func NewUser(name string) *User {
-	return &User{Name: name}
-}
-`,
-		},
-		EntryPoint: "example.com/me.NewUser",
-		Args:       []object.Object{object.NewString("Alice")},
-	}
-
-	action := func(t *testing.T, r *symgotest.Result) {
-		if r.Error != nil {
-			t.Fatalf("Execution failed: %v", r.Error)
-		}
-
-		// AssertAs unwraps the result and asserts the type.
-		// For single return values, use index 0.
-		ptr := symgotest.AssertAs[*object.Pointer](r, t, 0)
-
-		// To assert the type of the pointed-to value, we can create a temporary result.
-		instance := symgotest.AssertAs[*object.Instance](&symgotest.Result{ReturnValue: ptr.Value}, t, 0)
-
-		if instance.Fields["Name"].(*object.String).Value != "Alice" {
-			t.Errorf("Expected user name to be Alice")
-		}
-	}
-
-	symgotest.Run(t, tc, action)
-}
-```
-
-### Handling Multiple Return Values
-
-The `AssertAs` helper can access any return value by its index.
-
-```go
-func TestMultiReturn(t *testing.T) {
-	tc := symgotest.TestCase{
-		Source: map[string]string{
-			"go.mod": "module example.com",
+			"go.mod": "module example.com/mypkg",
 			"main.go": `
-package main
-func GetPair() (string, int) {
-	return "hello", 42
+package mypkg
+func Add(x, y int) int {
+    return x + y
 }
-`,
+func main() {
+    Add(1, 2)
+}`,
 		},
-		EntryPoint: "example.com/main.GetPair",
+		// The function that the interpreter should execute.
+		EntryPoint: "example.com/mypkg.main",
 	}
 
+	// 2. Define the action to perform with the result.
 	action := func(t *testing.T, r *symgotest.Result) {
+		// 3. Make assertions on the result.
 		if r.Error != nil {
-			t.Fatalf("Execution failed: %v", r.Error)
+			t.Fatalf("test failed unexpectedly: %+v", r.Error)
 		}
 
-		// Access the first return value (index 0)
-		str := symgotest.AssertAs[*object.String](r, t, 0)
-		if str.Value != "hello" {
-			t.Errorf("expected first return value to be %q", "hello")
+		// The result's FinalEnv holds the state of global variables.
+		addFn, ok := r.FinalEnv.Get("Add")
+		if !ok {
+			t.Fatal("Add function not found in final environment")
 		}
 
-		// Access the second return value (index 1)
-		num := symgotest.AssertAs[*object.Integer](r, t, 1)
-		if num.Value != 42 {
-			t.Errorf("expected second return value to be %d", 42)
+		if _, isFunc := addFn.(*object.Function); !isFunc {
+			t.Errorf("expected 'Add' to be a function object, but got %T", addFn)
 		}
 	}
 
+	// 4. Run the test.
 	symgotest.Run(t, tc, action)
 }
 ```
+
+By encapsulating the test setup in a `TestCase`, `symgotest` allows you to write clear, declarative, and maintainable tests for your symbolic analysis logic.

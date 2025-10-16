@@ -1,45 +1,36 @@
 # `symgo` - A Symbolic Execution Engine for Go
 
-`symgo` is a library that performs symbolic execution on Go source code. It is designed to analyze code paths and understand the behavior of functions without actually running them. It builds an Abstract Syntax Tree (AST) and "evaluates" it, replacing concrete values with symbolic representations.
+`symgo` is a library that performs symbolic execution on Go source code. It builds upon the **shallow, lazy scanning** capabilities of `go-scan` to analyze all possible code paths and understand the behavior of functions without actually running them. It parses Go source into an Abstract Syntax Tree (AST) and then "evaluates" it, replacing concrete values with symbolic representations.
 
-This is particularly useful for static analysis tools that need to understand program semantics, such as documentation generators, or tools for finding dead code.
+This makes it a powerful tool for static analysis, such as generating API documentation, finding dead code, or tracing call graphs through complex interfaces.
 
-## Core Concepts
+## Core Concepts: A Tracer, Not an Interpreter
 
-- **Symbolic Execution**: Instead of using actual values (like the number `10`), `symgo` uses symbols (like `x`). When it encounters an operation (e.g., `x + 5`), it records the operation on the symbol (`x+5`) rather than computing a final value.
+It is crucial to understand that `symgo` is **not a standard interpreter**. It does not execute code linearly. Instead, it is a **symbolic tracer** designed to discover what *could* happen in any possible code path.
 
-- **Objects**: The engine represents all values, symbols, and types as `object.Object`. This includes concrete values (`object.String`, `object.Int`) and symbolic ones (`object.SymbolicPlaceholder`, `object.Variable`).
+- **Symbolic Execution**: Instead of using concrete values (like the number `10`), `symgo` uses symbols (like `x`). When it encounters an operation (e.g., `x + 5`), it records the operation on the symbol (`x+5`) rather than computing a final value.
 
-- **Scope**: `symgo` maintains a lexical scope to track variables, functions, and types. This allows it to resolve identifiers correctly as it traverses the code.
+- **Path Exploration**: `symgo` intentionally explores all branches of control flow.
+    - An `if` statement evaluates **both** the `then` and `else` blocks to trace calls in each.
+    - A `for` loop body is evaluated **exactly once** to find calls within it, avoiding infinite loops.
+    - A `type switch` on an interface explores **every** case by creating a hypothetical symbolic instance of that type.
+    - For more details, see `docs/analysis-symgo-implementation.md`.
 
-- **Intrinsics**: `symgo` allows you to register "intrinsic" functions. These are special Go functions that the symbolic engine can call when it encounters a call to a specific function in the source code (e.g., `http.HandleFunc`). The intrinsic can then inspect the symbolic arguments and record information about the call.
+- **Objects**: The engine represents all values—concrete and symbolic—as `object.Object` (e.g., `object.String`, `object.Variable`, `object.SymbolicPlaceholder`).
+
+- **Intrinsics**: `symgo` allows you to register "intrinsic" functions. These are custom Go functions that the engine calls when it encounters a specific function in the source code (e.g., `http.HandleFunc`). The intrinsic can then inspect the symbolic arguments to record information about the call, effectively teaching the engine the semantics of library functions.
 
 ## Managing Analysis Scope
 
-A critical aspect of `symgo` is managing the **analysis scope**. By default, `symgo` will attempt to analyze the full source code of any function it encounters. This can lead to two problems:
+A critical aspect of using `symgo` is managing the **analysis scope**. Analyzing an entire dependency tree, including the Go standard library, is slow and error-prone. You must define a clear boundary for the analysis.
 
-1.  **Performance**: Analyzing an entire dependency tree, including the Go standard library, can be extremely slow.
-2.  **Errors**: `symgo` does not have built-in knowledge of every standard library function (especially those related to I/O, reflection, or CGo). If it encounters a function it cannot analyze and is not configured to ignore, **the symbolic execution will fail**.
+`symgo` provides two primary options for this:
 
-To manage this, you must define a clear boundary for the analysis. `symgo` provides three mechanisms for this, which can be used together.
+1.  **`WithPrimaryAnalysisScope(patterns ...string)`**: **(Recommended)** This defines the packages that `symgo` should analyze deeply. It accepts Go import path patterns (e.g., `"example.com/mymodule/..."`). Any package *not* matching these patterns will be treated as a "black box": its function signatures will be available, but their bodies will not be executed.
 
-### 1. `WithPrimaryAnalysisScope(patterns ...string)`
+2.  **`WithSymbolicDependencyScope(patterns ...string)`**: This is a performance optimization that tells the underlying `go-scan` engine to parse only the *declarations* (types, function signatures, etc.) for the given package patterns, completely discarding function bodies. This is highly effective for large external dependencies (like `net/http`) where you need type information but must prevent `symgo` from analyzing their complex internal logic.
 
-This is the **primary and recommended** way to define the analysis scope. It takes a list of Go import path patterns (e.g., `"example.com/mymodule/..."`) that `symgo` should analyze deeply. Any package that does not match these patterns will not have its function bodies evaluated. `symgo` will still see the function signatures, but will treat calls to them as "black boxes," returning a symbolic placeholder instead of executing them.
-
-### 2. `WithSymbolicDependencyScope(patterns ...string)`
-
-This is a performance optimization that works with the underlying `go-scan` engine. It is very similar to `goscan.WithDeclarationsOnlyPackages`. It tells the scanner to parse only the *declarations* (types, function signatures, constants, etc.) for the given package patterns, while completely discarding function bodies before `symgo` even sees them.
-
-This is highly efficient for large external dependencies (like `net/http` or `database/sql`) where you need the type information to be available for compilation and type checking, but want to prevent `symgo` from ever attempting to analyze their complex internal logic.
-
-### 3. `WithScanPolicy(policy ScanPolicyFunc)`
-
-This is a low-level and powerful option that provides a function to manually control the scan policy on a per-package basis. The policy function receives a package path and returns `true` if the package should be scanned deeply, and `false` otherwise.
-
-This can be useful for complex scenarios where the pattern-based scopes are not sufficient. However, it is more verbose and can be more error-prone. It should be used with caution when a more fine-grained policy is required.
-
-### Example Configuration
+### Example: Robust Configuration
 
 Here is a robust configuration for a tool analyzing a local module that depends on `net/http`.
 
@@ -52,11 +43,10 @@ import (
 // The module path of the code you want to analyze.
 const myModulePath = "example.com/me/mymodule"
 
-// 1. Configure the base scanner.
-// We tell it to only parse declarations for `net/http`, improving performance.
-goScanner, err := goscan.New(
-    goscan.WithDeclarationsOnlyPackages([]string{"net/http"}),
-)
+// 1. Create the base scanner.
+// The scanner itself doesn't need extra configuration in this case,
+// as symgo will manage the dependency scope.
+goScanner, err := goscan.New()
 if err != nil {
     // handle error
 }
@@ -66,63 +56,70 @@ interpreter, err := symgo.NewInterpreter(
     goScanner,
     // Tell symgo to only perform deep analysis on our own code.
     symgo.WithPrimaryAnalysisScope(myModulePath + "/..."),
+    // Tell symgo to treat `net/http` as a symbolic dependency,
+    // loading its types but not its code.
+    symgo.WithSymbolicDependencyScope("net/http"),
 )
 if err != nil {
     // handle error
 }
 
-// The interpreter is now ready to analyze code from `myModulePath`.
-// When it encounters a call to `http.HandleFunc`, it will see the function
-// signature but will not try to execute its body, avoiding errors and
--// improving performance.
+// The interpreter is now ready. When it encounters a call to `http.HandleFunc`,
+// it will see the function signature but will not try to execute its body,
+// avoiding errors and improving performance.
 ```
 
-## Debuggability
+## Advanced Features
 
-The `symgo` interpreter includes a tracing mechanism to help debug the symbolic execution flow. By providing a `Tracer` implementation, you can monitor which AST nodes are being visited by the evaluator.
+### Memoization for Performance
 
-### Usage
+For complex analyses where the same functions may be evaluated multiple times, you can enable memoization to cache the results of function analysis.
 
-1.  Define a type that implements the `symgo.Tracer` interface:
+```go
+interpreter, err := symgo.NewInterpreter(
+    scanner,
+    symgo.WithMemoization(true),
+    // other options...
+)
+```
+This is disabled by default to ensure predictable behavior for all tools but can provide a significant performance boost.
 
-    ```go
-    import "go/ast"
+### Finalizing Analysis with `Finalize()`
 
-    type MyTracer struct {
-        // ... any state you need
-    }
+After the main evaluation is complete, `symgo` may have a list of unresolved method calls on interfaces. The `Finalize()` method performs a post-analysis step to connect these interface calls to their concrete implementations based on the types that were observed during the evaluation.
 
-    func (t *MyTracer) Visit(node ast.Node) {
-        // Your logic here, e.g., log the node type or position
-        // fmt.Printf("Visiting node: %T at %s\n", node, node.Pos())
-    }
-    ```
+**It is crucial to call `Finalize()` if you need to resolve call graphs involving interfaces.**
 
-2.  When creating the interpreter, pass your tracer using the `WithTracer` option:
+```go
+// ... after all Eval() and Apply() calls ...
+interpreter.Finalize(ctx)
 
-    ```go
-    import "github.com/podhmo/go-scan/symgo"
+// Now, the analysis results will include connections between
+// interface method calls and their concrete implementations.
+```
 
-    tracer := &MyTracer{}
-    interpreter, err := symgo.NewInterpreter(scanner, symgo.WithTracer(tracer))
-    // ...
-    ```
+### Debugging with Tracers
 
-    Alternatively, you can use the `symgo.TracerFunc` adapter for simple, function-based tracers:
+`symgo` includes a tracing mechanism to help debug the symbolic execution flow. By providing a `Tracer` implementation, you can monitor which AST nodes are being visited.
 
-    ```go
-    var visitedNodes []ast.Node
-    tracer := symgo.TracerFunc(func(node ast.Node) {
-        visitedNodes = append(visitedNodes, node)
-    })
-    interpreter, err := symgo.NewInterpreter(scanner, symgo.WithTracer(tracer))
-    ```
+```go
+import "github.com/podhmo/go-scan/symgo"
 
-This allows you to gain insight into the evaluator's behavior, which is invaluable for debugging custom intrinsics or understanding why a particular code path is or isn't being taken.
+// Use TracerFunc for a simple, function-based tracer.
+tracer := symgo.TracerFunc(func(event symgo.TraceEvent) {
+    fmt.Printf("Visiting node: %T at %s\n", event.Node, event.Node.Pos())
+})
+
+interpreter, err := symgo.NewInterpreter(scanner, symgo.WithTracer(tracer))
+```
+
+## Testing
+
+The `symgotest` package provides helpers to streamline testing of `symgo`-based analyses. For more details, see the [`symgotest/README.md`](./symgotest/README.md).
 
 ## Basic Usage
 
-Here is a simplified example of how to use the `symgo` interpreter to analyze a small piece of Go code. This demonstrates the setup process and how to inspect symbolic results.
+Here is a simplified example of using the `symgo` interpreter.
 
 ```go
 package main
@@ -146,8 +143,7 @@ func double(n int) int {
 func main() {
 	y := double(10)
 }`
-	// 1. Set up go-scan, which symgo uses for parsing and type resolution.
-	// We must use an overlay to provide the source code in-memory.
+	// 1. Set up go-scan with an in-memory file overlay.
 	s, err := goscan.New(
 		goscan.WithOverlay(map[string][]byte{"myapp/main.go": []byte(source)}),
 	)
@@ -156,7 +152,6 @@ func main() {
 	}
 
 	// 2. Create a new symgo interpreter.
-	// We tell it to only analyze our "myapp" package.
 	interp, err := symgo.NewInterpreter(s,
 		symgo.WithPrimaryAnalysisScope("myapp"),
 	)
@@ -164,14 +159,14 @@ func main() {
 		panic(err)
 	}
 
-	// 3. Scan the package. This parses the files and populates type information.
+	// 3. Scan the package to get its AST and type info.
 	pkg, err := s.ScanPackageFromImportPath(context.Background(), "myapp")
 	if err != nil {
 		panic(err)
 	}
 
-	// 4. Evaluate the AST file. This populates the interpreter's scope with
-	// top-level declarations like the `double` function.
+	// 4. Evaluate the AST file. This populates the interpreter's scope
+	// with top-level declarations like the `double` function.
 	_, err = interp.Eval(context.Background(), pkg.AstFiles["myapp/main.go"], pkg)
 	if err != nil {
 		panic(err)
@@ -189,7 +184,7 @@ func main() {
 		panic(err)
 	}
 
-	// 6. Inspect the results by looking up variables in the scope.
+	// 6. Inspect the results.
 	yVar, ok := interp.FindObject("y")
 	if !ok {
 		panic("variable y not found")
@@ -201,42 +196,3 @@ func main() {
 	// Output: Symbolic value of y: <symbolic: myapp.double(...)>
 }
 ```
-
-## A Practical Example: Understanding `net/http` with Intrinsics
-
-Intrinsics are the key to building powerful analysis tools. They allow you to teach `symgo` about the semantics of functions, especially those in external libraries.
-
-Consider the `docgen` tool, which generates OpenAPI specs from `net/http` code. On its own, `symgo` knows nothing about what `http.HandleFunc` *means*. It just sees a function call. `docgen` solves this by registering an intrinsic for `http.HandleFunc`.
-
-**The Goal:** When `symgo` sees `http.HandleFunc("/users", myHandler)`, `docgen` needs to know that a new API route (`/users`) has been registered with a specific handler function (`myHandler`).
-
-**The Solution:**
-1.  **`docgen` registers an intrinsic:**
-    ```go
-    // In docgen's setup code:
-    analyzer := &MyDocgenAnalyzer{}
-    interpreter.RegisterIntrinsic("net/http.HandleFunc", analyzer.handleHandleFunc)
-    ```
-
-2.  **The intrinsic function is defined:**
-    ```go
-    // analyzer.handleHandleFunc is the intrinsic.
-    // It receives the symbolic arguments passed to the original call.
-    func (a *MyDocgenAnalyzer) handleHandleFunc(interp *symgo.Interpreter, args []symgo.Object) symgo.Object {
-        // args[0] is the route pattern string, e.g., "/users"
-        // args[1] is the handler function, e.g., myHandler
-
-        routePattern := args[0].(*symgo.String).Value
-        handlerFunc := args[1].(*symgo.Function)
-
-        // The intrinsic can now use this information to build its own model.
-        a.apiModel.AddRoute(routePattern, handlerFunc)
-
-        // Intrinsics can return a value, or nil if the original
-        // function returns void.
-        return nil
-    }
-    ```
-3.  **`symgo` evaluates the code:** When the interpreter encounters `http.HandleFunc("/users", myHandler)`, it finds the registered intrinsic. Instead of analyzing `http.HandleFunc`, it calls `analyzer.handleHandleFunc`, passing the symbolic representations of `"/users"` and `myHandler` as arguments.
-
-This mechanism allows a tool to extract high-level semantic information from source code, which is the primary purpose of the `symgo` engine.

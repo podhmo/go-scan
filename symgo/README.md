@@ -131,7 +131,7 @@ import (
 
 	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo"
-	"github.comcom/podhmo/go-scan/symgo/object"
+	"github.com/podhmo/go-scan/symgo/object"
 )
 
 func main() {

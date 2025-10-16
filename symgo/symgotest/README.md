@@ -17,7 +17,6 @@ import (
 
 	"github.com/podhmo/go-scan/symgo/object"
 	"github.com/podhmo/go-scan/symgo/symgotest"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSymgotest(t *testing.T) {
@@ -38,11 +37,14 @@ func main() {
 
 	// The RunResult provides helper methods for looking up objects.
 	addFn, ok := r.Lookup("Add")
-	require.True(t, ok, "Add function not found")
+	if !ok {
+		t.Fatal("Add function not found")
+	}
 
 	// You can then perform assertions on the returned object.
-	_, isFunc := addFn.(*object.Function)
-	require.True(t, isFunc, "expected 'Add' to be a function object")
+	if _, isFunc := addFn.(*object.Function); !isFunc {
+		t.Errorf("expected 'Add' to be a function object, but got %T", addFn)
+	}
 }
 ```
 

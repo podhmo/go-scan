@@ -13,10 +13,7 @@ package scantest_test
 
 import (
 	"testing"
-
 	"github.com/podhmo/go-scan/scantest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestScantest(t *testing.T) {
@@ -29,16 +26,26 @@ type Person struct {
 	// scantest.Scan handles the boilerplate of setting up a scanner with an overlay.
 	result := scantest.Scan(t, source, "mypkg")
 
-	// You can then make assertions on the result.
-	require.Len(t, result.Packages, 1, "expected one package to be scanned")
+	// You can then make assertions on the result using the standard testing package.
+	if len(result.Packages) != 1 {
+		t.Fatalf("expected one package to be scanned, but got %d", len(result.Packages))
+	}
 
 	pkg := result.Packages[0]
 	person, ok := pkg.LookupType("Person")
-	require.True(t, ok, "Person type not found in package")
+	if !ok {
+		t.Fatal("Person type not found in package")
+	}
 
-	assert.Equal(t, "Person", person.Name)
-	assert.Len(t, person.Struct.Fields, 1, "Person should have one field")
-	assert.Equal(t, "Name", person.Struct.Fields[0].Name)
+	if person.Name != "Person" {
+		t.Errorf("expected type name to be Person, but got %s", person.Name)
+	}
+	if len(person.Struct.Fields) != 1 {
+		t.Fatalf("Person should have one field, but got %d", len(person.Struct.Fields))
+	}
+	if person.Struct.Fields[0].Name != "Name" {
+		t.Errorf("expected field name to be Name, but got %s", person.Struct.Fields[0].Name)
+	}
 }
 ```
 

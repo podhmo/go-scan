@@ -31,6 +31,14 @@ func (e *Evaluator) evalBinaryExpr(ctx context.Context, node *ast.BinaryExpr, en
 	lType := left.Type()
 	rType := right.Type()
 
+	// If the expression was a function call, unwrap the return value.
+	if l, ok := left.(*object.ReturnValue); ok {
+		left = l.Value
+	}
+	if r, ok := right.(*object.ReturnValue); ok {
+		right = r.Value
+	}
+
 	switch {
 	case lType == object.INTEGER_OBJ && rType == object.INTEGER_OBJ:
 		return e.evalIntegerInfixExpression(ctx, node.Pos(), node.Op, left, right)

@@ -33,11 +33,12 @@ With a well-defined scope, the tool will use the `symgo` engine to trace executi
 
 1.  **Entry Points:** The tool will identify all `package main` functions within the Primary Analysis Scope. These are the potential command-line entry points.
 2.  **Symbolic Execution:** For each `main` function, the `symgo.Interpreter` will be used to symbolically execute the code.
-3.  **Call Interception:** A default intrinsic (`RegisterDefaultIntrinsic`) will be registered. This intrinsic function is triggered for every single function call during the symbolic execution.
-4.  **Trace Analysis:** Inside the intrinsic, the tool will:
-    a. Check if the function being called is the **target function**.
-    b. If it is, the tool will capture the **current call stack**.
-    c. The captured call stack, which traces back to the `main` entry point, is stored as a valid call path.
+3.  **Call Interception (Efficient Approach):** Instead of intercepting every function call with a default intrinsic, the tool will adopt a more targeted strategy inspired by `examples/docgen`. It will use `RegisterIntrinsic` to register a specific intrinsic handler **only for the target function**.
+4.  **Trace Analysis:** When the registered intrinsic is triggered, it signifies a direct call to the target function. The logic inside the intrinsic is straightforward:
+    a. Capture the **current call stack** using the proposed `interpreter.CallStack()` method.
+    b. Store the captured call stack, which traces back to the `main` entry point, as a valid call path.
+
+This approach is significantly more performant as it avoids the overhead of checking every single function call during the analysis, focusing only on the calls that matter.
 5.  **Output:** The tool will report all unique call paths found, grouping them by their `main` function entry point.
 
 ## 3. Technical Investigation & Feasibility

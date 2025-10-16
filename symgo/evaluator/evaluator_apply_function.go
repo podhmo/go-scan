@@ -12,6 +12,26 @@ import (
 )
 
 func (e *Evaluator) applyFunction(ctx context.Context, fn object.Object, args []object.Object, pkg *scan.PackageInfo, callPos token.Pos) object.Object {
+	{
+		switch ident := fn.(type) {
+		case *object.Function:
+			fnName := ident.Name.Name
+			call := fmt.Sprintf("%s(%d args)", fnName, len(args))
+			if ident.Receiver != nil {
+				call = fmt.Sprintf("%s#%s(%d args)", ident.Receiver.Inspect(), fnName, len(args))
+			}
+			slog.InfoContext(ctx, fmt.Sprintf("***%s apply function", strings.Repeat("*", len(e.callStack))), "depth", len(e.callStack), "call", call, "package", ident.Package.ImportPath)
+		case *object.UnresolvedFunction: // TODO: skip, out of policy ones
+			// 	fnName = fmt.Sprintf("%s.%s", ident.PkgPath, ident.FuncName)
+		case *object.SymbolicPlaceholder:
+			call := fmt.Sprintf("symbolic %s(%d args)", ident.Inspect(), len(args))
+			slog.InfoContext(ctx, fmt.Sprintf("***%s apply function", strings.Repeat("*", len(e.callStack))), "depth", len(e.callStack), "call", call, "type", fn.Type())
+		default:
+			call := fmt.Sprintf("%T(%d args)", fn, len(args))
+			slog.InfoContext(ctx, fmt.Sprintf("***%s apply function", strings.Repeat("*", len(e.callStack))), "depth", len(e.callStack), "call", call, "type", fn.Type())
+		}
+	}
+
 	if f, ok := fn.(*object.Function); ok {
 		if e.memoize && f.Decl != nil {
 			if cachedResult, found := e.memoizationCache[f.Decl.Pos()]; found {

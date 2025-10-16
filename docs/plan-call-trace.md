@@ -44,25 +44,23 @@ This approach prioritizes correctness and completeness by inspecting all calls a
 *   **Advantage:** Guarantees that all potential call paths through interfaces are discovered.
 *   **Trade-off:** This approach is conservative and may produce false positives. It reports that a call *could* happen, but doesn't prove that it *will* for a specific execution. For example, if an interface `I` is implemented by types `T1` and `T2`, and the target is `T1.Method`, this approach will flag any call to `I.Method` as a potential call path, even if the runtime instance is always `T2`.
 
-#### Approach C: Guided Analysis via Type Binding (High-Precision, Future Enhancement)
+#### Approach C: Dynamic Configuration-Aware Binding (High-Precision, Future Goal)
 
-This approach aims to eliminate the false positives of Approach B by allowing the user to guide the analysis.
+This approach aims to eliminate the false positives of Approach B by inferring type bindings from the configuration phase of each command.
 
+*   **Problem:** Different `main` functions can bind different concrete types to the same interface. A global, manual binding (e.g., via a command-line flag) is not flexible enough to handle this.
 *   **Mechanism (Proposed `symgo` Enhancement):**
-    1.  Propose a new feature for the `symgo.Interpreter`: a method like `BindInterfaceToConcreteType(interfaceName, concreteName string)`.
-    2.  This would instruct `symgo` to assume that whenever it encounters a call to a method on `interfaceName`, it should proceed as if it were a call on `concreteName`.
-*   **`call-trace` Usage:**
-    1.  Expose a new CLI flag, e.g., `--bind-interface="io.Writer:*os.File"`.
-    2.  When this flag is used, `call-trace` would call the new `symgo` binding method.
-    3.  The analysis could then revert to the efficient **Approach A**, registering an intrinsic only for the concrete target function (e.g., `(*os.File).Write`), as `symgo` would now be able to resolve the interface call to the specified concrete type.
-*   **Advantage:** Eliminates false positives, providing an exact trace for a user-specified scenario.
-*   **Trade-off:** Requires manual configuration for each interface-to-concrete mapping the user wants to test. It also requires an enhancement to the core `symgo` library.
+    1.  Enhance the `symgo` engine to recognize common dependency injection patterns or constructor functions (e.g., `wire.Build`, or `NewApp(db *sql.DB)`).
+    2.  As `symgo` traces from a specific `main` function, it would analyze this initialization code to determine that, for *this specific trace*, `DBInterface` is bound to `*sql.DB`.
+    3.  This binding context would be associated with the current trace. When `symgo` later encounters a call to a method on `DBInterface`, it would use the trace-specific context to resolve it to a call on `*sql.DB`.
+*   **Advantage:** Eliminates false positives by understanding the specific configuration of each command, leading to highly accurate traces without manual user input.
+*   **Trade-off:** This requires a very sophisticated enhancement to the `symgo` engine. The implementation complexity is high.
 
 ### Conclusion on Approach
 
-**Approach B is the recommended design for the initial implementation.** It provides the most comprehensive results out-of-the-box, which aligns with the tool's primary goal of discovery. The risk of false positives is an acceptable trade-off for ensuring no potential call path is missed.
+**Approach B is the recommended design for the initial implementation.** It is robust, achievable with the current `symgo` capabilities (plus the minor `CallStack` addition), and provides comprehensive results. The risk of false positives is a known and acceptable trade-off for ensuring no potential call path is missed.
 
-**Approach C is a valuable future enhancement.** It would serve as a powerful "precision mode" for users who need to verify specific, known call paths and eliminate noise.
+**Approach C represents the ideal future state of the tool.** It offers the highest precision and should be considered the long-term goal for `symgo` and `call-trace` to maximize their analytical power.
 
 ## 3. Technical Investigation & Feasibility
 
@@ -74,9 +72,9 @@ This approach aims to eliminate the false positives of Approach B by allowing th
 1.  **Performance at Scale:** A key consideration is performance on large codebases. The recommended robust approach (Approach B) requires inspecting every function call. For very large projects, the overhead could be significant, and performance profiling will be important.
 
 2.  **Handling Dynamic Calls:** The `symgo` engine operates on static source code, which imposes certain limitations.
-    *   **Reflection:** Calls made via `reflect.ValueOf(fn).Call()` will likely not be detected. This should be documented as a known limitation.
+    *   **Reflection:** Calls made via `reflect.ValueOf(fn).Call()` will likely not be detected. This should be documented as a known limitation of the tool.
     *   **Cgo:** Function calls that cross the Cgo boundary will not be traced.
 
-3.  **Usability of Output:** The most effective way to present the results to the user should be considered. Options include a simple list of stack traces, a structured JSON format, or a graph visualization.
+3.  **Usability of Output:** The most effective way to present the results to the user should be considered. Options include a simple list of stack traces, a structured JSON format for machine processing, or a graph visualization for exploring call trees.
 
-4.  **Target Function Specification:** The CLI will need a robust way to parse the target function signature, including methods on both value and pointer receivers.
+4.  **Target Function Specification:** The CLI will need a robust way to parse the target function signature, including methods on both value and pointer receivers (e.g., `(T).Method` vs. `(*T).Method`).

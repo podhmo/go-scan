@@ -141,8 +141,14 @@ func (e *Evaluator) evalAssignStmt(ctx context.Context, n *ast.AssignStmt, env *
 		switch lhs := n.Lhs[0].(type) {
 		case *ast.Ident:
 			if lhs.Name == "_" {
-				// Evaluate RHS for side-effects even if assigned to blank identifier.
-				return e.Eval(ctx, n.Rhs[0], env, pkg)
+				// Evaluate RHS for side-effects. If the RHS is a function call, it will
+				// return an `*object.ReturnValue`. We must unwrap this to prevent `evalBlockStmt`
+				// from treating it as an explicit `return` from the function being analyzed.
+				res := e.Eval(ctx, n.Rhs[0], env, pkg)
+				if ret, ok := res.(*object.ReturnValue); ok {
+					return ret.Value
+				}
+				return res
 			}
 			return e.evalIdentAssignment(ctx, lhs, n.Rhs[0], n.Tok, env, pkg)
 		case *ast.SelectorExpr:

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -691,8 +692,13 @@ func (a *analyzer) analyze(ctx context.Context, asJSON bool) error {
 		}
 
 		if _, err := interp.Apply(ctx, ep, args, ep.Package); err != nil {
-			slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
 			// We continue to the next entry point even if one fails.
+			var symgoErr *symgo.Error
+			if errors.As(err, &symgoErr) {
+				// already logged
+			} else {
+				slog.ErrorContext(ctx, "symbolic execution failed for entry point", "function", epName, "error", err)
+			}
 		}
 	}
 	slog.InfoContext(ctx, "symbolic execution complete")

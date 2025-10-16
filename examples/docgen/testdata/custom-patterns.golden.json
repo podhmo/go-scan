@@ -8,7 +8,19 @@
     "/pets/{petID}": {
       "get": {
         "description": "GetPet is a handler that uses a custom helper to get a path parameter.",
-        "operationId": "custom-patterns_GetPet"
+        "operationId": "custom-patterns_GetPet",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/users/{id}": {

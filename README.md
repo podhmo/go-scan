@@ -6,7 +6,7 @@ Its primary advantage lies in its trade-off: by not building a complete, deeply-
 
 The library intelligently resolves type definitions across packages on-demand, supports Go workspaces (`go.work`), and can find packages in your local module cache.
 
-🚧 This library is currently under active development.
+🚧 This library is currently under development.
 
 ## Features
 

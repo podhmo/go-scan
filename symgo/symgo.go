@@ -439,7 +439,7 @@ func (i *Interpreter) Apply(ctx context.Context, fn Object, args []Object, pkg *
 	// This is a simplified wrapper. A real implementation might need more context.
 	result := i.eval.Apply(ctx, fn, args, pkg)
 	if err, ok := result.(*Error); ok {
-		return nil, errors.New(err.Inspect())
+		return nil, err
 	}
 	return result, nil
 }

@@ -10,13 +10,6 @@ import (
 )
 
 func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, args ...interface{}) *object.Error {
-	msg := fmt.Sprintf(format, args...)
-	posStr := fmt.Sprintf("%d", pos) // Default to raw number
-	if e.scanner != nil && e.scanner.Fset() != nil && pos.IsValid() {
-		posStr = e.scanner.Fset().Position(pos).String()
-	}
-	e.logcWithCallerDepth(ctx, slog.LevelError, 2, msg, "pos", posStr)
-
 	frames := make([]*object.CallFrame, len(e.callStack))
 	copy(frames, e.callStack)
 	err := &object.Error{
@@ -27,5 +20,12 @@ func (e *Evaluator) newError(ctx context.Context, pos token.Pos, format string, 
 	if e.scanner != nil {
 		err.AttachFileSet(e.scanner.Fset())
 	}
+
+	msg := fmt.Sprintf(format, args...)
+	posStr := fmt.Sprintf("%d", pos) // Default to raw number
+	if e.scanner != nil && e.scanner.Fset() != nil && pos.IsValid() {
+		posStr = e.scanner.Fset().Position(pos).String()
+	}
+	e.logcWithCallerDepth(ctx, slog.LevelError, 2, msg, "pos", posStr, "stack", err.Inspect())
 	return err
 }

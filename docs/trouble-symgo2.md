@@ -1,69 +1,115 @@
-# `symgo`: Method Call on Pointer Return Value Fails
+# `symgo` のトラブルシューティング (2)
 
-This document outlines a bug in the `symgo` evaluator where it fails to resolve method calls on pointer types returned directly from functions.
+## `panic(nil)` がクラッシュを引き起こす問題
 
-## 1. Problem
+-   **発見日**: 2024-07-25
+-   **関連**: `goinspect`, `find-orphans`
+-   **ステータス**: <span style="color:green; font-weight:bold">解決済み</span> (2024-07-25)
 
-The `symgo` evaluator throws an `undefined method or field` error when analyzing code that calls a method on a pointer that was returned from a function.
+### 現象
 
-**Error Log:**
-```
-level=ERROR msg="undefined method or field: String for pointer type RETURN_VALUE"
-```
+`symgo` が `panic(nil)` を含むコードを分析すると、`evaluator.Eval` 内で Go のランタイムパニック（nil ポインタ逆参照）が発生し、分析全体がクラッシュする。
 
-**Example Go Code:**
+### 原因
+
+`evalPanicStmt` は `panic` の引数を評価するが、その引数が `nil` の場合、`e.Eval` は `object.NIL` を返す。しかし、`evalPanicStmt` の後続のコードは、この返り値が常に有効なオブジェクト（`Inspect()` メソッドを持つ）であることを期待していたため、`object.NIL` の `Inspect()` を呼び出そうとしてランタイムパニックが発生していた。
+
 ```go
-// timeutil/date.go
-package timeutil
-
-type Date string
-
-func (d Date) String() string {
-    return string(d)
+// symgo/evaluator/evaluator.go: evalPanicStmt
+func (e *Evaluator) evalPanicStmt(ctx context.Context, n *ast.PanicStmt, env *object.Environment, pkg *scan.PackageInfo) object.Object {
+	// ...
+	val := e.Eval(ctx, n.X, env, pkg)
+	if isError(val) {
+		return val
+	}
+	// ここで `val` が object.NIL になりうる
+	e.logc(ctx, slog.LevelDebug, "panic statement evaluated", "value", val.Inspect()) // val.Inspect() でパニック
+	return &object.PanicError{Value: val}
 }
+```
 
-// main.go
-package main
+### 解決策
 
-func GetDate() *timeutil.Date {
-    d := timeutil.Date("2024-01-01")
-    return &d
+`evalPanicStmt` 内で、`e.Eval` から返された値が `object.NIL` であるかどうかをチェックする処理を追加した。`object.NIL` の場合は、`PanicError` の `Value` フィールドにそのまま `object.NIL` を設定する。これにより、`Inspect()` の呼び出しが回避され、クラッシュしなくなった。
+
+## `find-orphans` が自己分析時にクラッシュする問題
+
+-   **発見日**: 2024-07-26
+-   **関連**: `find-orphans`, `symgo`
+-   **ステータス**: <span style="color:green; font-weight:bold">解決済み</span> (2025-10-13)
+
+### 現象
+
+`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際、またはそれと同様の状況で、関数型エイリアスに定義されたメソッドがポインタ経由で呼び出されると、エバリュエーターが `undefined method or field` エラーを発生させていた。
+
+### 原因
+
+根本原因は、関数リテラルが、名前付きの関数型（例: `type MyFunc func()`）を返り値とする関数から返される際に、その名前付きの型の情報 (`TypeInfo`) が、結果の `*object.Function` に関連付けられていなかったことにある。
+
+```go
+func getFn() MyFunc { // MyFunc は type MyFunc func()
+    return func() {} // この時点で返される *object.Function は MyFunc の TypeInfo を持たない
 }
 
 func main() {
-    // This call fails during symgo analysis
-    s := GetDate().String()
+    fn := getFn() // fn の *object.Variable には MyFunc の型情報があるが...
+    fn_ptr := &fn
+    fn_ptr.WithReceiver() // ここで fn_ptr の先の Function の TypeInfo が見つからずエラー
 }
 ```
-In standard Go, this is perfectly valid. The `String()` method, which has a value receiver `(d Date)`, is correctly called on the pointer `*timeutil.Date` via automatic pointer dereferencing. The `symgo` engine fails to replicate this behavior.
 
-## 2. Root Cause Analysis
+このため、後続の `evalSelectorExpr` がメソッドを解決しようとしても、レシーバの `TypeInfo` が見つからず、失敗していた。
 
-The issue lies in `symgo/evaluator/evaluator.go`, specifically within the `evalSelectorExpr` function, which handles expressions like `x.y`.
+### 解決策
 
-1.  **Function Call Evaluation:** The call to `GetDate()` is evaluated first. The `symgo` engine correctly determines it returns a pointer to a `Date` object. The result is wrapped in an `*object.ReturnValue`.
-2.  **Selector Expression Evaluation:** The `evalSelectorExpr` function is then called to resolve `.String()`.
-    -   It correctly unwraps the `*object.ReturnValue` at the beginning of the function, so the expression it analyzes (`left`) becomes an `*object.Pointer`.
-    -   It enters the `case *object.Pointer:` block.
-    -   Inside this block, it inspects the pointer's `Value` (the `pointee`).
-3.  **The Failure:** The `pointee` in this scenario is an `*object.Instance` of `Date`. However, the logic inside the `case *object.Pointer:` block does not check for registered intrinsics, which are essential for testing and for handling certain standard library functions. It attempts to resolve the method directly from type information, but because the test relies on an intrinsic, the call is never registered.
+`evalReturnStmt` を修正し、値が返される際に、その値が `*object.Function` であり、かつ呼び出し元の関数のシグネチャが名前付きの関数型を返すよう定義されている場合、その名前付きの型の `TypeInfo` を `*object.Function` に設定するようにした。
 
-As a result, the test assertion fails. The original user-reported error was slightly different but stemmed from the same core issue: incomplete logic for handling pointer receivers.
+この修正により、`*object.Function` は自身の型情報を正しく保持するようになり、後続のメソッド呼び出しが正しく解決されるようになった。この修正で、`find-orphans` の自己分析時に発生していた `INSTANCE` エラーも解消されたことから、より複雑な状況で発生していたエラーも、この `TypeInfo` の欠落が根本原因であったことが確認された。
 
-## 3. Proposed Solution
+## `type-switch` で `*object.Function` の型情報が失われる問題
 
-The fix is to enhance the `case *object.Pointer:` block in `evalSelectorExpr`.
+-   **発見日**: 2025-10-13
+-   **関連**: `find-orphans`, `symgo`
+-   **ステータス**: <span style="color:orange; font-weight:bold">部分的修正</span>
 
-1.  **Unwrap ReturnValue:** Add a check to see if the `pointee` is of type `*object.ReturnValue` and unwrap it. This handles cases where a function returns a pointer to a pointer.
-2.  **Add Intrinsic Checks:** Before resolving the method from type info, add checks for registered intrinsics for both pointer (`(*T).Method`) and value (`(T).Method`) receivers, mirroring the logic that already exists for `*object.Instance` receivers.
+### 現象
 
-This change will make the symbolic evaluator correctly model Go's automatic pointer dereferencing for method calls and ensure that intrinsics for pointer types are correctly resolved.
+`find-orphans` ツールが自身のコードベースを分析する（メタサーキュラー分析）際、`e2e` テスト (`make -C examples/find-orphans e2e`) を実行すると、`undefined method or field: WithReceiver for pointer type INSTANCE` というエラーが出力される。
 
-## 4. Plan
+このエラーは、`interface{}` 型に格納された `*object.Function` を `type-switch` で元の型にキャストしようとした際に発生する。
 
-1.  **[COMPLETED]** Create this document (`docs/trouble-symgo2.md`).
-2.  **[COMPLETED]** Add a new test case in `symgo/evaluator/evaluator_call_test.go` to reproduce the bug.
-3.  **[COMPLETED]** Run tests to confirm the failure.
-4.  **[COMPLETED]** Modify `evalSelectorExpr` in `symgo/evaluator/evaluator.go` to implement the fix.
-5.  **[COMPLETED]** Run tests to verify the fix and check for regressions.
-6.  **[COMPLETED]** Update `TODO.md`.
+### 調査と部分的な修正
+
+1.  **根本原因の特定**: 問題の根本原因は、`symgo/scanner` パッケージが `type MyFunc func()` のような関数型エイリアスをパースする際に、そのエイリアス名 (`MyFunc`) とパッケージパスを、`TypeInfo` が内包する `FunctionInfo` 構造体に正しく伝播させていなかったことにあると特定した。これにより、`symgo/evaluator` はこの型の `TypeInfo` を解決できずにいた。
+
+2.  **`scanner` の修正**: `scanner/scanner.go` の `fillTypeInfoFromSpec` 関数を修正し、関数型エイリアスの名前とパッケージパスを、内包する `FunctionInfo` に伝播させるようにした。この修正は、専用の単体テスト (`scanner_func_alias_test.go`) によって検証され、`scanner` レイヤーの問題が解決したことが確認された。
+
+3.  **残存する `evaluator` の問題**: しかし、`scanner` の修正後も、`find-orphans` のe2eテストでは依然として同じエラーが発生する。これは、`scanner` が正しい `TypeInfo` を提供するようになったにもかかわらず、`evaluator` がその情報を `type-switch` の評価に至るまでのどこかの段階で失っているか、あるいは正しく利用できていないことを示している。
+
+### 次のステップ
+
+`evaluator` 側のデバッグを継続し、`evalGenDecl` や `evalAssignStmt` などで、`scanner` から渡された `TypeInfo` がどのように処理されているかを追跡する必要がある。問題は `scanner` と `evaluator` の両方にまたがる、より複雑なものであることが判明した。
+
+## `find-orphans` でジェネリック型のメソッド解決時にクラッシュする問題
+
+-   **発見日**: 2025-10-13
+-   **関連**: `find-orphans`, `symgo`
+-   **ステータス**: <span style="color:green; font-weight:bold">解決済み</span> (2025-10-13)
+
+### 現象
+
+`find-orphans` ツールを実行すると、`undefined method or field: WithReceiver for pointer type INSTANCE` というエラーでクラッシュしていた。
+
+このエラーは、`symgo` のエバリュエーターがジェネリック型（例: `type G[T any] struct{}`）のインスタンスに対してメソッド呼び出し（例: `g.Do()`）を解決しようとする際に発生していた。
+
+### 原因
+
+エバリュエーターの `accessor.go` 内にある `findDirectMethodOnType` 関数が、メソッド解決の過程で `getOrResolveFunction` を呼び出す。ジェネリック型のメソッドの場合、この関数は具象的な `*object.Function` ではなく、ジェネリック関数のインスタンスを表す `*object.INSTANCE` を返すことがあった。
+
+しかし、`findDirectMethodOnType` の後続のコードは、返り値が常に `*object.Function` 型であると想定しており、`*object.INSTANCE` 型を適切に処理できていなかった。`*object.INSTANCE` 型のオブジェクトに対して `WithReceiver` メソッドを呼び出そうとした結果、`undefined method` エラーが発生し、クラッシュにつながっていた。
+
+### 解決策
+
+`symgo/evaluator/accessor.go` の `findDirectMethodOnType` 関数を修正した。`getOrResolveFunction` から返されたオブジェクトに対して、`*object.Function` への直接の型アサーションを行うのではなく、`type switch` を使用して `*object.INSTANCE` 型である可能性を考慮するようにした。
+
+`*object.INSTANCE` 型であった場合、その `Underlying` フィールドに格納されている実際の `*object.Function` を取り出して使用する。この修正により、ジェネリック型のメソッドが正しく解決され、`WithReceiver` が呼び出せるようになり、クラッシュが解消された。

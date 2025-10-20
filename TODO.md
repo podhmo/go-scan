@@ -114,6 +114,9 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Interface Union Types**: Correctly parse and analyze interfaces defined as a union of types (e.g., `type MyInterface interface { *TypeA | *TypeB }`), enabling accurate analysis of generic functions that use them as constraints.
 - [x] **Fix `invalid indirect` on Unresolved Function Types**: Fixed a crash in the evaluator when dereferencing a pointer to an unresolved function type (e.g., a function type from an unscanned package). The evaluator now returns a symbolic placeholder, improving robustness for tools like `find-orphans`. ([docs/trouble-symgo.md](docs/trouble-symgo.md))
 - [x] **Import Path Heuristic**: Enhanced the heuristic for guessing package names from import paths. It now generates multiple candidates (e.g., for `"github.com/mattn/go-isatty"`, it produces `["isatty", "goisatty"]`) and checks each one, making symbol resolution for unscanned packages more robust and flexible. It now also handles suffixes like `-go` (e.g., `"github.com/stripe/stripe-go/v79"` -> `stripe`).
+- [ ] **Interface Call Tracing Limitations**:
+    - The engine currently cannot always trace call graphs through function parameters of an interface type. When a concrete type is passed to a function that accepts an interface, `symgo` may not propagate the concrete type information into the function body, preventing tools like `call-trace` from resolving the subsequent interface method calls. (e.g., `ddd_scenario` test).
+    - **Optimization Opportunity**: Conversely, when tracing starts from `main`, the concrete types assigned to interfaces are often statically knowable. The engine could be optimized to resolve these method calls eagerly, without waiting for the `Finalize` step, leading to more precise and efficient analysis.
 
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:

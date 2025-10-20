@@ -34,9 +34,9 @@ func TestCallTrace(t *testing.T) {
 			pkgPatterns: []string{"./testdata/direct/src/..."},
 		},
 		{
-			name:        "indirect_func_call",
-			targetFunc:  basePrefix + "/indirect/src/mylib.Helper",
-			pkgPatterns: []string{"./testdata/indirect/src/..."},
+			name:        "ddd_scenario",
+			targetFunc:  basePrefix + "/ddd_scenario/src/mylib.Helper",
+			pkgPatterns: []string{"./testdata/ddd_scenario/src/..."},
 		},
 		{
 			name:        "no_call",

@@ -355,6 +355,11 @@ func (i *Interpreter) Files() []*evaluator.FileScope {
 	return i.eval.Files()
 }
 
+// CallStack returns the current call stack from the evaluator.
+func (i *Interpreter) CallStack() []*object.CallFrame {
+	return i.eval.CallStack()
+}
+
 // GlobalEnvForTest returns the interpreter's global environment for testing purposes.
 func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 	return i.globalEnv

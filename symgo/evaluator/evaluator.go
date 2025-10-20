@@ -438,6 +438,11 @@ func (e *Evaluator) Files() []*FileScope {
 	return e.files
 }
 
+// CallStack returns the current call stack.
+func (e *Evaluator) CallStack() []*object.CallFrame {
+	return e.callStack
+}
+
 // ApplyFunction is a public wrapper for the internal applyFunction, allowing it to be called from other packages.
 func (e *Evaluator) ApplyFunction(ctx context.Context, call *ast.CallExpr, fn object.Object, args []object.Object, fscope *FileScope) object.Object {
 	// This is a simplification. A real implementation would need to determine the correct environment.

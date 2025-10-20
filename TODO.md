@@ -118,8 +118,16 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 ### `symgotest`: A Debugging-First Testing Library for `symgo` ([docs/plan-symgotest.md](./docs/plan-symgotest.md))
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
-
 - [x] **`find-orphans`: Fix metacircular analysis bug**: Fixed a bug where method calls on generic type instances would cause a crash. The evaluator was returning an `*object.INSTANCE` for generic methods, but the calling code expected an `*object.Function`. The fix involved handling the `*object.INSTANCE` type and unwrapping the underlying function. ([docs/trouble-symgo2.md](./docs/trouble-symgo2.md))
+
+### `examples/call-trace`: Command-line Entry Point Tracer ([docs/plan-call-trace.md](./docs/plan-call-trace.md))
+- [x] **Expose `symgo`'s call stack**: Add a public `CallStack()` method to `symgo.Interpreter` to allow tools to access the call stack during intrinsic execution.
+- [x] **Create basic command structure**: Set up `examples/call-trace/main.go` with command-line argument parsing for the target function.
+- [x] **Implement Scope Discovery**: Use `goscan.ModuleWalker` for reverse dependency analysis to determine the set of packages to analyze.
+- [x] **Implement Call Path Tracing for direct calls**: Use `symgo` with a `DefaultIntrinsic` to intercept direct function calls and record the call stacks.
+- [x] **Add Tests for direct calls**: Create a test suite to validate direct call tracing.
+- [ ] **Implement Method Call Tracing**: Extend the tool to correctly trace method calls on concrete types.
+- [ ] **Implement Interface Call Tracing**: Extend the tool to trace calls through interfaces by analyzing implementations.
 
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.

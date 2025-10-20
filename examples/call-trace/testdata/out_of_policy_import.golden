@@ -1,0 +1,4 @@
+Found 1 call stacks to github.com/podhmo/go-scan/examples/call-trace/testdata/out_of_policy/src/mylib.InScope:
+
+--- Stack 1 ---
+	:0:0:	in main

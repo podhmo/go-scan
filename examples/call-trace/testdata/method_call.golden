@@ -1,0 +1,4 @@
+Found 1 call stacks to github.com/podhmo/go-scan/examples/call-trace/testdata/method_call/src/mylib.(*Greeter).Greet:
+
+--- Stack 1 ---
+	:0:0:	in main

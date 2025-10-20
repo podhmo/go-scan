@@ -37,6 +37,25 @@ func TestCallTrace(t *testing.T) {
 			targetFunc:  "os.Getenv",
 			pkgPatterns: []string{"./testdata/direct/src/..."}, // can use direct data for this
 		},
+		{
+			name:        "method_call",
+			targetFunc:  basePrefix + "/method_call/src/mylib.(*Greeter).Greet",
+			pkgPatterns: []string{"./testdata/method_call/src/..."},
+		},
+		{
+			name:       "out_of_policy_import",
+			targetFunc: basePrefix + "/out_of_policy/src/mylib.InScope",
+			pkgPatterns: []string{
+				"./testdata/out_of_policy/src/myapp",
+				"./testdata/out_of_policy/src/mylib",
+				// anotherlib is intentionally omitted to test the scan policy
+			},
+		},
+		{
+			name:        "indirect_method_call",
+			targetFunc:  basePrefix + "/indirect_method_call/src/mylib.TargetFunc",
+			pkgPatterns: []string{"./testdata/indirect_method_call/src/..."},
+		},
 	}
 
 	for _, tc := range testCases {

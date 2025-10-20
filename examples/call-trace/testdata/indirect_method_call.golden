@@ -1,0 +1,6 @@
+Found 1 call stacks to github.com/podhmo/go-scan/examples/call-trace/testdata/indirect_method_call/src/mylib.TargetFunc:
+
+--- Stack 1 ---
+	:0:0:	in main
+	/app/examples/call-trace/testdata/indirect_method_call/src/myapp/main.go:7:2:	in DoCall
+		caller.DoCall()

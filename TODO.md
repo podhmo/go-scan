@@ -118,6 +118,15 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [ ] **Known Limitations**:
   - The `symgotest.Run` function does not support fine-grained control over package scan order, making it unsuitable for certain advanced test cases that validate order-insensitivity.
 
+### `examples/call-trace`: Command-line Entry Point Tracer ([docs/plan-call-trace.md](./docs/plan-call-trace.md))
+- [x] **Expose `symgo`'s call stack**: Add a public `CallStack()` method to `symgo.Interpreter` to allow tools to access the call stack during intrinsic execution.
+- [x] **Create basic command structure**: Set up `examples/call-trace/main.go` with command-line argument parsing for the target function.
+- [x] **Implement Scope Discovery**: Use `goscan.ModuleWalker` for reverse dependency analysis to determine the set of packages to analyze.
+- [x] **Implement Call Path Tracing for direct calls**: Use `symgo` with a `DefaultIntrinsic` to intercept direct function calls and record the call stacks.
+- [x] **Add Tests for direct calls**: Create a test suite to validate direct call tracing.
+- [ ] **Implement Method Call Tracing**: Extend the tool to correctly trace method calls on concrete types.
+- [ ] **Implement Interface Call Tracing**: Extend the tool to trace calls through interfaces by analyzing implementations.
+
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.
 - [x] **Handle `not a function: NIL`**: Fixed "not a function: NIL" errors that occurred during symbolic execution of test files. The root cause was that the tracer would explore an unreachable code path (e.g., inside an `if f != nil` block when `f` is nil) and then raise a fatal error when trying to evaluate the `nil` function call. The fix was to make the function call evaluator (`evalCallExpr`) gracefully handle being passed a `nil` object by returning early, allowing analysis to continue without crashing. ([docs/trouble-symgo.md](./docs/trouble-symgo.md))

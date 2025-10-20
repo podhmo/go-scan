@@ -126,7 +126,8 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Implement Scope Discovery**: Use `goscan.ModuleWalker` for reverse dependency analysis to determine the set of packages to analyze.
 - [x] **Implement Call Path Tracing for direct calls**: Use `symgo` with a `DefaultIntrinsic` to intercept direct function calls and record the call stacks.
 - [x] **Add Tests for direct calls**: Create a test suite to validate direct call tracing.
-- [ ] **Implement Method Call Tracing**: Extend the tool to correctly trace method calls on concrete types.
+- [x] **Implement Method Call Tracing**: Extend the tool to correctly trace method calls on concrete types.
+- [x] **Add test for out-of-policy imports**: Add a test to verify that packages with out-of-policy imports are not scanned.
 - [ ] **Implement Interface Call Tracing**: Extend the tool to trace calls through interfaces by analyzing implementations.
 
 ### `symgo`: Robustness in Test Code Analysis

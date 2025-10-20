@@ -51,17 +51,58 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	if f.Receiver == nil {
 		return fmt.Sprintf("%s.%s", f.PkgPath, f.Name)
 	}
-	return "" // Methods not supported yet
+
+	// Method
+	recvType := f.Receiver.Type
+	recvString := recvType.Name
+	if recvType.IsPointer {
+		// Ensure the name is wrapped in parens for pointer types, e.g., "(*MyType)"
+		// The scanner's string representation might already do this, but we can be defensive.
+		if !strings.HasPrefix(recvString, "(*") {
+			recvString = fmt.Sprintf("(*%s)", recvString)
+		}
+	}
+	return fmt.Sprintf("%s.%s.%s", f.PkgPath, recvString, f.Name)
 }
 
 func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc string, pkgPatterns []string) error {
 	logger.Info("starting call-trace", "target", targetFunc, "packages", pkgPatterns)
 
+	// a more robust way to extract the package path, handling methods like
+	// "pkg.path.(*Type).Method"
+	var pkgPath string
 	lastDot := strings.LastIndex(targetFunc, ".")
 	if lastDot == -1 {
 		return fmt.Errorf("invalid target function format: %q. Expected format: <pkg>.<func>", targetFunc)
 	}
-	pkgPath := targetFunc[:lastDot]
+	// Check if it's a method with a receiver like (*Type) or Type
+	if endParen := strings.LastIndex(targetFunc[:lastDot], ")"); endParen != -1 && endParen > strings.LastIndex(targetFunc[:lastDot], "(") {
+		// e.g. "pkg.path.(*Type).Method"
+		// lastDot is at ".Method"
+		// endParen is at ")" in "(*Type)"
+		// we need to find the dot before the receiver type
+		pkgPathEnd := strings.LastIndex(targetFunc[:endParen], ".")
+		if pkgPathEnd != -1 {
+			pkgPath = targetFunc[:pkgPathEnd]
+		} else {
+			// This could be a type in the "main" package of the module root
+			// where there's no preceding dot.
+			// e.g. "my-module.main.(*MyType).MyMethod"
+			// In this case, we search for the package path up to the opening parenthesis.
+			openParen := strings.LastIndex(targetFunc[:lastDot], "(")
+			if openParen != -1 {
+				pkgPath = targetFunc[:openParen]
+				// trim the trailing dot if it exists
+				pkgPath = strings.TrimSuffix(pkgPath, ".")
+
+			} else {
+				return fmt.Errorf("could not extract pkg path from method target %q", targetFunc)
+			}
+		}
+	} else {
+		// simple function, or method on non-pointer receiver without parens
+		pkgPath = targetFunc[:lastDot]
+	}
 
 	// 2. Initialize the scanner.
 	s, err := goscan.New(

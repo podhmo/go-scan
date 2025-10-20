@@ -1,0 +1,3 @@
+package anotherlib
+
+func OutOfScope() {}

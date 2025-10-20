@@ -16,7 +16,7 @@ import (
 var update = flag.Bool("update", false, "update golden files")
 
 func TestCallTrace(t *testing.T) {
-	prefix := "github.com/podhmo/go-scan/examples/call-trace"
+	basePrefix := "github.com/podhmo/go-scan/examples/call-trace/testdata"
 	testCases := []struct {
 		name        string
 		targetFunc  string
@@ -24,21 +24,25 @@ func TestCallTrace(t *testing.T) {
 	}{
 		{
 			name:        "direct_func_call",
-			targetFunc:  prefix + "/testdata/src/mylib.Helper",
-			pkgPatterns: []string{"./testdata/src/..."},
+			targetFunc:  basePrefix + "/direct/src/mylib.Helper",
+			pkgPatterns: []string{"./testdata/direct/src/..."},
+		},
+		{
+			name:        "indirect_func_call",
+			targetFunc:  basePrefix + "/indirect/src/mylib.Helper",
+			pkgPatterns: []string{"./testdata/indirect/src/..."},
 		},
 		{
 			name:        "no_call",
-			targetFunc:  "fmt.Println",
-			pkgPatterns: []string{"./testdata/src/..."},
+			targetFunc:  "os.Getenv",
+			pkgPatterns: []string{"./testdata/direct/src/..."}, // can use direct data for this
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			logLevel := slog.LevelDebug
-			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: &logLevel}))
+			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 			err := run(context.Background(), &buf, logger, tc.targetFunc, tc.pkgPatterns)
 			if err != nil {

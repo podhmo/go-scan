@@ -1,0 +1,6 @@
+Found 1 call stacks to github.com/podhmo/go-scan/examples/call-trace/testdata/indirect/src/mylib.Helper:
+
+--- Stack 1 ---
+	:0:0:	in main
+	/app/examples/call-trace/testdata/indirect/src/myapp/main.go:10:2:	in CallHelper
+		intermediatelib.CallHelper()

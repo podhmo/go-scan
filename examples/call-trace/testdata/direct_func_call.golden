@@ -1,4 +1,4 @@
-Found 1 call stacks to github.com/podhmo/go-scan/examples/call-trace/testdata/src/mylib.Helper:
+Found 1 call stacks to github.com/podhmo/go-scan/examples/call-trace/testdata/direct/src/mylib.Helper:
 
 --- Stack 1 ---
 	:0:0:	in main

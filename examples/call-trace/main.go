@@ -129,6 +129,10 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc str
 
 		if calleeFunc != nil {
 			calleeName := getFuncTargetName(calleeFunc)
+			// Add verbose logging for debugging the no_call test case
+			if targetFunc == "fmt.Println" {
+				logger.Debug("checking no_call", "callee", calleeName, "target", targetFunc)
+			}
 			if calleeName == targetFunc {
 				stack := i.CallStack()
 				directHits = append(directHits, stack)
@@ -138,32 +142,30 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc str
 	})
 
 	// 8. Find and analyze all main functions in the analysis scope.
-	for pkgPath := range analysisScope {
-		pkgs, err := s.Scan(ctx, pkgPath)
-		if err != nil {
-			logger.Warn("failed to scan package in scope", "pkg", pkgPath, "error", err)
+	allScannedPkgs := s.AllSeenPackages()
+	for pkgPath, p := range allScannedPkgs {
+		if !analysisScope[pkgPath] {
 			continue
 		}
-		for _, p := range pkgs {
-			var mainFunc *scanner.FunctionInfo
-			for _, f := range p.Functions {
-				if f.Name == "main" {
-					mainFunc = f
-					break
-				}
-			}
 
-			if mainFunc != nil && p.Name == "main" {
-				logger.Info("analyzing entry point", "package", p.ImportPath)
-				eval := interp.EvaluatorForTest()
-				pkgObj, err := eval.GetOrLoadPackageForTest(ctx, p.ImportPath)
-				if err != nil {
-					logger.Warn("failed to load package for analysis", "pkg", p.ImportPath, "error", err)
-					continue
-				}
-				fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, mainFunc)
-				interp.Apply(ctx, fnObj, nil, p)
+		var mainFunc *scanner.FunctionInfo
+		for _, f := range p.Functions {
+			if f.Name == "main" {
+				mainFunc = f
+				break
 			}
+		}
+
+		if mainFunc != nil && p.Name == "main" {
+			logger.Info("analyzing entry point", "package", p.ImportPath)
+			eval := interp.EvaluatorForTest()
+			pkgObj, err := eval.GetOrLoadPackageForTest(ctx, p.ImportPath)
+			if err != nil {
+				logger.Warn("failed to load package for analysis", "pkg", p.ImportPath, "error", err)
+				continue
+			}
+			fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, mainFunc)
+			interp.Apply(ctx, fnObj, nil, p)
 		}
 	}
 

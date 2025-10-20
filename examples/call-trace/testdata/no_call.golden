@@ -1,6 +1,1 @@
-Found 1 call stacks to fmt.Println:
-
---- Stack 1 ---
-	:0:0:	in main
-	/app/examples/call-trace/testdata/src/myapp/main.go:11:2:	in Helper
-		mylib.Helper()
+No calls to os.Getenv found.

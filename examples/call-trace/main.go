@@ -170,10 +170,6 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc str
 
 		if calleeFunc != nil {
 			calleeName := getFuncTargetName(calleeFunc)
-			// Add verbose logging for debugging the no_call test case
-			if targetFunc == "fmt.Println" {
-				logger.Debug("checking no_call", "callee", calleeName, "target", targetFunc)
-			}
 			if calleeName == targetFunc {
 				stack := i.CallStack()
 				directHits = append(directHits, stack)

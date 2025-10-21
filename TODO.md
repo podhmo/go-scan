@@ -128,7 +128,7 @@ For more ambitious, long-term features, see [docs/near-future.md](./docs/near-fu
 - [x] **Add Tests for direct calls**: Create a test suite to validate direct call tracing.
 - [x] **Implement Method Call Tracing**: Extend the tool to correctly trace method calls on concrete types.
 - [x] **Add test for out-of-policy imports**: Add a test to verify that packages with out-of-policy imports are not scanned.
-- [ ] **Implement Interface Call Tracing**: Extend the tool to trace calls through interfaces by analyzing implementations.
+- [ ] **Implement Interface Call Tracing**: Extend the tool to trace calls through interfaces by analyzing implementations. (Partially attempted, but reverted due to complexity. The main challenge lies in correctly tracking the concrete types assigned to an interface variable (`PossibleTypes` in `symgo`) and ensuring the `call-trace` dependency analysis (`analysisScope`) includes all necessary packages for the type resolution to succeed. Multiple attempts to fix this failed, indicating a deeper issue in the interaction between `symgo`'s evaluator state and `call-trace`'s scope discovery.)
 
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.

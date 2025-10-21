@@ -590,6 +590,30 @@ func (e *Evaluator) GetOrLoadPackageForTest(ctx context.Context, path string) (*
 	return e.getOrLoadPackage(ctx, path)
 }
 
+// findTypeInfoInAllPackages searches through all packages seen by the scanner to find a TypeInfo
+// that matches the given type string (e.g., "example.com/me/impl.*MyType").
+func (e *Evaluator) findTypeInfoInAllPackages(typeStr string) *scan.TypeInfo {
+	// Normalize the type string to handle pointer indicators like "*" which might appear
+	// either at the beginning or next to the type name.
+	fqn := strings.ReplaceAll(typeStr, "*", "")
+	lastDot := strings.LastIndex(fqn, ".")
+	if lastDot == -1 {
+		return nil // Not a valid fully qualified name
+	}
+	pkgPath := fqn[:lastDot]
+	typeName := fqn[lastDot+1:]
+
+	allPkgs := e.scanner.AllSeenPackages()
+	if pkg, ok := allPkgs[pkgPath]; ok {
+		for _, t := range pkg.Types {
+			if t.Name == typeName {
+				return t
+			}
+		}
+	}
+	return nil
+}
+
 // built-in
 
 var (

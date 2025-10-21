@@ -48,21 +48,38 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	if f == nil {
 		return ""
 	}
-	if f.Receiver == nil {
-		return fmt.Sprintf("%s.%s", f.PkgPath, f.Name)
-	}
 
-	// Method
-	recvType := f.Receiver.Type
-	recvString := recvType.Name
-	if recvType.IsPointer {
-		// Ensure the name is wrapped in parens for pointer types, e.g., "(*MyType)"
-		// The scanner's string representation might already do this, but we can be defensive.
-		if !strings.HasPrefix(recvString, "(*") {
+	pkgPath := f.PkgPath
+	var recvString string
+
+	if f.Receiver != nil {
+		recvType := f.Receiver.Type
+		recvString = recvType.Name // e.g., "MyType" or "(*MyType)"
+
+		// Fallback: If PkgPath is missing, try to derive it from the receiver type's full name.
+		// This is a workaround for cases where symgo might not fully populate FunctionInfo.
+		if pkgPath == "" && strings.Contains(recvType.Name, ".") {
+			lastDot := strings.LastIndex(recvType.Name, ".")
+			// Handle pointer types like "(*pkg.MyType)"
+			if strings.HasPrefix(recvType.Name, "(*") {
+				pkgPath = recvType.Name[2:lastDot] // Extract "pkg"
+				recvString = fmt.Sprintf("(*%s)", recvType.Name[lastDot+1:])
+			} else {
+				pkgPath = recvType.Name[:lastDot]
+				recvString = recvType.Name[lastDot+1:]
+			}
+		}
+
+		// Ensure pointer types are correctly formatted, e.g., "(*MyType)"
+		if recvType.IsPointer && !strings.HasPrefix(recvString, "(*") {
 			recvString = fmt.Sprintf("(*%s)", recvString)
 		}
 	}
-	return fmt.Sprintf("%s.%s.%s", f.PkgPath, recvString, f.Name)
+
+	if f.Receiver == nil {
+		return fmt.Sprintf("%s.%s", pkgPath, f.Name)
+	}
+	return fmt.Sprintf("%s.%s.%s", pkgPath, recvString, f.Name)
 }
 
 func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc string, pkgPatterns []string) error {

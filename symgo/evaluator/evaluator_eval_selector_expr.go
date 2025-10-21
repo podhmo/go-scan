@@ -178,11 +178,27 @@ func (e *Evaluator) evalSelectorExpr(ctx context.Context, n *ast.SelectorExpr, e
 				}
 
 				// c. Return a callable SymbolicPlaceholder.
+				// --- NEW: Try to resolve concrete implementations from PossibleTypes ---
+				var concreteImpls []*scan.FunctionInfo
+				if v, isVar := obj.(*object.Variable); isVar && len(v.PossibleTypes) > 0 {
+					for typeStr := range v.PossibleTypes {
+						concreteTypeInfo := e.findTypeInfoInAllPackages(typeStr)
+						if concreteTypeInfo == nil {
+							continue
+						}
+						methodInfo := e.accessor.findMethodInfoOnType(ctx, concreteTypeInfo, n.Sel.Name)
+						if methodInfo != nil {
+							concreteImpls = append(concreteImpls, methodInfo)
+						}
+					}
+				}
+				// --- END NEW ---
 				return &object.SymbolicPlaceholder{
-					Reason:         fmt.Sprintf("interface method %s.%s", staticType.Name, n.Sel.Name),
-					Receiver:       obj, // Pass the variable object itself as the receiver
-					UnderlyingFunc: methodFuncInfo,
-					Package:        pkg,
+					Reason:                  fmt.Sprintf("interface method %s.%s", staticType.Name, n.Sel.Name),
+					Receiver:                obj, // Pass the variable object itself as the receiver
+					UnderlyingFunc:          methodFuncInfo,
+					ConcreteImplementations: concreteImpls,
+					Package:                 pkg,
 				}
 			}
 

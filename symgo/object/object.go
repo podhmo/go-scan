@@ -478,6 +478,9 @@ type SymbolicPlaceholder struct {
 	Reason string
 	// If the placeholder is for a function, this holds its signature.
 	UnderlyingFunc *scanner.FunctionInfo
+	// If this placeholder represents an interface method call, this may contain
+	// the concrete functions that implement the interface method.
+	ConcreteImplementations []*scanner.FunctionInfo
 	// The package context for the UnderlyingFunc.
 	Package *scanner.PackageInfo
 	// If the placeholder is for an interface method call, this holds the receiver.

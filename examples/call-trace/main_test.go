@@ -53,6 +53,16 @@ func TestCallTrace(t *testing.T) {
 			targetFunc:  basePrefix + "/indirect_method_call/src/mylib.TargetFunc",
 			pkgPatterns: []string{"./testdata/indirect_method_call/src/..."},
 		},
+		{
+			name:        "multi_impl",
+			targetFunc:  basePrefix + "/multi_impl/mylib.Helper",
+			pkgPatterns: []string{"./testdata/multi_impl/..."},
+		},
+		{
+			name:        "ddd_scenario",
+			targetFunc:  basePrefix + "/ddd_scenario/mylib.Helper",
+			pkgPatterns: []string{"./testdata/ddd_scenario/..."},
+		},
 	}
 
 	for _, tc := range testCases {

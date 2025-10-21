@@ -261,7 +261,18 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 			}
 		}
 
-		evaluated := e.Eval(ctx, fn.Body, extendedEnv, fn.Package)
+		// When applying a function, the evaluation context MUST switch to that function's
+		// defining package.
+		evalPkg := fn.Package
+		if fn.Def != nil && fn.Def.PkgPath != "" {
+			pkgFromDef, err := e.getOrLoadPackage(ctx, fn.Def.PkgPath)
+			if err == nil && pkgFromDef != nil && pkgFromDef.ScannedInfo != nil {
+				evalPkg = pkgFromDef.ScannedInfo
+			} else {
+				e.logc(ctx, slog.LevelWarn, "could not load package from function definition", "pkg", fn.Def.PkgPath, "err", err)
+			}
+		}
+		evaluated := e.Eval(ctx, fn.Body, extendedEnv, evalPkg)
 		if evaluated != nil {
 			if isError(evaluated) || evaluated.Type() == object.PANIC_OBJ {
 				return evaluated
@@ -284,6 +295,45 @@ func (e *Evaluator) applyFunctionImpl(ctx context.Context, fn object.Object, arg
 		return fn.Fn(ctx, args...)
 
 	case *object.SymbolicPlaceholder:
+		if len(fn.ConcreteImplementations) > 0 {
+			for _, concreteFuncInfo := range fn.ConcreteImplementations {
+				var receiver object.Object
+				if _, ok := fn.Receiver.(*object.Variable); ok {
+					if concreteFuncInfo.Receiver != nil && concreteFuncInfo.Receiver.Type != nil {
+						typeStr := concreteFuncInfo.Receiver.Type.String()
+						concreteTypeInfo := e.findTypeInfoInAllPackages(typeStr)
+						if concreteTypeInfo != nil {
+							inst := &object.Instance{
+								TypeName: concreteTypeInfo.Name,
+								BaseObject: object.BaseObject{
+									ResolvedTypeInfo: concreteTypeInfo,
+								},
+							}
+							receiver = inst
+						} else {
+							receiver = fn.Receiver // fallback if type info not found
+						}
+					} else {
+						receiver = fn.Receiver
+					}
+				} else {
+					receiver = fn.Receiver // Fallback
+				}
+
+				pkg, err := e.getOrLoadPackage(ctx, concreteFuncInfo.PkgPath)
+				if err != nil {
+					e.logc(ctx, slog.LevelWarn, "could not load package for concrete method", "pkg", concreteFuncInfo.PkgPath, "err", err)
+					continue
+				}
+
+				fnObject := e.getOrResolveFunction(ctx, pkg, concreteFuncInfo)
+				if f, ok := fnObject.(*object.Function); ok {
+					f.Receiver = receiver
+				}
+				e.applyFunction(ctx, fnObject, args, pkg.ScannedInfo, callPos)
+			}
+			return &object.ReturnValue{Value: &object.SymbolicPlaceholder{Reason: "result of multi-path interface call"}}
+		}
 		// This now handles both external function calls and interface method calls.
 		if fn.UnderlyingFunc != nil {
 			// If it has an AST declaration, it's a real function from source.

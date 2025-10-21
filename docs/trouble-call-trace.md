@@ -1,76 +1,93 @@
-# Debugging Diary: Tracing Interface Calls in `call-trace`
+# Design Document: The Evolution of Interface Call Tracing in `symgo`
 
-This document details the extensive and challenging process of trying to implement interface call tracing in the `examples/call-trace` tool. Despite multiple breakthroughs and what appeared to be correct solutions, the final implementation failed, suggesting a deep, underlying issue. This diary captures the hypotheses, fixes, dead ends, and learnings from this effort.
+This document serves as a design retrospective for the implementation of interface call tracing within the `symgo` ecosystem, primarily for the `examples/call-trace` tool. It details the journey from an initial, flawed understanding to the final, robust solution, including the architectural dead ends explored and the key technical obstacles that shaped the final design.
 
-## 1. The Initial Goal & A Deceptive Success
+The purpose is to provide context for future development, particularly for anyone considering adding similar deep-analysis features to `symgo` or its consuming tools.
 
-The objective was clear: extend the `call-trace` tool to trace function calls made through interfaces, as specified in `TODO.md`.
+## 1. The Core Challenge: Tracing Through Abstraction
 
-The process began with a test-driven approach. I added a simple test case involving a direct call to a method on an interface variable. To my surprise, the test passed immediately. This led to the premature and incorrect conclusion that the `symgo` engine was already equipped to handle interface calls automatically, likely by resolving the single concrete implementation available in the test's scope.
+The goal was to enable `call-trace` to identify call stacks leading to a target function, even when the call path traversed through an interface.
 
-## 2. Uncovering the True Challenge: The `multi_impl` Test
+```go
+// We want to trace the call from main() to Helper()
+// The path goes through an interface: repo.Save()
+//
+// main() -> uc.Execute() -> repo.Save() -> (*ConcreteRepo).Save() -> Helper()
 
-To verify the initial success, I created a more complex test case named `multi_impl`. This test featured an interface with multiple concrete implementations (`*Person` and `*Dog`). The `main` function used a `switch` statement to decide which implementation to assign to the interface variable.
+type Repository interface {
+    Save(data string)
+}
 
-**This test failed.** The `call-trace` tool reported "No calls to ... found."
+func (uc *UseCase) Execute() {
+    uc.repo.Save("data") // How does symgo know which `Save` this is?
+}
+```
 
-This failure was the true starting point of the investigation. It proved that while `symgo` might handle trivial cases, it could not trace a call path when the concrete type of an interface variable was ambiguous at the call site (i.e., determined by runtime logic).
+The fundamental problem is that at the `repo.Save()` call site, the concrete type of `repo` is not statically known. A symbolic execution engine must have a strategy to resolve this ambiguity.
 
-## 3. The Long Debugging Journey: A Series of Hypotheses and Fixes
+## 2. Initial Hypothesis & A Deceptive Success
 
-What followed was a long series of hypotheses, implementations, and frustrating failures.
+The implementation began with a simple, single-implementation test case.
 
-### Hypothesis 1: `call-trace` Itself Should Resolve Implementations (Incorrect)
+-   **Observation:** The test passed immediately.
+-   **Flawed Conclusion:** This led to the incorrect initial assumption that the `symgo` engine already possessed a mechanism to resolve simple interface-to-implementation cases automatically. This early success masked the true complexity of the problem.
 
-My first thought was that the `symgo` engine provides the building blocks, and the `call-trace` tool itself should be responsible for connecting the dots.
+When a more realistic test case with multiple possible implementations (`multi_impl`) was introduced, the trace failed. This proved that a dedicated design was necessary to handle ambiguity.
 
-1.  **Attempted Fix:** I started modifying `call-trace/main.go` to build a manual map of interfaces to their concrete implementations (`implMap`). The idea was to scan all packages, find all structs and interfaces, and then use the `goscan.Scanner.Implements` method to build the map. When the tracer found a call to an interface method, it would look up all possible concrete methods in the map and check if any of them matched the target function.
-2.  **Result:** This approach was overly complex and felt wrong. It led to numerous build errors and was abandoned. It became clear that this was re-implementing logic that should reside within the symbolic engine itself.
+## 3. Design Fork #1: Resolution within the Tool (A Dead End)
 
-### Hypothesis 2: The `symgo` Engine's Evaluation Flow is Flawed (Correct, but Incomplete)
+The first architectural decision was whether to place the resolution logic in the core engine (`symgo`) or in the consuming tool (`call-trace`). The initial approach attempted the latter.
 
-The next, more promising hypothesis was that the `symgo` engine wasn't correctly tracking the flow of types across package boundaries.
+-   **Design:** `call-trace` would be responsible for resolving interfaces.
+    1.  It would first use `go-scan` to build a complete map of all interfaces and their concrete implementations across all scanned packages.
+    2.  `symgo` would run its analysis, stopping at the interface method call (e.g., `repo.Save()`).
+    3.  The `call-trace` intrinsic would be triggered. It would then use the pre-built map to see if any of the possible concrete implementations matched the user's target function.
 
-1.  **A Better Test Case:** I refactored the test into a more realistic DDD-style scenario named `ddd_scenario`.
-    *   `mylib`: Defines a `Repository` interface and a `ConcreteRepository` struct that implements it. The concrete method calls a `Helper` function (the ultimate target of the trace).
-    *   `intermediatelib`: Defines a `Usecase` struct that takes the `Repository` interface as a field. Its `Run` method calls the interface method.
-    *   `cmd`: The `main` package instantiates `ConcreteRepository` and injects it into `Usecase`.
-2.  **The Discovery:** This test also failed. Extensive debugging revealed a critical bug in `symgo`: when a method from `mylib` was called via an interface from `intermediatelib`, `symgo` would attempt to evaluate the method's body within the context of the *caller's* package (`intermediatelib`), not the *callee's* package (`mylib`). This caused "identifier not found" errors for symbols defined in `mylib`.
-3.  **The Fix:** I patched `symgo/evaluator/evaluator_apply_function.go` to correctly use the callee's package context (`fn.Def.PkgPath`) when evaluating a function body. This was a significant and correct bug fix for `symgo`.
+-   **Technical Obstacles & Rationale for Abandonment:**
+    1.  **Fundamentally Incorrect for Call *Stack* Tracing:** This design has a fatal flaw. `symgo`'s evaluation would terminate at the interface boundary. The tool could determine that `repo.Save()` *could potentially* call `(*ConcreteRepo).Save()`, but it could not continue the trace *from* `(*ConcreteRepo).Save()` to its own subsequent calls (i.e., to `Helper()`). The call stack would be incomplete, defeating the primary purpose of the tool.
+    2.  **Unnecessary Complexity:** It forced the tool to re-implement a significant amount of type resolution logic that philosophically belongs in the core analysis engine.
 
-### Hypothesis 3: The `call-trace` Intrinsic is Receiving Incomplete Information (Correct, but Incomplete)
+This approach was abandoned because it could not produce the required output (a full call stack) and violated the separation of concerns between the engine and the tool.
 
-Even after fixing the package context bug, the `ddd_scenario` test *still* failed.
+## 4. Design Fork #2: Resolution within the Engine (The Correct Path)
 
-1.  **The Discovery:** The issue was now in the final link of the chain: the data passed to the `call-trace` tool's intrinsic. The `symgo` engine now correctly traced the call to the target `Helper` function. However, the `*scanner.FunctionInfo` object passed to the intrinsic was incomplete—its `PkgPath` field was an empty string.
-2.  **The Consequence:** This caused the `getFuncTargetName` helper in `call-trace/main.go` to generate an incorrect, partial name (e.g., `.Helper` instead of `path/to/mylib.Helper`), causing the string comparison against the target function to fail.
-3.  **The Fix:** I patched `getFuncTargetName` to be more robust. If the `FunctionInfo`'s `PkgPath` was empty, it would attempt to reconstruct the full package path using the receiver's type information.
+The responsibility for tracing *through* an interface must reside within the `symgo` evaluator itself. The engine must be able to resolve the concrete type(s) and continue the symbolic execution into each valid implementation.
 
-At this point, I believed I had a complete, two-part solution. However, a series of mistakes, including accidentally deleting the test data and becoming disoriented, led to a `reset_all` command, forcing me to start over.
+Implementing this revealed two critical, independent bugs in the `symgo` engine that needed to be fixed before the core logic could work.
 
-### Hypothesis 4: The Core Evaluation Model is Wrong (The True Insight)
+### 4.1. Prerequisite Fix: Cross-Package Evaluation Context
 
-After restarting from a clean slate and re-implementing the previous fixes, the tests *still* failed. This led to the most critical insight of the entire process.
+-   **Problem:** A realistic multi-package test (`ddd_scenario`) failed with "identifier not found" errors.
+-   **Root Cause:** When `symgo` evaluated a method from another package (e.g., calling a method from `pkg/infra` inside `pkg/app`), it was incorrectly using the *caller's* (`pkg/app`) package context to look up symbols. It should have been using the *callee's* (`pkg/infra`) context.
+-   **Solution:** A patch was applied to `symgo/evaluator/evaluator_apply_function.go`. This fix ensures that whenever a function or method is evaluated, the engine's context is authoritatively switched to the package where that function is defined (`fn.Def.PkgPath`). This was a fundamental correctness bug in `symgo`.
 
-1.  **The Realization:** `symgo`'s evaluation flow has a fundamental limitation. When `applyFunction` encounters a `SymbolicPlaceholder` representing an interface method call, it simply stops. It does not—and cannot—continue the evaluation into the concrete implementations. The `Finalize` step I had been relying on was a post-processing step that happens *after* the main evaluation is complete. It's too late to build a call *stack* at that point.
-2.  **The "Correct" Solution:** The only way to build a complete call stack is to resolve the interface call *during* the evaluation. I modified `applyFunction` so that when it encounters a `SymbolicPlaceholder` with a list of `ConcreteImplementations`, it recursively calls itself for each concrete function. This ensures the engine explores the entire call chain, from `u.Repo.Get()` to `(*ConcreteRepository).Get()` and finally to `Helper()`, all within a single, continuous evaluation flow.
+### 4.2. Prerequisite Fix: Robustness at the Tooling Boundary
 
-### Hypothesis 5: The Test Environment Itself is the Problem (The Final Hurdle)
+-   **Problem:** Even with the context fix, the trace still failed. The `call-trace` intrinsic was receiving a `scanner.FunctionInfo` object from the engine that was missing its `PkgPath`.
+-   **Root Cause:** The data structure being passed from the engine's core to the tool's intrinsic hook was incomplete.
+-   **Solution:** The `call-trace` tool was made more resilient. A fallback was added to its `getFuncTargetName` function. If `PkgPath` was empty, it would attempt to reconstruct it from the receiver's fully-qualified type name (e.g., extracting `"ddd_scenario/pkg/infra"` from `"(*ddd_scenario/pkg/infra.repository)"`).
+-   **Design Principle:** This highlights a key principle for the `symgo` ecosystem: tools should be designed defensively and be robust to receiving partially populated information from the engine, especially during complex analysis runs.
 
-Even with what I was certain was the correct, elegant solution implemented, the golden files remained unchanged. This began the final, most frustrating phase of debugging.
+## 5. Final Architecture and Rationale
 
-1.  **The Mystery of the Missing Logs:** I added extensive logging to every critical part of the new logic. No logs appeared. I suspected test caching and used `go test -count=1`. Still no logs. I suspected `slog` was being swallowed by the test runner and switched to `fmt.Fprintf(os.Stderr, ...)`. *Still no logs.*
-2.  **The Unthinkable Conclusion:** This meant that the core evaluation functions (`evalSelectorExpr`, `applyFunction`, `Eval`) were not being called at all for the `ddd_scenario` test. The problem wasn't in the evaluation logic, but *before* it.
-3.  **Tracing the Entrypoint:** I placed logs in `Interpreter.Apply` and then in the `run` function in `call-trace/main.go`. The logs in `run` finally appeared, but they showed that the `main` function for the test was never found.
-4.  **The `analysisScope` Bug:** Further logging revealed that the logic for calculating the `analysisScope` was failing. It relies on a reverse dependency map, which was not being correctly constructed by `go-scan` for the packages inside the `testdata` directory. The `cmd` package was being excluded from the scope, so the interpreter never tried to find its `main` function.
-5.  **The `AGENTS.md` Revelation:** As a last resort, I re-read `AGENTS.md`. It contained a crucial instruction: examples should be tested with `go -C ./examples/<name> test ./...`. My previous method of `cd ./examples/<name> && go test ...` was subtly incorrect and did not provide the right module context for the Go toolchain to understand the `testdata` structure.
+The final, working architecture is a two-part solution that addresses the issues discovered:
 
-## 4. The Final, Inexplicable Failure
+1.  **Core Engine Fix (`symgo`):** The evaluator is now able to correctly maintain its package context during cross-package calls. This is the foundation upon which any cross-package analysis rests.
+2.  **Tool Resilience (`call-trace`):** The tool can now handle cases where the engine provides incomplete data, preventing silent failures.
 
-After fixing the `analysisScope` logic and using the correct `go -C` command, the logs finally showed the entire evaluation flow executing as designed. `Interpreter.Apply` was called, `Eval` was called, `evalSelectorExpr` detected the interface, `applyFunction` found the concrete implementation and recursively called itself. Everything worked perfectly according to the logs.
+This design correctly places the complex responsibility of flow analysis and context management within `symgo`, while ensuring that the consuming tool can reliably interpret the results.
 
-And yet, the `ddd_scenario.golden` file still read: `No calls to ... found.`
+## 6. Future Considerations and Alternative Designs
 
-At this point, after exhausting all logical debugging paths, I concluded that the issue lies in a deep, non-obvious interaction between the Go testing tools, the `testdata` directory structure, and the `go-scan` package loader that is beyond my ability to solve without further guidance. The implemented solution is, in my professional opinion, the correct architectural approach, but it is being foiled by an invisible environmental or tooling problem.
+While the current solution is functional, the debugging journey revealed opportunities for future enhancements to `symgo`.
 
-This is where I stopped and decided to document the journey before proceeding.
+-   **Alternative Design: Post-Hoc Resolution with `Finalize()`**
+    -   An alternative considered was to have the evaluator track all possible concrete types for an interface variable, and then resolve all possible calls in a final, post-processing step (e.g., in `Interpreter.Finalize()`).
+    -   **Why it was rejected for this use case:** This is the same fundamental issue as Design Fork #1. It cannot build a complete, continuous call *stack*. It is suitable for asking "what *could* this interface call resolve to?", but not for "what is the full call stack from this `main` function to that `Helper` function?".
+
+-   **Future `symgo` Enhancement: Deeper Analysis as an Option**
+    -   The current implementation makes `symgo` trace through interfaces by default. This has performance implications, as it can significantly expand the analysis space.
+    -   A future improvement would be to make this behavior optional, controlled by a new `symgo.Interpreter` option (e.g., `symgo.WithInterfaceResolution(true)`). This would allow users to choose between a faster, shallower analysis and a slower, deeper analysis depending on their needs.
+
+-   **Future `symgo` Enhancement: Complete `FunctionInfo` Guarantee**
+    -   The need for a fallback in `call-trace` indicates that `symgo` could be improved. The engine should ideally guarantee that any `FunctionInfo` object passed to an intrinsic is fully populated, removing this burden from tool authors.

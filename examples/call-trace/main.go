@@ -39,7 +39,7 @@ func main() {
 		pkgPatterns = []string{"./..."} // Default to scanning the current module
 	}
 
-	if err := run(context.Background(), os.Stdout, logger, targetFunc, pkgPatterns); err != nil {
+	if err := run(context.Background(), os.Stdout, logger, targetFunc, pkgPatterns, ".", "", ""); err != nil {
 		log.Fatalf("Error: %+v", err)
 	}
 }
@@ -65,8 +65,8 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	return fmt.Sprintf("%s.%s.%s", f.PkgPath, recvString, f.Name)
 }
 
-func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc string, pkgPatterns []string) error {
-	logger.Info("starting call-trace", "target", targetFunc, "packages", pkgPatterns)
+func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc string, pkgPatterns []string, workDir string, mainPkgPath string, scanPolicyExclude string) error {
+	logger.Info("starting call-trace", "target", targetFunc, "packages", pkgPatterns, "workDir", workDir, "mainPkg", mainPkgPath, "exclude", scanPolicyExclude)
 
 	// a more robust way to extract the package path, handling methods like
 	// "pkg.path.(*Type).Method"
@@ -107,6 +107,7 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc str
 	// 2. Initialize the scanner.
 	s, err := goscan.New(
 		goscan.WithLogger(logger),
+		goscan.WithWorkDir(workDir),
 		goscan.WithGoModuleResolver(),
 	)
 	if err != nil {
@@ -148,6 +149,9 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc str
 	interp, err := symgo.NewInterpreter(s,
 		symgo.WithLogger(logger.WithGroup("symgo")),
 		symgo.WithScanPolicy(func(importPath string) bool {
+			if scanPolicyExclude != "" && importPath == scanPolicyExclude {
+				return false
+			}
 			return analysisScope[importPath]
 		}),
 	)
@@ -182,13 +186,13 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc str
 		return nil
 	})
 
-	// 8. Find and analyze all main functions in the analysis scope.
-	allScannedPkgs := s.AllSeenPackages()
-	for pkgPath, p := range allScannedPkgs {
-		if !analysisScope[pkgPath] {
-			continue
+	// 8. Find and analyze entry points.
+	if mainPkgPath != "" {
+		// If a specific main package is provided (from a test), analyze only that one.
+		p, ok := s.AllSeenPackages()[mainPkgPath]
+		if !ok {
+			return fmt.Errorf("main package %q not found after scan", mainPkgPath)
 		}
-
 		var mainFunc *scanner.FunctionInfo
 		for _, f := range p.Functions {
 			if f.Name == "main" {
@@ -196,17 +200,44 @@ func run(ctx context.Context, out io.Writer, logger *slog.Logger, targetFunc str
 				break
 			}
 		}
-
-		if mainFunc != nil && p.Name == "main" {
-			logger.Info("analyzing entry point", "package", p.ImportPath)
-			eval := interp.EvaluatorForTest()
-			pkgObj, err := eval.GetOrLoadPackageForTest(ctx, p.ImportPath)
-			if err != nil {
-				logger.Warn("failed to load package for analysis", "pkg", p.ImportPath, "error", err)
+		if mainFunc == nil {
+			return fmt.Errorf("main function not found in package %s", mainPkgPath)
+		}
+		logger.Info("analyzing entry point", "package", p.ImportPath)
+		eval := interp.EvaluatorForTest()
+		pkgObj, err := eval.GetOrLoadPackageForTest(ctx, p.ImportPath)
+		if err != nil {
+			return fmt.Errorf("failed to load package %q for analysis: %w", p.ImportPath, err)
+		}
+		fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, mainFunc)
+		interp.Apply(ctx, fnObj, nil, p)
+	} else {
+		// Otherwise, find and analyze all main functions in the analysis scope (CLI behavior).
+		allScannedPkgs := s.AllSeenPackages()
+		for pkgPath, p := range allScannedPkgs {
+			if !analysisScope[pkgPath] {
 				continue
 			}
-			fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, mainFunc)
-			interp.Apply(ctx, fnObj, nil, p)
+
+			var mainFunc *scanner.FunctionInfo
+			for _, f := range p.Functions {
+				if f.Name == "main" {
+					mainFunc = f
+					break
+				}
+			}
+
+			if mainFunc != nil && p.Name == "main" {
+				logger.Info("analyzing entry point", "package", p.ImportPath)
+				eval := interp.EvaluatorForTest()
+				pkgObj, err := eval.GetOrLoadPackageForTest(ctx, p.ImportPath)
+				if err != nil {
+					logger.Warn("failed to load package for analysis", "pkg", p.ImportPath, "error", err)
+					continue
+				}
+				fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, mainFunc)
+				interp.Apply(ctx, fnObj, nil, p)
+			}
 		}
 	}
 

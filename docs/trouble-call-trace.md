@@ -1,99 +1,98 @@
-# Troubleshooting `call-trace` Interface Method Tracing
+# Design Doc: Tracing Interface Method Calls in `call-trace` (A Failed Attempt)
 
-This document chronicles the debugging process for implementing interface method call tracing in the `examples/call-trace` tool. The task seemed straightforward initially but revealed several deep-seated complexities in the interaction between the `symgo` evaluator and the `call-trace` tool's analysis scope.
+**Status**: Superseded
+**Author**: Jules
+**Date**: 2025-10-20
 
-## The Goal
+## 1. Introduction & Goal
 
-The objective was to extend the `call-trace` tool to trace function calls made through interfaces. For a given target function (e.g., a concrete method `(*MyType).MyMethod`), the tool should be able to find call stacks that arrive at this method via an interface that `*MyType` implements.
+This document outlines the design and implementation attempt to extend the `examples/call-trace` tool to trace function calls made through interfaces. The goal was to enable the tool to identify call stacks leading to a concrete method implementation, even when the call is dispatched via an interface.
 
-The initial proposed implementation was:
-1.  **`symgo` Enhancement**: When `symgo` evaluates an interface method call, it should resolve all possible concrete implementations based on the known types of the interface variable (`PossibleTypes`). This list of concrete methods should be stored in a new field, `ConcreteImplementations`, on the `object.SymbolicPlaceholder` that represents the call.
-2.  **`call-trace` Update**: The tool's `defaultIntrinsic` handler should be updated to inspect incoming `SymbolicPlaceholder` objects. If the `ConcreteImplementations` list is populated, it should iterate through it and check if any of the concrete methods match the target function.
+This attempt was ultimately unsuccessful, but the investigation revealed critical challenges and architectural considerations in the `symgo` evaluation engine and its interaction with client tools. This document serves as a record of the obstacles encountered and proposes a path forward.
 
-## Step 1: Creating a Failing Test
+## 2. Proposed Design
 
-Following Test-Driven Development (TDD) principles, the first step was to create a realistic test case that would fail with the current implementation but pass with the new feature.
+The core design was based on a two-pronged approach: enhancing `symgo` to resolve interface calls and updating `call-trace` to interpret the results.
 
-A Domain-Driven Design (DDD)-style project structure was created under `testdata/interface_call_ddd`. This provided a multi-package scenario that mimics real-world code:
--   `domain`: Defines the `UserRepository` interface.
--   `infrastructure`: Provides a concrete implementation, `(*UserRepositoryImpl).Find`.
--   `usecase`: Depends on the `domain.UserRepository` interface and calls its `Find` method.
--   `myapp`: The main entry point, responsible for Dependency Injection (DI)—injecting the concrete `infrastructure` repository into the `usecase`.
+### 2.1. `symgo` Evaluator Enhancements
 
-The test case in `main_test.go` was configured to target `infrastructure.(*UserRepositoryImpl).Find`. The expectation was that `call-trace` would trace the call from `myapp.main` -> `usecase.(*UserUsecase).GetUserByID` -> `infrastructure.(*UserRepositoryImpl).Find`.
+1.  **Track Concrete Types**: The `symgo` evaluator already has a mechanism to track the possible concrete types that an interface-typed variable can hold. This is stored in the `PossibleTypes` map on the `object.Variable`. This mechanism needed to be correctly leveraged. The first step was to ensure `PossibleTypes` was populated correctly during assignments, especially within struct literals, which was identified as a gap.
+2.  **Resolve Concrete Implementations**: When `evalSelectorExpr` encounters a method call on an interface type (e.g., `myInterface.MyMethod()`), it should:
+    a. Access the `PossibleTypes` map of the variable representing `myInterface`.
+    b. For each concrete type string in the map, find the corresponding `*scanner.TypeInfo`.
+    c. On that `TypeInfo`, find the method `MyMethod`.
+    d. Collect all found `*scanner.FunctionInfo` objects for the concrete methods.
+3.  **Enrich `SymbolicPlaceholder`**: The collected list of concrete `FunctionInfo` objects should be stored in a new field, `ConcreteImplementations`, on the `object.SymbolicPlaceholder` returned by `evalSelectorExpr`. This placeholder represents the unresolved interface call but is now enriched with potential targets.
 
-As expected, running this test failed. The tool reported "No calls to ... found." A `golden` file was created with this output to serve as the baseline.
+### 2.2. `call-trace` Tool Update
 
-## Step 2: The Debugging Odyssey
+The `defaultIntrinsic` handler in `call-trace`, which intercepts all function calls, would be modified:
+1.  When the intercepted "function" is a `*object.SymbolicPlaceholder`, check if its `ConcreteImplementations` field is non-empty.
+2.  Iterate through the `FunctionInfo` objects in the list.
+3.  For each one, generate its fully qualified name and compare it against the `targetFunc` provided by the user.
+4.  If a match is found, record the current call stack.
 
-With a failing test in place, the implementation of the proposed solution began. This led to a long and complex debugging journey.
+## 3. Obstacles and Analysis of Failure
 
-### Iteration 1: Initial Implementation and Failure
+The implementation of this design failed. While a failing test case was successfully created, making it pass proved impossible due to a series of interacting, deep-seated issues.
 
--   **`symgo` Changes**:
-    1.  The `ConcreteImplementations []*scanner.FunctionInfo` field was added to `object.SymbolicPlaceholder`.
-    2.  A helper, `findTypeInfoInAllPackages`, was added to `evaluator.go` to look up `*scanner.TypeInfo` from a fully qualified type name string.
-    3.  `evaluator_eval_selector_expr.go` was modified. The logic for handling `staticType.Kind == scan.InterfaceKind` was updated to iterate over the `PossibleTypes` of the receiver variable, find the corresponding concrete methods, and attach them to the `ConcreteImplementations` field of the resulting `SymbolicPlaceholder`.
--   **`call-trace` Changes**:
-    1.  The `defaultIntrinsic` handler in `main.go` was updated to check for `*object.SymbolicPlaceholder` and iterate through its `ConcreteImplementations`.
+### 3.1. Issue #1: Analysis Scope (`analysisScope`) Mismatch
 
-**Result**: The test still failed. The `golden` file was unchanged.
+The most significant architectural challenge is the mismatch between the analysis scope required by `symgo` and the scope discovery logic in `call-trace`.
 
-### Iteration 2: Investigating `PossibleTypes`
+-   **The Problem**: `symgo`'s evaluator will only execute the body of a function if that function's package is within the `ScanPolicy` (derived from `analysisScope`). If a function's package is outside the scope, calls to it are treated as "out-of-policy," and the evaluator returns a `SymbolicPlaceholder` without analyzing the function's content. In our test case, the call chain is `myapp` -> `usecase` -> `infrastructure`. For `symgo` to trace into `usecase.GetUserByID`, the `usecase` package *must* be in the `analysisScope`.
+-   **`call-trace`'s Original Logic**: The tool's scope discovery was designed to find *callers* of the target, not the entire dependency graph. It started with the target's package (`infrastructure`) and walked the reverse dependency graph *upwards*. It found `myapp` (which imports `infrastructure`) but had no mechanism to then walk *downwards* from `myapp` to discover its other dependencies like `usecase`.
+-   **The Result**: The `usecase` package was never added to `analysisScope`. Consequently, when `symgo` evaluated the call to `usecase.GetUserByID` in `myapp`, it treated it as an out-of-policy call. It never analyzed the body of `GetUserByID`, and therefore never saw the call to `Repo.Find()`.
 
-**Hypothesis**: The `PossibleTypes` map, which is crucial for resolving concrete types, was not being populated correctly.
+**Attempted Fix**: The scope logic was rewritten to build a complete dependency cone (both forward and reverse dependencies) starting from the user's input patterns. This seemed to fix the scope issue in theory, but the test still failed, indicating other underlying problems.
 
-1.  A `grep` for `PossibleTypes` pointed to `evaluator_eval_assign_stmt.go` as the primary location for updates.
-2.  However, in the DDD test case, the assignment happens within a struct literal in `myapp/main.go`: `usecase := &usecase.UserUsecase{Repo: repo}`.
-3.  This led to the realization that `evalCompositeLit` in `evaluator_eval_composite_lit.go` was responsible. The original implementation simply assigned the raw value to the struct field, without creating a `*object.Variable` to hold the `PossibleTypes` information.
-4.  **Fix**: `evalCompositeLit` was modified. When initializing a struct field, it now checks if the field's static type is an interface. If so, it wraps the concrete value being assigned in a new `*object.Variable`, resolves the concrete type, and adds it to the new variable's `PossibleTypes` map.
+### 3.2. Issue #2: Fragility of `IntrinsicFunc` Signature
 
-**Result**: The test still failed.
+A subtle but critical bug was the misunderstanding and incorrect implementation of the `symgo.IntrinsicFunc` signature within the `call-trace` tool.
 
-### Iteration 3: Investigating `evalSelectorExpr`
+-   **The Problem**: `symgo.Interpreter`'s `RegisterDefaultIntrinsic` method takes a `symgo.IntrinsicFunc`, which is defined as `func(ctx context.Context, eval *Interpreter, args []Object) Object`. Inside the `symgo` package, this is wrapped to fit the internal evaluator's `intrinsics.IntrinsicFunc` signature, which is `func(ctx context.Context, args ...object.Object) object.Object`. During the long debugging session, the closure in `call-trace` was incorrectly defined with the internal signature. This caused the `*symgo.Interpreter` argument to be silently dropped, and the `calleeObj` was incorrectly assigned to the interpreter parameter.
+-   **The Result**: Calls to `i.CallStack()` inside the handler were method calls on an `object.Object`, not the interpreter. This failed silently at runtime, `directHits` was never populated, and the tool produced "No calls found" even when logging showed a "MATCH FOUND". This created a major contradiction that took hours to resolve.
 
-**Hypothesis**: The logic in `evalSelectorExpr` was not correctly identifying the interface method call for expressions like `u.Repo.Find()`.
+### 3.3. Issue #3: Complexity of Evaluator State
 
-1.  The initial check for interface calls was guarded by `if ident, ok := n.X.(*ast.Ident)`. This only works for simple variables, not for field accesses like `u.Repo`.
-2.  **Fix Attempt 1 (Failed)**: A major refactoring of `evalSelectorExpr` was attempted to evaluate the left-hand side (`n.X`) *before* any checks. This resulted in numerous syntax errors due to incorrect restructuring of the function's control flow. The file was reverted.
-3.  **Fix Attempt 2 (Correct)**: A safer, incremental approach was taken. The original `if ident...` block was kept. A *new* block was added *after* it to handle other cases. This new logic first evaluates `n.X`. If the result is a `*object.Variable` whose static type is an interface, it applies the same `PossibleTypes` resolution logic.
+The process of tracking `PossibleTypes` proved to be fragile.
 
-**Result**: The test still failed. At this point, the `symgo` evaluator logic was believed to be largely correct. The focus shifted to the `call-trace` tool itself.
+-   **The Problem**: The state of an interface variable is held in the `PossibleTypes` map on its corresponding `object.Variable`. This map must be correctly populated *at the moment of assignment*. The initial implementation failed because it did not handle assignments within struct literals (`evalCompositeLit`).
+-   **The Fix**: Logic was added to `evalCompositeLit` to create a `*object.Variable` wrapper for interface-typed fields, correctly populating `PossibleTypes`.
+-   **The Lingering Concern**: While this was fixed, it highlights a design challenge. State propagation in the evaluator is complex. An assignment isn't a simple value swap; it's a state update that must consider the static type of the LHS. This logic is currently spread across `evalAssignStmt` and now `evalCompositeLit`. A more centralized `updateVarOnAssignment` mechanism, as hinted at in memory, might be a more robust design.
 
-### Iteration 4: Investigating `call-trace`'s `analysisScope`
+## 4. Proposed Path Forward
 
-**Hypothesis**: `symgo` was working, but it wasn't being instructed to analyze the right packages. The `analysisScope` was likely incorrect, causing `symgo` to treat the call to `usecase.GetUserByID` as a symbolic, out-of-policy call, meaning its body (and the call to `Find`) was never evaluated.
+This feature is achievable, but it requires a more robust architectural approach to scope management and a simplification of the intrinsic mechanism.
 
-1.  Debug logging was added to `call-trace/main.go` to print the computed `analysisScope`.
-2.  **Confirmation**: The log revealed the scope only contained the `myapp` and `infrastructure` packages. It was missing `domain` and `usecase`.
-3.  The cause was the scope discovery logic. It started from the target function's package (`infrastructure`) and only walked *up* the dependency chain (reverse dependencies). It found `myapp` (which imports `infrastructure`), but it did not trace `myapp`'s *forward* dependencies into `usecase`.
-4.  **Fix**: The scope discovery logic was completely replaced. The new logic traverses both forward and reverse dependencies, starting from all packages that match the user's input patterns (e.g., `./...`). This ensures the entire dependency cone is included in the analysis.
+### 4.1. Proposal: Explicit Analysis Scopes in `symgo`
 
-**Result**: The test *still* failed. The output was still "No calls found."
+The core problem is that different tools require different analysis scopes. `find-orphans` needs to trace from entry points, while `call-trace` needs to analyze a whole "world" of packages. This should be a first-class concept in `symgo`.
 
-### Iteration 5: The Contradiction and Final Discovery
+A new option could be introduced to `symgo.NewInterpreter`:
 
-This was the most confusing phase. Extensive logging was added to both `symgo` and `call-trace`.
+```go
+// In symgo.go
+func WithAnalysisMode(mode AnalysisMode) Option { ... }
 
-1.  **`symgo` logs**: Confirmed that `evalCompositeLit` was setting `PossibleTypes` correctly, `evalSelectorExpr` was resolving the concrete method and populating `ConcreteImplementations`, and a `SymbolicPlaceholder` with this information was being returned.
-2.  **`call-trace` logs**: Confirmed that the `defaultIntrinsic` was receiving this exact `SymbolicPlaceholder`, iterating the `ConcreteImplementations`, and that the `getFuncTargetName` was producing the correct string. A log message `!!! MATCH FOUND !!!` was printed, confirming that the `if calleeName == targetFunc` check was succeeding.
-3.  **The Contradiction**: Despite the "MATCH FOUND" log, the test's final output, captured from the output buffer and logged by the test itself (`t.Logf`), was still "No calls found."
+type AnalysisMode int
+const (
+    TraceFromEntrypoints // Current default, for tools like find-orphans
+    TraceAllWithinScope  // New mode for tools like call-trace
+)
+```
 
-This pointed to a fundamental bug in the `defaultIntrinsic` closure itself.
+When `TraceAllWithinScope` is active, the `scanPolicy` would simply be "is this package part of the initial set provided by the user?". This moves the responsibility of defining the "world" to the client tool, which is what `call-trace` was trying to do manually.
 
-**The Root Cause**: The signature of the `defaultIntrinsic` closure in `call-trace/main.go` was incorrect.
--   It was defined as `func(ctx context.Context, args ...object.Object) object.Object`.
--   The correct `symgo.IntrinsicFunc` type that `RegisterDefaultIntrinsic` expects is `func(ctx context.Context, eval *Interpreter, args []Object) Object`.
--   My incorrect signature in the `call-trace` `main.go` file caused the Go compiler to misinterpret the arguments when the wrapper inside `symgo` called it. The `*symgo.Interpreter` was being passed, but my function signature didn't account for it, leading to a silent runtime mismatch. The `args` slice was effectively shifted, and the `calleeObj` was incorrect.
+### 4.2. Proposal: Refine the Intrinsic API
 
-The fix was to correct the signature in `main.go`'s `RegisterDefaultIntrinsic` call to match `symgo.IntrinsicFunc` and correctly handle the `interpreter` and `args` parameters.
+The dual `IntrinsicFunc` signatures (public-facing in `symgo` vs. internal in `evaluator`) are a source of confusion. This should be unified or made clearer.
 
-## Conclusion
+-   **Option A (Simplify)**: Make the public `symgo.IntrinsicFunc` the one and only signature. The `symgo.Interpreter` would pass itself to the `evaluator`, which then passes it to the intrinsic. This adds a dependency from the evaluator to the interpreter but makes the API foolproof for clients.
+-   **Option B (Clarify)**: Keep the separation but improve documentation and examples significantly. Add a specific `symgo.DefaultIntrinsicFunc` type that matches the signature expected by `RegisterDefaultIntrinsic` to provide better compiler errors.
 
-The path to a solution was obstructed by several distinct bugs that needed to be fixed in sequence:
-1.  Incorrect `PossibleTypes` population in `evalCompositeLit`.
-2.  Incomplete interface call detection in `evalSelectorExpr`.
-3.  Insufficient dependency traversal in `call-trace`'s `analysisScope` logic.
-4.  A subtle but critical bug in the signature of the `defaultIntrinsic` closure that prevented results from being recorded correctly.
+## 5. Conclusion
 
-The prolonged nature of the debugging was caused by the interaction of these bugs and a series of incorrect assumptions during the investigation, culminating in the final realization of the incorrect function signature.
+Tracing interface calls is not simply a local change in the evaluator; it is a whole-program analysis problem that is highly sensitive to the analysis scope. The failed attempt demonstrated that the current scope discovery mechanism in `call-trace` is insufficient and that the `symgo` API has subtle complexities.
+
+Future work should focus on implementing the architectural proposals above to provide client tools with more explicit and robust control over the analysis scope, which is the key prerequisite for solving this task. The failing test case and the evaluator enhancements made during this process should be preserved as a baseline for this future work.

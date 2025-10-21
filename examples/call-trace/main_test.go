@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,11 +11,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	goscan "github.com/podhmo/go-scan"
-	"github.com/podhmo/go-scan/scanner"
-	"github.com/podhmo/go-scan/scantest"
-	"github.com/podhmo/go-scan/symgo"
-	"github.com/podhmo/go-scan/symgo/object"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -29,7 +23,7 @@ func TestCallTrace(t *testing.T) {
 		dir               string
 		mainPkg           string
 		targetFunc        string
-		scanPolicyExclude string // PkgPath to exclude from scan policy
+		scanPolicyExclude string
 	}{
 		{
 			name:       "direct_func_call",
@@ -75,89 +69,19 @@ func TestCallTrace(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-			action := func(ctx context.Context, s *goscan.Scanner, pkgs []*goscan.Package) error {
-				// Most of the logic from the original `run` function goes here.
-				interp, err := symgo.NewInterpreter(s,
-					symgo.WithLogger(logger.WithGroup("symgo")),
-					symgo.WithScanPolicy(func(importPath string) bool {
-						return importPath != tc.scanPolicyExclude
-					}),
-				)
-				if err != nil {
-					return fmt.Errorf("failed to create interpreter: %w", err)
-				}
-
-				var directHits [][]*object.CallFrame
-				interp.RegisterDefaultIntrinsic(func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
-					calleeObj := args[0]
-					var calleeFunc *scanner.FunctionInfo
-
-					switch f := calleeObj.(type) {
-					case *object.Function:
-						calleeFunc = f.Def
-					case *object.SymbolicPlaceholder:
-						calleeFunc = f.UnderlyingFunc
-					}
-
-					if calleeFunc != nil {
-						calleeName := getFuncTargetName(calleeFunc)
-						if calleeName == tc.targetFunc {
-							stack := i.CallStack()
-							directHits = append(directHits, stack)
-						}
-					}
-					return nil
-				})
-
-				pkg, ok := s.AllSeenPackages()[tc.mainPkg]
-				if !ok {
-					return fmt.Errorf("main package not found: %s", tc.mainPkg)
-				}
-
-				var mainFunc *scanner.FunctionInfo
-				for _, f := range pkg.Functions {
-					if f.Name == "main" {
-						mainFunc = f
-						break
-					}
-				}
-				if mainFunc == nil {
-					return fmt.Errorf("main function not found in package %s", tc.mainPkg)
-				}
-
-				eval := interp.EvaluatorForTest()
-				pkgObj, err := eval.GetOrLoadPackageForTest(ctx, tc.mainPkg)
-				if err != nil {
-					return fmt.Errorf("failed to load package for analysis: %w", err)
-				}
-				fnObj := eval.GetOrResolveFunctionForTest(ctx, pkgObj, mainFunc)
-				interp.Apply(ctx, fnObj, nil, pkg)
-
-				interp.Finalize(ctx)
-
-				// Print results to buffer
-				if len(directHits) == 0 {
-					fmt.Fprintf(&buf, "No calls to %s found.\n", tc.targetFunc)
-					return nil
-				}
-
-				fmt.Fprintf(&buf, "Found %d call stacks to %s:\n\n", len(directHits), tc.targetFunc)
-				fset := s.Fset()
-				for i, stack := range directHits {
-					fmt.Fprintf(&buf, "--- Stack %d ---\n", i+1)
-					for _, frame := range stack {
-						fmt.Fprintln(&buf, frame.Format(fset))
-					}
-					fmt.Fprintln(&buf)
-				}
-				return nil
-			}
-
-			// scantest.Run will set up the scanner with go.mod support.
-			// The pattern is relative to tc.dir.
-			_, err := scantest.Run(t, context.Background(), tc.dir, []string{"./..."}, action)
+			// Call the refactored run function directly.
+			err := run(
+				context.Background(),
+				&buf,
+				logger,
+				tc.targetFunc,
+				[]string{"./src/..."}, // Scan pattern relative to workDir
+				tc.dir,                // workDir
+				tc.mainPkg,            // mainPkgPath
+				tc.scanPolicyExclude,  // scanPolicyExclude
+			)
 			if err != nil {
-				t.Fatalf("scantest.Run() failed: %v", err)
+				t.Fatalf("run() failed: %v", err)
 			}
 
 			// Normalization and Golden file comparison

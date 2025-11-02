@@ -41,32 +41,6 @@ Please do not delete the `go.mod` file located in example directories (like `exa
 
 This approach ensures that the tests accurately reflect how an external consumer would use the library and helps catch integration issues that might not be apparent when testing everything within a single module context.
 
-## Using Go 1.24+ Iterator Functions (Range-Over-Function)
-
-### Context
-
-For the `astwalk` package, specifically the `ToplevelStructs` function, a decision was made to return an iterator function compatible with Go's "range-over-function" feature (stabilized in Go 1.24). The function signature is `func(fset *token.FileSet, file *ast.File) func(yield func(*ast.TypeSpec) bool)`.
-
-### Rationale
-
-This approach was chosen to leverage modern Go idioms for iterating over AST nodes, offering potential benefits in ergonomics and efficiency, especially for large datasets.
-
-- **Ergonomics**: The `for ... range` syntax over a function call is idiomatic and readable.
-- **Efficiency**: Iterators process items one by one, which can be more memory-efficient than allocating a slice for all items upfront.
-- **Lazy Evaluation**: Work to find the next item is done only when requested.
-
-### Implementation Notes
-
-The `ToplevelStructs` function in the `astwalk` package provides an iterator for top-level struct type specifications within a Go source file.
-
-- **Usage**: It can be used with a `for...range` loop in Go 1.24 and later.
-- **Go Version Dependency**: This feature requires Go 1.24 or newer. The main module's `go.mod` file is set to `go 1.24`.
-
-### Conclusion
-
-The use of the range-over-function pattern for `ToplevelStructs` aligns with modern Go practices, offering a clean and efficient way to process AST nodes. Users of the `astwalk` package should ensure their environment uses Go 1.24 or a later version.
-
----
 
 ## Centralized Import Management in Code Generators: `ImportManager`
 

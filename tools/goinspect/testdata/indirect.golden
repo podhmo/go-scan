@@ -1,0 +1,4 @@
+func github.com/podhmo/go-scan/tools/goinspect/testdata/src/indirect.Ping(int) #1
+  func github.com/podhmo/go-scan/tools/goinspect/testdata/src/indirect.cont(unhandled_type_*ast.FuncType, int) #2
+    func github.com/podhmo/go-scan/tools/goinspect/testdata/src/indirect.Pong(int) #3
+      [recursive] func github.com/podhmo/go-scan/tools/goinspect/testdata/src/indirect.cont(unhandled_type_*ast.FuncType, int) #2

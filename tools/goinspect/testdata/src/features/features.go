@@ -3,7 +3,7 @@ package features
 import (
 	"fmt"
 
-	"github.com/podhmo/go-scan/examples/goinspect/testdata/src/another"
+	"github.com/podhmo/go-scan/tools/goinspect/testdata/src/another"
 )
 
 // Data represents a simple data structure.

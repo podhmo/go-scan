@@ -15,7 +15,7 @@ To use the tool, you can run it directly from the source code.
 
 1.  Navigate to the tool's directory:
     ```sh
-    cd examples/goinspect
+    cd tools/goinspect
     ```
 
 2.  Run the tool, specifying the target package pattern with the `--pkg` flag:

@@ -1,0 +1,2 @@
+func github.com/podhmo/go-scan/tools/goinspect/testdata/src/toplevel.Toplevel() #1
+  func github.com/podhmo/go-scan/tools/goinspect/testdata/src/toplevel.calledFunction() #2

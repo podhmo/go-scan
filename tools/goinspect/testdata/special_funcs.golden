@@ -1,0 +1,3 @@
+func github.com/podhmo/go-scan/tools/goinspect/testdata/src/special.main() #1
+func github.com/podhmo/go-scan/tools/goinspect/testdata/src/special/util.init() #2
+func github.com/podhmo/go-scan/tools/goinspect/testdata/src/special/util.UtilFunc() #3

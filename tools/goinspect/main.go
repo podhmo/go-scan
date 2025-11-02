@@ -80,7 +80,7 @@ func getFuncTargetName(f *scanner.FunctionInfo) string {
 	}
 	// It's a method
 	// f.Receiver.Type.String() should give us the type name, including the package path for cross-package types.
-	// e.g., "*github.com/podhmo/go-scan/examples/goinspect/testdata/src/myapp.Person"
+	// e.g., "*github.com/podhmo/go-scan/tools/goinspect/testdata/src/myapp.Person"
 	return fmt.Sprintf("(%s).%s", f.Receiver.Type.String(), f.Name)
 }
 

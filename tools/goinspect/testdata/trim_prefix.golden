@@ -1,8 +1,8 @@
 func (*Person).Greet() #1
-  func testdata/src/myapp.privateFunc() #2
+  func tools/goinspect/testdata/src/myapp.privateFunc() #2
 [accessor] func (*Person).String() #3
 func (*Service).Do(Greeter) #4
   func .Greet() #5
-func testdata/src/myapp.main() #6
-func testdata/src/myapp.Recursive(int) #7
-  [recursive] func testdata/src/myapp.Recursive(int) #7
+func tools/goinspect/testdata/src/myapp.main() #6
+func tools/goinspect/testdata/src/myapp.Recursive(int) #7
+  [recursive] func tools/goinspect/testdata/src/myapp.Recursive(int) #7

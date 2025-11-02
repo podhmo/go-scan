@@ -4,7 +4,7 @@
 
 This document provides a concrete action plan to resolve critical regressions in the `symgo` engine. The previous plan was marked as complete, but recent `e2e` tests for the `find-orphans` tool show that key issues have returned.
 
-The analysis in [`docs/trouble-symgo-refine2.md`](./trouble-symgo-refine2.md) identifies two primary failure modes:
+The analysis in [`sketch/trouble-symgo-refine2.md`](./trouble-symgo-refine2.md) identifies two primary failure modes:
 1.  **Symbolic execution failure** when encountering calls to packages outside the primary analysis scope (e.g., the `flag` package).
 2.  **Infinite recursion** when analyzing code that itself uses the `go-scan` or `symgo` libraries.
 

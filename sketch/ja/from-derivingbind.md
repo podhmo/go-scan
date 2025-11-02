@@ -20,7 +20,7 @@
 
 ## `derivingbind` の開発経験から `derivingjson` の学びを再確認・強調
 
-`derivingbind` の実装は、`derivingjson` ([`docs/ja/from-derivingjson.md`](from-derivingjson.md) 参照) で得られた `go-scan` への改善提案の多くが、ここでも同様に有効であることを示しています。特に以下の点は、`derivingbind` のようなツールにとっても非常に有益です。
+`derivingbind` の実装は、`derivingjson` ([`sketch/ja/from-derivingjson.md`](from-derivingjson.md) 参照) で得られた `go-scan` への改善提案の多くが、ここでも同様に有効であることを示しています。特に以下の点は、`derivingbind` のようなツールにとっても非常に有益です。
 
 *   **アノテーション/コメントベースの型フィルタリング (提案1)**:
     `@deriving:binding` を持つ構造体を `go-scan` レベルでフィルタリングできれば、ジェネレータ側のコードはよりシンプルになります。

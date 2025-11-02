@@ -1,6 +1,6 @@
 # `symgo` Evaluator: Design Summary
 
-This document provides a consolidated design summary of the `symgo` evaluator, incorporating both the original design principles from `docs/plan-symbolic-execution-like.md` and the observed implementation details from the source code.
+This document provides a consolidated design summary of the `symgo` evaluator, incorporating both the original design principles from `sketch/plan-symbolic-execution-like.md` and the observed implementation details from the source code.
 
 ## 1. Core Philosophy and Purpose
 

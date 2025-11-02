@@ -2,7 +2,7 @@
 
 このドキュメントは、`go-scan`リポジトリの`symgo`エンジンと、それを利用する`docgen`ツールの現状を分析し、発見された課題と将来必要とされる機能についてまとめたものです。
 
-分析は`docs/plan-symbolic-execution-like.md`で概説されている設計思想と、現在の`symgo`および`examples/docgen`, `minigo`の実装を比較することによって行われました。
+分析は`sketch/plan-symbolic-execution-like.md`で概説されている設計思想と、現在の`symgo`および`examples/docgen`, `minigo`の実装を比較することによって行われました。
 
 ## 1. 設計計画と実装の現状
 

@@ -127,7 +127,7 @@ goの型スキャナーが欲しいです。go/packagesおよびgo/typesには�
 
 goのastを読み込むんですが、基本的に解釈するのは型定義部分だけです。ただしトップレベルの定数も解釈する必要があります。外部パッケージの対応はTODOにしてください。ネストしたstructにもsliceやmapなんかにも対応します。ポインタの有無はフィールドとして保持しましょう。
 
-TODOはdocs/todo.mdに記述してください。
+TODOはsketch/todo.mdに記述してください。
 
 ---
 
@@ -397,7 +397,7 @@ AI:
 - `scanner/scanner.go` - ASTを走査し、型、定数、関数の情報を抽出するコアロジック。
 - `scanner/models.go` - 解析結果（型情報、フィールド情報など）を格納するための構造体を定義します。
 - `locator/locator.go` - `go.mod`を探索し、importパスからパッケージの物理的なディレクトリパスを特定します。
-- `docs/todo.md` - 今後の開発タスクや、今回実装しない機能を記載するドキュメント。
+- `sketch/todo.md` - 今後の開発タスクや、今回実装しない機能を記載するドキュメント。
 - `README.md` - ライブラリの目的、使い方、機能概要を説明するドキュメント。
 - `go.mod` - この型スキャナープロジェクト自体のモジュール定義ファイル。
 - `goscan_test.go` - `goscan.go`に対する結合テスト。実際のGoファイルを読み込ませて、全体の動作を検証します。
@@ -539,10 +539,10 @@ func main() {
 }
 ```
 
-This library is currently under development. See `docs/todo.md` for planned features.
+This library is currently under development. See `sketch/todo.md` for planned features.
 ````
 
-````markdown:docs/todo.md
+````markdown:sketch/todo.md
 # TODO List
 
 This document tracks planned features and improvements for the Go Type Scanner project.
@@ -1638,10 +1638,10 @@ func main() {
 }
 ```
 
-This library is currently under development. See `docs/todo.md` for planned features.
+This library is currently under development. See `sketch/todo.md` for planned features.
 ````
 
-````markdown:docs/todo.md
+````markdown:sketch/todo.md
 # TODO List
 
 This document tracks planned features and improvements for the Go Type Scanner project.
@@ -2864,7 +2864,7 @@ AI:
 一度に実行せずにUnderlyingを呼ぶたびにlazyに値を得るようにしてください）。
 
 
-あとfuture workの回答たちはdocs/todo.mdに入れといてほしいです。
+あとfuture workの回答たちはsketch/todo.mdに入れといてほしいです。
 
 ---
 
@@ -2934,7 +2934,7 @@ AI:
 承知いたしました。
 遅延評価（Lazy Loading）によるパッケージ間の型解決機能は、このライブラリの中核をなす非常に重要な機能ですね。実装しましょう。
 
-また、先ほど提案した将来の機能リストも `docs/todo.md` に反映させます。
+また、先ほど提案した将来の機能リストも `sketch/todo.md` に反映させます。
 
 この変更はライブラリのアーキテクチャに影響を与えるため、複数のファイルを更新します。
 
@@ -3021,10 +3021,10 @@ func main() {
 }
 ```
 
-This library is currently under development. See `docs/todo.md` for planned features.
+This library is currently under development. See `sketch/todo.md` for planned features.
 ````
 
-````markdown:docs/todo.md
+````markdown:sketch/todo.md
 # TODO List
 
 This document tracks planned features and improvements for the Go Type Scanner project.

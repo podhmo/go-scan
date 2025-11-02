@@ -113,7 +113,7 @@ The implementation is now correct and aligns with the design goals. The remainin
 
 ## 7. References
 
-*   [docs/plan-symbolic-execution-like.md](./plan-symbolic-execution-like.md)
+*   [sketch/plan-symbolic-execution-like.md](./plan-symbolic-execution-like.md)
 *   [docs/analysis-symgo-implementation.md](./analysis-symgo-implementation.md)
 *   [examples/find-orphans/spec.md](./../examples/find-orphans/spec.md)
 

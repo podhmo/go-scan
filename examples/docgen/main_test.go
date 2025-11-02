@@ -246,7 +246,7 @@ func TestDocgen_fullParameters(t *testing.T) {
 		tracer.visitedNodePositions[event.Node.Pos()] = true
 	}
 
-	// This test is based on the scenario described in `docs/trouble-docgen.md`.
+	// This test is based on the scenario described in `sketch/trouble-docgen.md`.
 	// It verifies that path, query, and header parameters defined via custom
 	// patterns are correctly included in the final OpenAPI specification.
 	const apiPath = "full-parameters"

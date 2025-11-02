@@ -78,7 +78,7 @@ In summary, while the bindings for the functions in `encoding/json` can be gener
 
 ## Deeper Analysis and Path to Implementation
 
-Following the initial analysis, a deeper investigation was conducted to determine the feasibility of overcoming these limitations. This analysis is modeled after the one in `docs/analysis-minigo-goroutine.md`.
+Following the initial analysis, a deeper investigation was conducted to determine the feasibility of overcoming these limitations. This analysis is modeled after the one in `sketch/analysis-minigo-goroutine.md`.
 
 ### 1. FFI Architecture and a Path for `json.Marshal`
 

@@ -2,7 +2,7 @@
 
 This document outlines the various test failures that appear to be regressions caused by the introduction of a lazy evaluation mechanism for variables in the `symgo` engine. The failures are widespread across the `symgo`, `symgo/evaluator`, and `examples/find-orphans` packages.
 
-The previous work is in `docs/trouble-symgo-nested-scope.md`. The goal was to fix "identifier not found" for unexported symbols by evaluating package-level variables lazily. However, this change has caused numerous regressions.
+The previous work is in `sketch/trouble-symgo-nested-scope.md`. The goal was to fix "identifier not found" for unexported symbols by evaluating package-level variables lazily. However, this change has caused numerous regressions.
 
 ## Failure Categories
 

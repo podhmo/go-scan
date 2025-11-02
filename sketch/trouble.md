@@ -56,7 +56,7 @@
         # Use 'go run ./' to explicitly run the main package in the current directory.
         # This avoids ambiguity in how 'go run' interprets arguments, especially when
         # the program itself takes .go files or directory paths as arguments.
-        # See docs/trouble.md for more context on 'go run' argument parsing.
+        # See sketch/trouble.md for more context on 'go run' argument parsing.
         @go run ./ ./testdata/simple/models.go
     ```
 

@@ -1,111 +1,59 @@
 # Analysis of `minigo` Implementation
 
-This document analyzes the implementation of the `minigo` script engine. `minigo` is a pragmatic, AST-walking **interpreter** designed to execute a subset of the Go language. Its primary purpose is to serve as a sandboxed, embeddable engine, most notably for using Go syntax as a dynamic configuration language.
+`minigo` is a simple, AST-walking interpreter for a subset of the Go language. While it functions as a classic interpreter for control flow and expressions, its most significant and powerful feature is its **dynamic and lazy import resolution**, which is fundamentally powered by its underlying dependency, the `go-scan` library.
 
-This analysis focuses on the key design choices that differentiate `minigo`'s dynamic, runtime evaluation model from the static, compile-time model of a standard Go compiler.
+Unlike a standard Go compiler, which statically links all dependencies upfront, `minigo` defers all package resolution until a symbol is actually accessed at runtime.
 
-## 1. Core Questions
+This document analyzes this core mechanism and explains how it enables `minigo`'s primary use-case: dynamically leveraging parts of a complex Go codebase, such as type definitions, as if they were simple, self-contained objects (POGO - Plain Old Go Objects), without needing to resolve their entire dependency tree.
 
-The primary questions to be answered are:
+## The Core Mechanism: Dynamic and Lazy Import Resolution
 
-1.  **How does `minigo`'s runtime evaluation of control flow differ from a Go compiler's static analysis?** This will establish its identity as a classic interpreter that faithfully simulates Go's runtime behavior.
-2.  **What is `minigo`'s philosophy on syntax and error handling?** This will cover its direct use of `go/ast` and its approach of deferring semantic errors to runtime.
-3.  **How does `minigo`'s dynamic `import` handling contrast with a Go compiler's static linking?** The analysis will cover its on-demand loading and virtual package systems, which are impossible in a compiled model.
-4.  **What primary use-case does `minigo` enable that a standard Go compiler does not?** The analysis will use `examples/docgen` to demonstrate how `minigo`'s interpretive nature enables the "Go as a configuration language" paradigm.
+The most important feature of `minigo` is how it handles dependencies. This behavior is a direct result of the "shallow, lazy scanning" philosophy of the underlying `go-scan` library.
 
-## 2. Dynamic Execution vs. Static Compilation
+### 1. `import` is a No-Op (Initially)
 
-The fundamental difference between `minigo` and a standard Go compiler is the "when" of execution. `minigo` evaluates code at runtime, while a compiler analyzes it ahead of time. This leads to core design differences in syntax handling, error reporting, and execution.
+In `minigo`, an `import "path/to/pkg"` statement does not trigger any immediate scanning or parsing of the imported package. The interpreter simply records the alias and path. This stands in stark contrast to a Go compiler, which would need to locate, parse, and type-check the imported package and its own dependencies at compile time.
 
-### 2.1. Syntax and Parsing Philosophy
+### 2. Resolution is Triggered by Access
 
-A key design choice in `minigo` is its direct use of the standard `go/parser` and `go/ast` packages.
+The import resolution logic is deferred until a symbol from the package is actually accessed in the code. When the evaluator encounters a selector expression like `pkg.MyType`, it triggers the `findSymbolInPackage` function. Only at this moment does `minigo` ask `go-scan` to find the definition for `MyType` in `path/to/pkg`.
 
--   **`minigo` (Direct AST Interpretation)**: `minigo`'s parser accepts any syntactically valid Go code. It does not have its own pre-validation or analysis pass to check for unsupported language features. If a script uses `go` statements or `chan` types, for example, the code is parsed into a standard Go AST without complaint. This design ensures that existing Go tools—such as formatters (`gofmt`), linters, and language servers (`gopls`)—work perfectly on `minigo` scripts, as they are simply valid Go files.
+### 3. `go-scan` Performs a Targeted, Shallow Scan
 
--   **Go Compiler (Static Analysis & Compilation)**: A Go compiler's parser also builds an AST, but this is just the first step. It then performs extensive static analysis, type checking, and validation. It would immediately reject a program that uses channels incorrectly at compile time, long before any code is run.
+Crucially, `go-scan` does not perform a deep, recursive analysis of the entire `path/to/pkg` and all of its dependencies. Instead, it performs a targeted scan, parsing just enough of the source code to locate the AST for `MyType`. If `MyType` has fields whose types are from other packages, `go-scan` does not immediately resolve them either. It simply records their type information, deferring their resolution until they are, in turn, accessed.
 
-### 2.2. Error Handling: Runtime vs. Compile Time
+### 4. The Key Use-Case: Using Legacy Types as POGO
 
-The consequence of this parsing philosophy is *when* errors are reported.
+This lazy, on-demand, and shallow resolution is what makes `minigo` exceptionally powerful for working with existing, complex codebases.
 
--   **`minigo` (Runtime Errors)**: Since `minigo` accepts all valid Go syntax, errors related to unsupported features are deferred until execution. An attempt to *use* a channel, for example, will result in a runtime error from the evaluator (e.g., "evaluation not implemented for `<-`"). This is a classic characteristic of an interpreter: errors are discovered as the code is run.
+Consider a large, legacy Go project with a monolithic `models` package. This package might have hundreds of structs with tangled dependencies on other internal packages for services, validation, or database logic. In a standard Go environment, using a single struct from `models` requires the compiler to successfully build the entire dependency graph of the `models` package. If any part of that graph is broken or has complex build requirements, using the struct becomes difficult.
 
--   **Go Compiler (Compile-Time Errors)**: The Go compiler detects the vast majority of semantic and type errors during its static analysis phase, preventing the program from compiling at all.
+`minigo` completely bypasses this problem. Because it only resolves what is explicitly accessed, a `minigo` script can do the following:
 
-### 2.3. Control Flow and Function Calls
+```go
+import "my-legacy-app/models"
 
-`minigo`'s evaluator directly simulates the runtime behavior of Go, which contrasts with a compiler's abstract analysis.
+func GetConfig() {
+    return models.User{
+        Name: "Default User",
+    }
+}
+```
 
--   When it encounters an `if` statement (`evalIfElseExpression`), it evaluates the condition to a concrete boolean and executes exactly one branch.
--   Its `for` loop (`evalForStmt`) iterates based on a runtime condition.
--   Function calls (`applyFunction`) involve pushing a new frame onto a call stack and executing the function body to completion.
+When `minigo` interprets this, it only asks `go-scan` to find the definition of `models.User`. It never attempts to parse or understand the other structs, methods, or dependencies within the `models` package. As a result, the complex `models.User` type, with all its potentially problematic dependencies, can be treated as a simple **Plain Old Go Object (POGO)**.
 
-In all cases, `minigo` is not analyzing code in the abstract; it is performing the concrete steps of an execution, statement by statement. This interpretive approach is what defines its behavior and distinguishes it from a static compiler.
+This allows developers to treat complex, existing Go types as simple data structures, effectively repurposing them as schemas for configuration files without paying the cost of their full dependency hierarchy. It enables an ad-hoc, bottom-up approach to leveraging existing code that is impossible with a static, top-down compiler.
 
-## 3. Dynamic `import` Handling vs. Static Linking
+## Other Applications
 
-`minigo`'s `import` system is another area where its dynamic nature diverges significantly from a Go compiler.
+While treating legacy types as POGO is a key outcome, this core mechanism enables other powerful use-cases.
 
--   **Go Compiler (Static Linking)**: A Go compiler resolves all `import` statements at compile time. It finds the necessary packages, checks for dependencies, and links them into the final executable binary. This is a static, upfront process.
+-   **Go as a Configuration Language (`examples/docgen`)**: This is a direct application of the POGO principle. The host application (`docgen`) asks `minigo` to execute a user's script and return a configuration object. `minigo`'s ability to dynamically interpret the script and unmarshal the resulting structure into a native Go struct, without a compile step, makes it a powerful configuration engine.
 
--   **`minigo` (Dynamic, Multi-Faceted Imports)**: `minigo` treats imports as a dynamic, runtime concern, offering a flexible, three-tiered system that a compiler cannot.
+-   **AST Manipulation with Special Forms (`examples/convert-define`)**: `minigo` can register "special forms," which are functions that receive unevaluated AST nodes instead of values. This allows `minigo` to be used as a meta-programming or code-generation tool, where a script can define a DSL (Domain-Specific Language) that is then transformed into Go code by the host application. This works seamlessly because `minigo`'s parser accepts any valid Go syntax, even for functions (the special forms) that have no real implementation in the Go code itself, allowing tools like `gopls` to function correctly.
 
-    1.  **On-Demand Source Loading**: `minigo` employs a **lazy-loading** strategy. An `import` statement itself does very little. Only when the script first attempts to access a symbol from an imported package (e.g., `pkg.Symbol`) does the `findSymbolInPackage` function trigger `go-scan` to find, parse, and evaluate the package's source code. This on-demand approach minimizes startup time, a key feature for a scripting engine.
+## Conclusion
 
-    2.  **Virtual Packages via `interp.Register()`**: The host Go application can create "virtual packages" at runtime using `Interpreter.Register()`. It can register a set of native Go functions under an import path (e.g., `"strings"`). When a script imports and uses this path, `minigo` calls the registered Go functions directly via reflection, without ever looking for Go source files. This provides a secure and controlled mechanism to expose host functionality.
+`minigo` is more than just a simple interpreter for a subset of Go. Its true value lies in its **dynamic and lazy import mechanism**, inherited from `go-scan`. This design choice elevates it from a mere script runner to a powerful tool for bridging the gap between Go's static, compiled world and the need for dynamic, ad-hoc code evaluation.
 
-    3.  **FFI Bindings**: For performance-critical standard library packages, `minigo` supports pre-generated FFI (Foreign Function Interface) bindings. This mechanism generates Go code that registers a package's functions with the interpreter directly, bypassing both source parsing and runtime reflection.
-
-This dynamic, multi-faceted approach to dependency resolution is a core feature that makes `minigo` highly adaptable as an embedded engine, a capability that lies outside the scope of a traditional static compiler.
-
-## 4. Primary Use-Case: "Go as a Configuration Language"
-
-The dynamic capabilities of `minigo` enable a powerful paradigm that is impossible with a standard Go compiler: using Go itself as a dynamic configuration language. The `examples/docgen` tool is the primary case study for this design.
-
-A Go compiler requires a `main` function and a full compilation process to produce an executable. It cannot simply "run a file" to extract a variable value. `minigo`, as an interpreter, is designed for exactly this scenario.
-
-The `docgen` workflow is as follows:
-
-1.  **User-Defined Configuration**: A user writes a standard Go file (e.g., `patterns.go`) defining a `Patterns` variable. This file is not a complete, runnable program. It is a script whose sole purpose is to define and populate this configuration variable. The user can leverage Go's full syntax—functions, loops, variables—to build the final configuration value dynamically.
-
-2.  **Host Application Embeds `minigo`**: The main `docgen` application embeds the `minigo` interpreter. It does not know the content of the user's script, only that it needs to execute it.
-
-3.  **Script Execution**: `docgen` reads the user's Go file as a string and executes it using `interp.EvalString()`. `minigo` parses and evaluates the code on the fly.
-
-4.  **Data Extraction via Reflection Bridge**: After the script runs, `docgen` accesses the interpreter's global environment to find the `Patterns` variable (`interp.GlobalEnvForTest().Get("Patterns")`). This returns a `minigo` internal object (`object.Array` of `object.StructInstance`). It then uses the `result.As(&configs)` method. This powerful feature acts as a bridge, using reflection to "unmarshal" the interpreter's internal objects back into a native, statically-typed Go slice (`[]patterns.PatternConfig`).
-
-This workflow is the core value proposition of `minigo`. It allows an application to expose a configuration surface that is far more powerful than static formats like JSON or YAML, enabling logic, reuse, and type safety, all without requiring users to compile their configurations. This dynamic, script-based approach is a perfect complement to Go's static, compiled nature.
-
-### 4.1. Limitations
-
-The primary trade-off of this script-based approach is that `minigo` can only interpret Go source code. It cannot execute pre-compiled Go code from a binary package. While it can interact with native Go types and functions provided by the host application at runtime, the configuration scripts themselves must always be provided as source. This is a natural consequence of its design as an interpreter, not a virtual machine or a linker.
-
-## 5. Advanced Use-Case: AST Manipulation with Special Forms
-
-Beyond configuration, `minigo`'s architecture enables a more advanced, meta-programming use-case: direct AST manipulation. This is achieved through a feature called **"special forms."**
-
-A normal function in `minigo` receives arguments that have already been evaluated to concrete values. A special form, in contrast, is a function that receives the raw, unevaluated `ast.Expr` nodes of its arguments. This allows the script to analyze, transform, or extract information from the code's structure itself, rather than just its values.
-
-The `examples/convert-define` tool is a key example of this. Its goal is to take a custom function call and convert it into a Go `const` block.
-
-1.  **Special Form Registration**: The host application registers a function (e.g., `define.Define`) as a special form.
-2.  **Script with Stub Package**: The user writes a script that calls `define.Define("MyEnum", C.Iota, C.Int, "Foo", "Bar")`. To ensure Go tools like `gopls` do not report errors, a "stub" package (`convert-define/define`) is provided. This package contains a Go definition for `define.Define` with a generic `any` signature, satisfying the static analysis tools. However, this stub is never actually executed.
-3.  **AST Interception**: When `minigo` evaluates the script, it sees that `define.Define` is a special form. Instead of calling a function, it invokes the special form's handler, passing it the list of unevaluated `ast.Expr` nodes (e.g., the AST for `"MyEnum"`, `C.Iota`, etc.).
-4.  **Code Transformation**: The special form's Go implementation can then inspect these AST nodes to extract the necessary information (the enum name, type, and values) and use it to generate a new Go `const` block.
-
-This powerful feature elevates `minigo` from a simple configuration engine to a lightweight code generation and meta-programming tool, allowing developers to create custom DSLs within Go syntax that can be dynamically interpreted to produce code or other artifacts.
-
-## 6. Conclusion
-
-The analysis confirms that `minigo` is a well-designed, classic interpreter whose purpose and behavior are distinct from, and complementary to, a standard Go compiler.
-
--   **`minigo` is a dynamic runtime, not a static analyzer.** It faithfully simulates Go's execution behavior, including its control flow and error handling, but defers semantic error detection until runtime. Its design philosophy of accepting any valid Go syntax makes it compatible with the existing Go toolchain.
-
--   **Its primary value is enabling "Go as a Configuration Language."** By embedding `minigo`, a compiled Go application can execute external Go scripts on the fly. This provides a dynamic, expressive, and type-safe configuration layer that is impossible to achieve with a static compiler alone.
-
--   **Dynamic dependency handling is its key enabler.** `minigo`'s on-demand source loading and its ability to create virtual packages at runtime are core features that differentiate it from a static linker, making it highly suitable for a flexible, embedded scripting environment.
-
--   **Special forms unlock meta-programming.** Beyond configuration, the ability to intercept raw AST nodes allows `minigo` to function as a lightweight code generation and DSL engine, a powerful capability for specialized tooling.
-
-In summary, `minigo` is a fit-for-purpose interpreter that successfully leverages Go's syntax and AST tooling to create a powerful bridge between the static, compiled world of a host application and the dynamic, scriptable world of configuration and meta-programming.
+By intentionally avoiding a full, upfront dependency resolution, `minigo` provides a unique and pragmatic capability: the ability to surgically extract and reuse pieces of a complex, legacy Go codebase as simple POGO definitions. This makes it an exceptionally effective engine for building powerful, Go-native configuration systems and lightweight, meta-programming tools.

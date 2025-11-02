@@ -36,7 +36,7 @@ The test code itself is very clean. It simply points to the test module's direct
 **`examples/docgen/integration_test.go`:**
 ```go
 func TestDocgen_WithFnPatterns(t *testing.T) {
-	// This test reproduces the scenario from docs/trouble-docgen-minigo-import.md.
+	// This test reproduces the scenario from sketch/trouble-docgen-minigo-import.md.
 	// It verifies that docgen can load a minigo configuration script (`patterns.go`)
 	// from a nested Go module (`testdata/integration/fn-patterns`), and that this
 	// script can successfully import other packages.

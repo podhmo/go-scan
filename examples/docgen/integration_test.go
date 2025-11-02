@@ -15,7 +15,7 @@ import (
 )
 
 func TestDocgen_WithFnPatterns(t *testing.T) {
-	// This test reproduces the scenario from docs/trouble-docgen-minigo-import.md.
+	// This test reproduces the scenario from sketch/trouble-docgen-minigo-import.md.
 	// It verifies that docgen can load a minigo configuration script (`patterns.go`)
 	// from a nested Go module (`testdata/integration/fn-patterns`), and that this
 	// script can successfully import other packages.

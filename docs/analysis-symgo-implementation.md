@@ -1,6 +1,6 @@
 # Analysis of `symgo` Implementation
 
-This document analyzes the implementation of the `symgo` symbolic execution engine, focusing on its handling of control flow. The analysis compares the current source code with the principles outlined in `docs/plan-symbolic-execution-like.md` to determine if the implementation deviates from its intended design.
+This document analyzes the implementation of the `symgo` symbolic execution engine, focusing on its handling of control flow. The analysis compares the current source code with the principles outlined in `sketch/plan-symbolic-execution-like.md` to determine if the implementation deviates from its intended design.
 
 ## 1. Core Question
 
@@ -17,7 +17,7 @@ The investigation focused on `symgo/evaluator/evaluator.go`, which contains the 
 The implementation of `if` statements is a clear departure from a standard interpreter.
 
 - **Behavior:** The `evalIfStmt` function evaluates the `Init` statement and the `Cond` expression to trace any function calls within them. Then, it proceeds to evaluate **both** the `then` block (`Body`) and the `else` block (`Else`) in separate, isolated scopes.
-- **Alignment with Design:** This is a direct and faithful implementation of the strategy in `docs/plan-symbolic-execution-like.md` (Section 3.4), which states the goal is to "discover what *could* happen in any branch" rather than proving which single path is taken.
+- **Alignment with Design:** This is a direct and faithful implementation of the strategy in `sketch/plan-symbolic-execution-like.md` (Section 3.4), which states the goal is to "discover what *could* happen in any branch" rather than proving which single path is taken.
 
 Furthermore, the `assignIdentifier` function contains special logic for variables with an `interface` type. When a value is assigned to an interface variable, the evaluator **adds** the concrete type of the value to a set of `PossibleTypes` on the variable object. This "additive update" mechanism is how the evaluator correctly merges the outcomes of both `if` and `else` branches, allowing it to track all possible concrete types an interface variable might hold. This is a sophisticated feature designed specifically for static analysis, not for standard execution.
 

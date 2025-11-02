@@ -76,4 +76,4 @@ The following functions will not be reported as orphans:
 ---
 
 Related Documents:
--   `symgo` Engine Specification: [`docs/plan-symbolic-execution-like.md`](../../docs/plan-symbolic-execution-like.md)
+-   `symgo` Engine Specification: [`sketch/plan-symbolic-execution-like.md`](../../docs/plan-symbolic-execution-like.md)

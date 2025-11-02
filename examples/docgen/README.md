@@ -91,4 +91,4 @@ You would then run `docgen` with the `--patterns` flag:
 go run ./examples/docgen --patterns=./patterns.go myapp/api main
 ```
 
-For more details on creating pattern files and all available pattern types, see [../../docs/summary-docgen-customize-by-minigo.md](../../docs/summary-docgen-customize-by-minigo.md).
+For more details on creating pattern files and all available pattern types, see [../../sketch/summary-docgen-customize-by-minigo.md](../../docs/summary-docgen-customize-by-minigo.md).

@@ -1,6 +1,6 @@
 ### Prompt for Updating TODO.md from Plan Documents
 
-**Task:** Update the `TODO.md` file by transcribing unimplemented tasks from all `docs/plan-*.md` documents.
+**Task:** Update the `TODO.md` file by transcribing unimplemented tasks from all `sketch/plan-*.md` documents.
 
 **Detailed Requirements:**
 
@@ -12,7 +12,7 @@
     *   The content under the `## To Be Implemented` section should be completely replaced with a newly generated list.
 
 3.  **Source of Tasks**:
-    *   The tasks for the new list must be sourced from all `docs/plan-*.md` files.
+    *   The tasks for the new list must be sourced from all `sketch/plan-*.md` files.
 
 4.  **Filtering Logic**:
     *   Only extract tasks that are **unimplemented**.
@@ -22,7 +22,7 @@
 5.  **Formatting Requirements**:
     *   Group the extracted tasks by their source file.
     -   Each group must have a level-3 heading (`###`) that includes the name of the feature and a clickable markdown link to the source `plan-*.md` file.
-        *   **Correct Format:** `### Feature Name ([docs/plan-name.md](./docs/plan-name.md))`
+        *   **Correct Format:** `### Feature Name ([sketch/plan-name.md](./docs/plan-name.md))`
         *   **Incorrect Format:** `### Feature Name (plan-name.md)`
     -   Each task should be a list item with a checkbox: `- [ ] Task description`.
 
@@ -35,7 +35,7 @@ By following these instructions, the `TODO.md` file will be correctly updated to
 When all tasks defined in a `plan-*.md` document are completed, follow these steps to update the documentation:
 
 1.  **Update the completed `plan-*.md`**:
-    *   Following the format of `docs/plan-overlay.md`, add the following note at the beginning of the completed `plan-*.md` file.
+    *   Following the format of `sketch/plan-overlay.md`, add the following note at the beginning of the completed `plan-*.md` file.
 
     ```markdown
     > [!NOTE]
@@ -65,7 +65,7 @@ When all tasks defined in a `plan-*.md` document are completed, follow these ste
     *   **For Feature Additions:** Describe the new feature that was implemented. The goal is to capture the "what" and "why" of the change, preserving the description of the feature itself.
     *   **For Bug Fixes & Miscellaneous Tasks:** Group related fixes or smaller tasks into a single, summarized bullet point.
     *   **Preserve Key Information:** In all summaries, you **must** preserve:
-        *   Any links to `docs/plan-*.md` or other documentation that explain the decision-making process.
+        *   Any links to `sketch/plan-*.md` or other documentation that explain the decision-making process.
         *   Clear descriptions of major decisions made.
 
 3.  **Clean Up Pending Tasks:** Ensure the `## To Be Implemented` section is left in a clean state, containing only actionable tasks that are genuinely incomplete.
@@ -74,7 +74,7 @@ When all tasks defined in a `plan-*.md` document are completed, follow these ste
 
 *   **Before (in `To Be Implemented`):**
     ```markdown
-    ### `minigo` FFI and Language Limitations ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
+    ### `minigo` FFI and Language Limitations ([sketch/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md))
     - [x] **Implement Method Calls on Go Objects**: ...
     - [x] **Graceful Error Handling for Go Functions**: ...
     - [x] **Fix FFI method call return handling**: ...
@@ -82,7 +82,7 @@ When all tasks defined in a `plan-*.md` document are completed, follow these ste
 
 *   **After (in `Implemented`):**
     ```markdown
-    - Resolved numerous FFI and language limitations to improve stdlib compatibility, including method calls on Go objects and graceful error handling. See ([docs/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md)) for details.
+    - Resolved numerous FFI and language limitations to improve stdlib compatibility, including method calls on Go objects and graceful error handling. See ([sketch/trouble-minigo-stdlib-limitations.md](./docs/trouble-minigo-stdlib-limitations.md)) for details.
     ```
 
 ---
@@ -96,8 +96,8 @@ When all tasks defined in a `plan-*.md` document are completed, follow these ste
 **Detailed Requirements:**
 
 1.  **Create New Document**:
-    *   Create a new markdown file under the `docs/` directory.
-    *   The filename must follow the convention: `docs/cont-<feature-name>.md`.
+    *   Create a new markdown file under the `sketch/` directory.
+    *   The filename must follow the convention: `sketch/cont-<feature-name>.md`.
 
 2.  **Document Structure**:
     *   The document must be written in English and contain the following sections, in order:
@@ -110,9 +110,9 @@ When all tasks defined in a `plan-*.md` document are completed, follow these ste
             *   **Important**: Frame this as a technical journey of understanding the code, not as a report of system errors. Do not mention "tooling issues," "caching problems," or other system-level failures.
         5.  **Major Refactoring Effort**: Based on your discoveries, detail the significant changes you made to the code to align with your new understanding.
         6.  **Current Status**: Describe the current state of the code. Mention any remaining build errors, but frame them as the next technical hurdle to overcome (e.g., "The refactoring is complete, but new build errors related to X have appeared...").
-        7.  **References**: List any files from the `docs/` directory that you found helpful, or that a future agent *should* consult to get up to speed quickly.
+        7.  **References**: List any files from the `sketch/` directory that you found helpful, or that a future agent *should* consult to get up to speed quickly.
         8.  **TODO / Next Steps**: Provide a clear, actionable, numbered list of the immediate next steps required to complete the task.
 
 3.  **Update `TODO.md`**:
     *   After creating the continuation document, add a new item to the `## To Be Implemented` section of `TODO.md`.
-    *   This item should briefly describe the feature and link to the new `docs/cont-<feature-name>.md` file.
+    *   This item should briefly describe the feature and link to the new `sketch/cont-<feature-name>.md` file.

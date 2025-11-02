@@ -1,4 +1,4 @@
-# docs
+# sketch
 
 Each of these documents is not for users, but for developers (currently just me).
 This is a text repository for tiny specification-driven development using jules.

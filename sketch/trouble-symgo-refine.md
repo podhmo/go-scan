@@ -1,6 +1,6 @@
 # symgo: Regressions from Lazy Evaluation Implementation
 
-This document outlines the various test failures that appear to be regressions caused by the introduction of a lazy evaluation mechanism for variables in the `symgo` engine. The failures are widespread across the `symgo`, `symgo/evaluator`, and `examples/find-orphans` packages.
+This document outlines the various test failures that appear to be regressions caused by the introduction of a lazy evaluation mechanism for variables in the `symgo` engine. The failures are widespread across the `symgo`, `symgo/evaluator`, and `tools/find-orphans` packages.
 
 The previous work is in `sketch/trouble-symgo-nested-scope.md`. The goal was to fix "identifier not found" for unexported symbols by evaluating package-level variables lazily. However, this change has caused numerous regressions.
 
@@ -29,7 +29,7 @@ The most common failure mode is that variables are not being evaluated when they
 A critical error, `not a function: POINTER`, occurs when attempting to call a method on a pointer receiver.
 
 **Affected Tests:**
-- `examples/find-orphans.TestFindOrphans_interface`
+- `tools/find-orphans.TestFindOrphans_interface`
 - `symgo/evaluator.TestEval_InterfaceMethodCall_OnConcreteType`
 - `symgo/evaluator.TestEval_InterfaceMethodCall_AcrossControlFlow`
 - `symgo/integration_test.TestStateTracking_GlobalVarWithMethodCall`
@@ -50,9 +50,9 @@ The recursion detection mechanism is behaving inconsistently.
 Multiple tests for `find-orphans` are failing because functions and methods that are clearly in use are being reported as orphans.
 
 **Affected Tests:**
-- `examples/find-orphans.TestFindOrphans_ShallowScan_UnresolvedInterfaceMethodCall`
-- `examples/find-orphans.TestFindOrphans`
-- `examples/find-orphans.TestFindOrphans_json`
+- `tools/find-orphans.TestFindOrphans_ShallowScan_UnresolvedInterfaceMethodCall`
+- `tools/find-orphans.TestFindOrphans`
+- `tools/find-orphans.TestFindOrphans_json`
 
 **Hypothesis:** This is a direct symptom of categories #1 and #2. If method calls are not being traced correctly by the `symgo` engine, the `find-orphans` tool will naturally fail to build an accurate call graph, leading to false positives.
 

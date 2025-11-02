@@ -115,7 +115,7 @@ The implementation is now correct and aligns with the design goals. The remainin
 
 *   [sketch/plan-symbolic-execution-like.md](./plan-symbolic-execution-like.md)
 *   [docs/analysis-symgo-implementation.md](./analysis-symgo-implementation.md)
-*   [examples/find-orphans/spec.md](./../examples/find-orphans/spec.md)
+*   [tools/find-orphans/spec.md](./../tools/find-orphans/spec.md)
 
 ## 8. Appendix: Debugging Log and Hypothesis (2025-09-12)
 

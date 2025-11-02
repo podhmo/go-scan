@@ -4,7 +4,7 @@ This document details the troubleshooting process for fixing the `symgo` analysi
 
 ## Current Status (Regression)
 
-As of the latest run of `make -C examples/find-orphans e2e`, the test is failing again, indicating a regression from the previously "fixed" state. The output log is populated with numerous `ERROR` and `WARN` level messages.
+As of the latest run of `make -C tools/find-orphans e2e`, the test is failing again, indicating a regression from the previously "fixed" state. The output log is populated with numerous `ERROR` and `WARN` level messages.
 
 ### Analysis of Current Failures
 
@@ -46,6 +46,6 @@ The final, successful solution involved two key changes:
 
 1.  **Correct Scoping for Placeholders**: Instead of removing the placeholder logic in `applyFunction`, it was corrected. The line `extendedEnv.Set(name, &object.Package{... Env: object.NewEnvironment()})` was changed to `extendedEnv.Set(name, &object.Package{... Env: object.NewEnclosedEnvironment(e.UniverseEnv)})`. This ensured that the placeholder package objects created for imports had a correctly-scoped environment from the beginning, fixing the `identifier not found` issue without altering the evaluator's fundamental logic.
 
-2.  **Robust Test Configuration**: With the scoping fixed, the `infinite recursion` issue in the `find-orphans` e2e test persisted. This was solved by making the tool itself more robust. A `ScanPolicyFunc` was added to `examples/find-orphans/main.go` to prevent the `symgo` interpreter from analyzing packages outside the current workspace (like the standard library). This is the correct architectural approach for a tool that should only be concerned with user code. This change also fixed a regression in the `docgen` tests. A similar fix was applied to a failing unit test (`TestSymgo_IntraPackageConstantResolution`), which needed `goscan.WithGoModuleResolver()` added to its scanner configuration to correctly locate standard library packages during testing.
+2.  **Robust Test Configuration**: With the scoping fixed, the `infinite recursion` issue in the `find-orphans` e2e test persisted. This was solved by making the tool itself more robust. A `ScanPolicyFunc` was added to `tools/find-orphans/main.go` to prevent the `symgo` interpreter from analyzing packages outside the current workspace (like the standard library). This is the correct architectural approach for a tool that should only be concerned with user code. This change also fixed a regression in the `docgen` tests. A similar fix was applied to a failing unit test (`TestSymgo_IntraPackageConstantResolution`), which needed `goscan.WithGoModuleResolver()` added to its scanner configuration to correctly locate standard library packages during testing.
 
 After applying this combination of fixes, all unit tests and the `find-orphans` e2e test were reported to pass successfully. The current failures indicate a regression.

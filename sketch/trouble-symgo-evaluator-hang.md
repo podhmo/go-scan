@@ -2,7 +2,7 @@
 
 ## Problem
 
-When running static analysis on certain packages, the `symgo` tool would hang indefinitely. This was reproducible by running `make -C examples/find-orphans`.
+When running static analysis on certain packages, the `symgo` tool would hang indefinitely. This was reproducible by running `make -C tools/find-orphans`.
 
 ## Analysis
 

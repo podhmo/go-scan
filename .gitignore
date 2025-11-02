@@ -32,4 +32,4 @@ go.work.sum
 # .vscode/
 
 # Output file for find-orphans e2e test
-/examples/find-orphans/find-orphans.out
+/tools/find-orphans/find-orphans.out

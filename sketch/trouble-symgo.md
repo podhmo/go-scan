@@ -2,7 +2,7 @@
 
 ## 1. The Initial Problem
 
-When running `make -C examples/find-orphans`, an error `level=ERROR msg="not a function: NIL"` was logged to `find-orphans.out`. This error occurred during the analysis of `examples/minigo/main_test.go`.
+When running `make -C tools/find-orphans`, an error `level=ERROR msg="not a function: NIL"` was logged to `find-orphans.out`. This error occurred during the analysis of `examples/minigo/main_test.go`.
 
 ## 2. Investigation and Incorrect Hypotheses
 
@@ -60,6 +60,6 @@ This ensures that a `nil` function call encountered during the exploration of an
 
 After implementing the fix, the original end-to-end test was run again:
 ```bash
-make -C examples/find-orphans
+make -C tools/find-orphans
 ```
-The command completed successfully. A subsequent check confirmed that the output file `examples/find-orphans/find-orphans.out` no longer contained any `level=ERROR` logs, verifying that the fix resolved the initial problem.
+The command completed successfully. A subsequent check confirmed that the output file `tools/find-orphans/find-orphans.out` no longer contained any `level=ERROR` logs, verifying that the fix resolved the initial problem.

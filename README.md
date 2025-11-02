@@ -171,3 +171,4 @@ The `scantest` package provides helpers for writing tests against `go-scan`. For
 ## Tools
 
 - tools/goinspect : inspired by https://github.com/podhmo/goinspect
+- tools/find-ophrnas

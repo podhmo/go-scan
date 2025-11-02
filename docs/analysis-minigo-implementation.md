@@ -77,7 +77,26 @@ The `docgen` workflow is as follows:
 
 This workflow is the core value proposition of `minigo`. It allows an application to expose a configuration surface that is far more powerful than static formats like JSON or YAML, enabling logic, reuse, and type safety, all without requiring users to compile their configurations. This dynamic, script-based approach is a perfect complement to Go's static, compiled nature.
 
-## 5. Conclusion
+### 4.1. Limitations
+
+The primary trade-off of this script-based approach is that `minigo` can only interpret Go source code. It cannot execute pre-compiled Go code from a binary package. While it can interact with native Go types and functions provided by the host application at runtime, the configuration scripts themselves must always be provided as source. This is a natural consequence of its design as an interpreter, not a virtual machine or a linker.
+
+## 5. Advanced Use-Case: AST Manipulation with Special Forms
+
+Beyond configuration, `minigo`'s architecture enables a more advanced, meta-programming use-case: direct AST manipulation. This is achieved through a feature called **"special forms."**
+
+A normal function in `minigo` receives arguments that have already been evaluated to concrete values. A special form, in contrast, is a function that receives the raw, unevaluated `ast.Expr` nodes of its arguments. This allows the script to analyze, transform, or extract information from the code's structure itself, rather than just its values.
+
+The `examples/convert-define` tool is a key example of this. Its goal is to take a custom function call and convert it into a Go `const` block.
+
+1.  **Special Form Registration**: The host application registers a function (e.g., `define.Define`) as a special form.
+2.  **Script with Stub Package**: The user writes a script that calls `define.Define("MyEnum", C.Iota, C.Int, "Foo", "Bar")`. To ensure Go tools like `gopls` do not report errors, a "stub" package (`convert-define/define`) is provided. This package contains a Go definition for `define.Define` with a generic `any` signature, satisfying the static analysis tools. However, this stub is never actually executed.
+3.  **AST Interception**: When `minigo` evaluates the script, it sees that `define.Define` is a special form. Instead of calling a function, it invokes the special form's handler, passing it the list of unevaluated `ast.Expr` nodes (e.g., the AST for `"MyEnum"`, `C.Iota`, etc.).
+4.  **Code Transformation**: The special form's Go implementation can then inspect these AST nodes to extract the necessary information (the enum name, type, and values) and use it to generate a new Go `const` block.
+
+This powerful feature elevates `minigo` from a simple configuration engine to a lightweight code generation and meta-programming tool, allowing developers to create custom DSLs within Go syntax that can be dynamically interpreted to produce code or other artifacts.
+
+## 6. Conclusion
 
 The analysis confirms that `minigo` is a well-designed, classic interpreter whose purpose and behavior are distinct from, and complementary to, a standard Go compiler.
 
@@ -87,4 +106,6 @@ The analysis confirms that `minigo` is a well-designed, classic interpreter whos
 
 -   **Dynamic dependency handling is its key enabler.** `minigo`'s on-demand source loading and its ability to create virtual packages at runtime are core features that differentiate it from a static linker, making it highly suitable for a flexible, embedded scripting environment.
 
-In summary, `minigo` is a fit-for-purpose interpreter that successfully leverages Go's syntax and AST tooling to create a powerful bridge between the static, compiled world of a host application and the dynamic, scriptable world of configuration.
+-   **Special forms unlock meta-programming.** Beyond configuration, the ability to intercept raw AST nodes allows `minigo` to function as a lightweight code generation and DSL engine, a powerful capability for specialized tooling.
+
+In summary, `minigo` is a fit-for-purpose interpreter that successfully leverages Go's syntax and AST tooling to create a powerful bridge between the static, compiled world of a host application and the dynamic, scriptable world of configuration and meta-programming.

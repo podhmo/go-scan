@@ -57,7 +57,7 @@ func IgnoredFunc() {}
 	startPatterns := []string{"example.com/find-orphans-test/..."}
 	// Set verbose to false, and asJSON to false
 	log.SetOutput(w)
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -157,7 +157,7 @@ func EntryPoint() {
 		return pkgPath == "example.com/scope-test/pkgc"
 	}
 
-	err := run(context.Background(), debugOff, false, false, dir, false, false, "lib", reportPatterns, nil, scanPolicy, primaryScope)
+	err := run(context.Background(), debugOff, false, false, dir, false, false, "lib", reportPatterns, nil, scanPolicy, primaryScope, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -230,7 +230,7 @@ func UnusedExportedFunc() {}
 
 	startPatterns := []string{"./..."}
 	// Run in "auto" mode. Since there is no main.main, it will fall back to library mode.
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -292,7 +292,7 @@ func UnusedFunc() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"./..."}
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -379,7 +379,7 @@ func unusedInB() {}
 	defer os.Chdir(oldWd)
 
 	// Run in auto mode. It should detect both main packages.
-	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestSomething(t *testing.T) {
 	startPatterns := []string{"example.com/subtest-usage/lib"}
 	// We need --include-tests=true for this to work at all.
 	// We use "lib" mode to ensure that TestSomething is treated as an entry point.
-	err := run(context.Background(), debugOff, true, true, dir, false, false, "lib", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, true, dir, false, false, "lib", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -566,7 +566,7 @@ func (c *Client) TriggerCallback(callback func()) {
 
 	// Note: We no longer need a 'replace' directive in go.mod because the
 	// go.work file handles module resolution within the workspace.
-	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -641,7 +641,7 @@ func trulyUnusedFunc() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"example.com/intra-pkg-methods/lib"}
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "lib", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "lib", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -711,7 +711,7 @@ func UnusedFuncInExcludedModule() {}
 	defer os.Chdir(oldWd)
 
 	// We explicitly exclude the "testdata" directory where moduleb resides.
-	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -781,7 +781,7 @@ func UnusedFunc() {}
 	defer os.Chdir(oldWd)
 
 	// workspaceRoot is ".", startPatterns is the specific import path.
-	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -847,7 +847,7 @@ func MyUnusedFunc() {}
 	defer os.Chdir(oldWd)
 
 	// The key is that this should not error out.
-	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed with an unexpected error: %v", err)
 	}
@@ -909,7 +909,7 @@ func UnusedFunc() {
 	defer os.Chdir(oldWd)
 
 	// Use a relative path for the workspace root
-	err = run(context.Background(), debugOff, true, false, "..", false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, "..", false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -968,7 +968,7 @@ func Unused() {}
 
 	// We only target the main package, NOT the dependency.
 	startPatterns := []string{"example.com/filter-test"}
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1021,7 +1021,7 @@ func UnusedInTestdata() {}
 
 	startPatterns := []string{"./..."}
 	// We explicitly EXCLUDE "testdata"
-	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, ".", false, false, "auto", startPatterns, []string{"testdata"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1089,7 +1089,7 @@ func UnusedFunc() {
 	defer os.Chdir(oldWd)
 
 	// Set verbose to false, and asJSON to false
-	err = run(context.Background(), debugOff, true, false, workspaceRoot, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, workspaceRoot, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1152,7 +1152,7 @@ func unusedInTest() {}
 		os.Stdout = w
 		log.SetOutput(io.Discard)
 
-		err := run(context.Background(), debugOff, true, true, dir, true, false, "auto", []string{"./..."}, nil, nil, nil)
+		err := run(context.Background(), debugOff, true, true, dir, true, false, "auto", []string{"./..."}, nil, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("run() failed: %v", err)
 		}
@@ -1183,7 +1183,7 @@ func unusedInTest() {}
 		os.Stdout = w
 		log.SetOutput(io.Discard)
 
-		err := run(context.Background(), debugOff, true, false, dir, true, false, "auto", []string{"./..."}, nil, nil, nil)
+		err := run(context.Background(), debugOff, true, false, dir, true, false, "auto", []string{"./..."}, nil, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("run() failed: %v", err)
 		}
@@ -1249,7 +1249,7 @@ func UnusedFunc() {
 	}
 	defer os.Chdir(oldWd)
 
-	err = run(context.Background(), debugOff, true, false, workspaceRoot, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err = run(context.Background(), debugOff, true, false, workspaceRoot, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1302,7 +1302,7 @@ func unusedInternalFunc() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"example.com/find-orphans-test/lib"}
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1375,7 +1375,7 @@ func UnusedFunc() {}
 
 	startPatterns := []string{"example.com/find-orphans-test/..."}
 	// Run with asJSON=true
-	err := run(context.Background(), debugOff, true, false, dir, false, true, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, true, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1452,7 +1452,7 @@ func (c *Cat) UnusedMethod() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"example.com/find-orphans-test/..."}
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1518,7 +1518,7 @@ func ExportedAndUnused() {}
 	defer os.Chdir(oldWd)
 
 	// Force library mode
-	err = run(context.Background(), debugOff, true, false, "", false, false, "lib", startPatterns, nil, nil, nil)
+	err = run(context.Background(), debugOff, true, false, "", false, false, "lib", startPatterns, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1561,7 +1561,7 @@ func SomeFunc() {}
 	defer os.Chdir(oldWd)
 
 	// Force application mode, expecting an error
-	err = run(context.Background(), debugOff, true, false, "", false, false, "app", startPatterns, nil, nil, nil)
+	err = run(context.Background(), debugOff, true, false, "", false, false, "app", startPatterns, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatalf("run() should have failed in app mode with no main function, but it did not")
 	}
@@ -1613,7 +1613,7 @@ func unusedInternal() {}
 	// Force library mode.
 	// The test is to ensure that even in lib mode, main() and init() are
 	// used as entry points for analysis.
-	err = run(context.Background(), debugOff, true, false, "", false, false, "lib", startPatterns, nil, nil, nil)
+	err = run(context.Background(), debugOff, true, false, "", false, false, "lib", startPatterns, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1675,7 +1675,7 @@ func UnusedInB() {}
 	startPatterns := []string{"./..."}
 	primaryScope := []string{"example.com/test/pkga"} // Only analyze pkga
 
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "lib", startPatterns, nil, nil, primaryScope)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "lib", startPatterns, nil, nil, primaryScope, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}
@@ -1716,6 +1716,141 @@ func UnusedInB() {}
 	}
 }
 
+func TestFindOrphans_AppMode_WithEntrypointPkg(t *testing.T) {
+	files := map[string]string{
+		"workspace/go.work": `
+go 1.21
+use (
+	./cmda
+	./cmdb
+)
+`,
+		"workspace/cmda/go.mod": "module example.com/cmda\ngo 1.21\nreplace example.com/cmdb => ../cmdb\n",
+		"workspace/cmda/main.go": `
+package main
+func main() {
+    usedByCmdA()
+}
+func usedByCmdA() {}
+func unusedInA() {}
+`,
+		"workspace/cmdb/go.mod": "module example.com/cmdb\ngo 1.21\nreplace example.com/cmda => ../cmda\n",
+		"workspace/cmdb/main.go": `
+package main
+func main() {
+    usedByCmdB()
+}
+func usedByCmdB() {}
+func unusedInB() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	log.SetOutput(io.Discard)
+
+	workspaceRoot := filepath.Join(dir, "workspace")
+	startPatterns := []string{"./..."}
+	entrypointPkgs := []string{"example.com/cmda"}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Run in app mode, specifying only cmda as the entry point.
+	err = run(context.Background(), debugOff, true, false, ".", false, false, "app", startPatterns, nil, nil, nil, entrypointPkgs)
+	if err != nil {
+		t.Fatalf("run() failed: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// ASSERT: The function used by the specified entry point is NOT an orphan.
+	if strings.Contains(output, "usedByCmdA") {
+		t.Errorf("usedByCmdA was reported as an orphan, but it is used by the specified entry point cmda")
+	}
+
+	// ASSERT: The unused function from the non-entry-point package IS an orphan.
+	if !strings.Contains(output, "unusedInB") {
+		t.Errorf("unusedInB was not reported as an orphan")
+	}
+	// ASSERT: The used function from the non-entry-point package IS an orphan.
+	if !strings.Contains(output, "usedByCmdB") {
+		t.Errorf("usedByCmdB was not reported as an orphan")
+	}
+
+	// ASSERT: Check the exact list of orphans.
+	// We expect unusedInA, and everything from cmdb (since it wasn't an entry point).
+	// We do not expect to see "main" itself listed as an orphan, as it's filtered out by name.
+	expectedOrphans := []string{
+		"example.com/cmda.unusedInA",
+		"example.com/cmdb.usedByCmdB",
+		"example.com/cmdb.unusedInB",
+	}
+	sort.Strings(expectedOrphans)
+
+	var foundOrphans []string
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "example.com") {
+			foundOrphans = append(foundOrphans, line)
+		}
+	}
+	sort.Strings(foundOrphans)
+
+	if diff := cmp.Diff(expectedOrphans, foundOrphans); diff != "" {
+		t.Errorf("find-orphans mismatch (-want +got):\n%s\nFull output:\n%s", diff, output)
+	}
+}
+
+func TestFindOrphans_AppMode_WithInvalidEntrypointPkg(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/invalid-entrypoint\ngo 1.21\n",
+		"main.go": `
+package main
+func main() {}
+`,
+	}
+	dir, cleanup := scantest.WriteFiles(t, files)
+	defer cleanup()
+	log.SetOutput(io.Discard)
+
+	startPatterns := []string{"./..."}
+	// Specify an entry point that doesn't exist
+	entrypointPkgs := []string{"example.com/nonexistent"}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to change wd: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	// Force application mode, expecting an error
+	err = run(context.Background(), debugOff, true, false, "", false, false, "app", startPatterns, nil, nil, nil, entrypointPkgs)
+	if err == nil {
+		t.Fatalf("run() should have failed with an invalid entrypoint package, but it did not")
+	}
+	if !strings.Contains(err.Error(), "no main entry point was found in the specified packages") {
+		t.Errorf("expected error about no main entry point in specified packages, but got: %v", err)
+	}
+}
+
 func TestFindOrphans_excludeMainAndInit(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example.com/exclude-main-init\ngo 1.21\n",
@@ -1739,7 +1874,7 @@ func unused_in_main() {}
 	log.SetOutput(io.Discard)
 
 	startPatterns := []string{"./..."}
-	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil)
+	err := run(context.Background(), debugOff, true, false, dir, false, false, "auto", startPatterns, []string{"testdata", "vendor"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("run() failed: %v", err)
 	}

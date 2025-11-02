@@ -27,9 +27,10 @@ The definition of an orphan depends on three key components:
         -   **Entry Point**: In all modes (`app`, `lib`, `auto`), the first step of the analysis is to evaluate the **initializer expressions of all global variables (`var`)**.
         -   **Orphan Judgment**: Any function called within these initializer expressions is immediately marked as "used." This occurs before the execution of `main`, `init`, or any other function, making it the most fundamental entry point for the analysis.
     -   **Application Mode (`app`)**:
-        -   **Entry Point**: The `main.main` function only.
-        -   **Orphan Judgment**: Any function or method unreachable from `main.main` is an orphan. `main.main` itself is considered "used" by definition and will not be reported as an orphan.
-        -   **Use Case**: Suitable for detecting dead code in an executable binary.
+        -   **Entry Point**: By default, all `main.main` functions found in the analysis scope. This behavior can be modified using the `--entrypoint-pkg` flag.
+        -   **`--entrypoint-pkg` Flag**: This flag allows you to specify a comma-separated list of package import paths. When provided, only the `main.main` functions from these specific packages will be used as entry points for the analysis. This is useful for targeting a single binary in a repository that contains multiple `main` packages.
+        -   **Orphan Judgment**: Any function or method unreachable from the selected `main.main` entry point(s) is an orphan. The entry point(s) themselves are considered "used" by definition and will not be reported as orphans.
+        -   **Use Case**: Suitable for detecting dead code in an executable binary, especially in multi-binary repositories.
     -   **Library Mode (`lib`)**:
         -   **Entry Points**: **All exported (public) functions and methods, all `init` functions, and the `main.main` function** within the analysis scope.
         -   **Orphan Judgment**: The purpose of library mode is to find unused parts of a public API. Therefore, an exported function that serves as an entry point will **still be reported as an orphan if it is not called by any other code**. In other words, while exported functions are starting points for traversing the call graph, they are not automatically considered "used" just by virtue of being entry points.

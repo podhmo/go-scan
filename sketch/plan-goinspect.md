@@ -1,4 +1,4 @@
-# Plan: `examples/goinspect` - A Call Graph Explorer using `symgo`
+# Plan: `tools/goinspect` - A Call Graph Explorer using `symgo`
 
 This document outlines the plan for creating a new example tool, `goinspect`. This tool will analyze Go source code and display the call graph for specified functions, demonstrating the capabilities of the `symgo` symbolic execution engine. Its primary purpose is to provide a high-level overview of call relationships for documentation and code understanding, similar to `godoc` but with a focus on call graphs.
 

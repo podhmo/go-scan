@@ -67,7 +67,7 @@ func TestGoInspect(t *testing.T) {
 		{
 			name:        "target_func_a",
 			pkgPatterns: []string{"./testdata/src/target"},
-			targets:     []string{"github.com/podhmo/go-scan/examples/goinspect/testdata/src/target.FuncA"},
+			targets:     []string{"github.com/podhmo/go-scan/tools/goinspect/testdata/src/target.FuncA"},
 		},
 		{
 			name:        "trim_prefix",

@@ -1,4 +1,4 @@
-module github.com/podhmo/go-scan/examples/goinspect
+module github.com/podhmo/go-scan/tools/goinspect
 
 go 1.24.2
 

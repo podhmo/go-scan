@@ -1,6 +1,6 @@
 package main
 
-import "github.com/podhmo/go-scan/examples/goinspect/testdata/src/special/util"
+import "github.com/podhmo/go-scan/tools/goinspect/testdata/src/special/util"
 
 func main() {
 	privateFunc()

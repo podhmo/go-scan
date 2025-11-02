@@ -26,10 +26,10 @@ This indicated that `goinspect` was incorrectly treating the import path as a re
 
 A two-part fix was implemented:
 
-1.  **Fix `goinspect`:** The call to `goscan.New` in `examples/goinspect/main.go` was updated to include the `goscan.WithGoModuleResolver()` option.
+1.  **Fix `goinspect`:** The call to `goscan.New` in `tools/goinspect/main.go` was updated to include the `goscan.WithGoModuleResolver()` option.
 
     ```go
-    // examples/goinspect/main.go
+    // tools/goinspect/main.go
     s, err := goscan.New(
         goscan.WithLogger(logger),
         goscan.WithGoModuleResolver(), // This was added

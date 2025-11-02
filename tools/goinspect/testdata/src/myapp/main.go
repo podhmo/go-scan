@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/podhmo/go-scan/examples/goinspect/testdata/src/another"
+	"github.com/podhmo/go-scan/tools/goinspect/testdata/src/another"
 )
 
 // Greeter is an interface for greeting.

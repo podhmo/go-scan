@@ -1,0 +1,5 @@
+func github.com/podhmo/go-scan/tools/goinspect/testdata/src/features.Main() #1
+  [accessor] func (*Data).SetName(string) #2
+  func (*Data).ComplexLogic() #3
+    [accessor] func (*Data).GetID() #4
+  func github.com/podhmo/go-scan/tools/goinspect/testdata/src/features.Execute(unhandled_type_*ast.FuncType) #5

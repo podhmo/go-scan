@@ -167,3 +167,7 @@ The `scantest` package provides helpers for writing tests against `go-scan`. For
 - **`examples/minigo`**: A mini Go interpreter that uses `go-scan` for parsing.
 - **`examples/convert`**: A prototype for generating type conversion functions between structs.
 - **`examples/deps-walk`**: A command-line tool to visualize package dependencies.
+
+## Tools
+
+- tools/goinspect : inspired by https://github.com/podhmo/goinspect

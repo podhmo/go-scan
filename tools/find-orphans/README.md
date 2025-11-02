@@ -24,7 +24,7 @@ The tool finds unused code by performing a call-graph analysis using symbolic ex
 ## Usage
 
 ```sh
-go run ./examples/find-orphans [flags] [patterns...]
+go run ./tools/find-orphans [flags] [patterns...]
 ```
 
 The `patterns` are a list of Go package patterns (e.g., `example.com/me/mypkg/...`) or file path patterns (e.g., `./...`) that define the **Target Scope**. If no patterns are provided, it defaults to `./...`.
@@ -51,7 +51,7 @@ It is crucial to understand the difference between the packages being scanned an
 
 ```sh
 # Run from the workspace root containing module-a and module-b
-go run ./examples/find-orphans --workspace-root . example.com/module-b/...
+go run ./tools/find-orphans --workspace-root . example.com/module-b/...
 ```
 In this command:
 -   `--workspace-root .` sets the **Scan Scope** to the entire workspace.
@@ -67,7 +67,7 @@ When using `--workspace-root`, all file path patterns (like `./...` or `cmd/tool
 ```sh
 # CWD: /path/to/my-repo/cmd/tool
 # To analyze the whole repo, targeting everything in it:
-go run ./examples/find-orphans --workspace-root ../.. ./...
+go run ./tools/find-orphans --workspace-root ../.. ./...
 ```
 Here, `./...` is interpreted relative to `../../` (the workspace root).
 
@@ -82,7 +82,7 @@ This flag explicitly defines the **Scan Scope**, telling the tool to only load a
 **Example**: You are working in a large repository, but you are confident that the usage for functions in `pkg/feature` is contained entirely within `pkg/feature` and `cmd/tool`. You only want to report orphans from `pkg/feature`.
 
 ```sh
-go run ./examples/find-orphans \
+go run ./tools/find-orphans \
     --primary-analysis-scope "example.com/my-repo/pkg/feature,example.com/my-repo/cmd/tool" \
     example.com/my-repo/pkg/feature
 ```

@@ -42,7 +42,7 @@ lure.
 
 1.  Build the `find-orphans` tool.
     ```bash
-    go build -o /tmp/find-orphans ./examples/find-orphans
+    go build -o /tmp/find-orphans ./tools/find-orphans
     ```
 
 2.  Run `find-orphans` on the `examples/convert` directory.

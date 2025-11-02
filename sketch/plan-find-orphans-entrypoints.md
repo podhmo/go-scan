@@ -21,7 +21,7 @@ The `find-orphans` tool should be updated to allow a user to specify one or more
 
 ## 3. Implementation Plan
 
-The implementation will be focused on the `examples/find-orphans/main.go` file.
+The implementation will be focused on the `tools/find-orphans/main.go` file.
 
 1.  **Add New Command-Line Flag**:
     - In the `main` function, define a new `stringSliceFlag` named `entrypointPkgs`.
@@ -50,7 +50,7 @@ The implementation will be focused on the `examples/find-orphans/main.go` file.
     - It will assert that only the orphans relative to the *specified* entry point are reported, and that functions used only by the *other* main package are correctly identified as orphans.
 
 6.  **Update Documentation**:
-    - Briefly update `examples/find-orphans/spec.md` to mention the new `--entrypoint-pkg` flag and its effect on `app` mode analysis.
+    - Briefly update `tools/find-orphans/spec.md` to mention the new `--entrypoint-pkg` flag and its effect on `app` mode analysis.
 
 ## 4. Risks and Considerations
 

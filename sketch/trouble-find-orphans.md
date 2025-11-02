@@ -14,7 +14,7 @@ The path to the root cause was not linear and involved several incorrect hypothe
 
 ### Hypothesis 1: Exported Methods Are Not Entry Points
 
-My initial analysis of `examples/find-orphans/main.go` revealed that the logic for identifying library entry points explicitly excluded methods (it contained a `fnInfo.Receiver == nil` check). This seemed to be the clear cause.
+My initial analysis of `tools/find-orphans/main.go` revealed that the logic for identifying library entry points explicitly excluded methods (it contained a `fnInfo.Receiver == nil` check). This seemed to be the clear cause.
 
 -   **Action**: I removed the `fnInfo.Receiver == nil` check and added a simple test case (`TestFindOrphans_intraPackageMethodCall`) with an exported method calling an unexported one.
 -   **Result**: The new test case passed, as did all existing tests.

@@ -117,10 +117,10 @@ While `symgo` is a powerful foundation, its current implementation has several g
 
 ## 6. Implementation Task List
 
-This section breaks down the work required to implement the `find-orphans` tool in `examples/find-orphans`.
+This section breaks down the work required to implement the `find-orphans` tool in `tools/find-orphans`.
 
 ### Phase 1: Project Scaffolding & Basic Scanning
-- [ ] Create directory `examples/find-orphans` and `main.go`.
+- [ ] Create directory `tools/find-orphans` and `main.go`.
 - [ ] Set up CLI flag parsing using the standard `flag` package for:
     - [ ] `-all` (bool)
     - [ ] `--include-tests` (bool)

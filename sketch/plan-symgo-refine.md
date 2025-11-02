@@ -58,22 +58,22 @@ To make `symgo` a more robust and reliable engine for tools like `find-orphans`,
 ## Reproduction Steps
 
 1.  **Create a Makefile:**
-    Create a file named `Makefile` in the `examples/find-orphans/` directory with the following content:
+    Create a file named `Makefile` in the `tools/find-orphans/` directory with the following content:
     ```makefile
     e2e:
 	@echo "Running end-to-end test for find-orphans..."
 	go run . --workspace-root ../.. ./... > find-orphans.out 2>&1
-	@echo "Output written to examples/find-orphans/find-orphans.out"
+	@echo "Output written to tools/find-orphans/find-orphans.out"
     ```
 
 2.  **Run the analysis:**
     Execute the make target from the repository root:
     ```sh
-    make -C examples/find-orphans e2e
+    make -C tools/find-orphans e2e
     ```
 
 3.  **Inspect the output:**
-    The results, including all logs and the final list of orphans, will be in the `examples/find-orphans/find-orphans.out` file.
+    The results, including all logs and the final list of orphans, will be in the `tools/find-orphans/find-orphans.out` file.
 
 ## Appendix: Raw Log Snippets
 
@@ -88,12 +88,12 @@ time=2025-09-03T02:30:22.458Z level=ERROR msg="invalid indirect of <Symbolic: re
 time=2025-09-03T02:30:22.458Z level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/convert-define.main error="symgo runtime error: invalid indirect of <Symbolic: result of external call to String> (type *object.SymbolicPlaceholder)\n\t/app/examples/convert-define/main.go:63:5:\n\t\tif *defineFile == \"\" {\n\t/app/examples/convert-define/main.go:48:1:\tin main\n\t\tfunc main() {\n"
 
 # Example of "could not scan package" and related warnings/errors
-time=2025-09-03T02:30:22.480Z level=WARN msg="could not scan package, treating as external" in_func=discoverModules in_func_pos=/app/examples/find-orphans/main.go:80:1 package=golang.org/x/mod/modfile error="ScanPackageFromImportPath: could not find a module responsible for import path \"golang.org/x/mod/modfile\" in workspace"
-time=2025-09-03T02:30:22.481Z level=WARN msg="expected multi-return value on RHS of assignment" in_func=discoverModules in_func_pos=/app/examples/find-orphans/main.go:80:1 got_type=SYMBOLIC_PLACEHOLDER
-time=2025-09-03T02:30:22.481Z level=ERROR msg="unsupported assignment target: expected an identifier or selector, but got *ast.IndexExpr" in_func=discoverModules in_func_pos=/app/examples/find-orphans/main.go:80:1 pos=802529
+time=2025-09-03T02:30:22.480Z level=WARN msg="could not scan package, treating as external" in_func=discoverModules in_func_pos=/app/tools/find-orphans/main.go:80:1 package=golang.org/x/mod/modfile error="ScanPackageFromImportPath: could not find a module responsible for import path \"golang.org/x/mod/modfile\" in workspace"
+time=2025-09-03T02:30:22.481Z level=WARN msg="expected multi-return value on RHS of assignment" in_func=discoverModules in_func_pos=/app/tools/find-orphans/main.go:80:1 got_type=SYMBOLIC_PLACEHOLDER
+time=2025-09-03T02:30:22.481Z level=ERROR msg="unsupported assignment target: expected an identifier or selector, but got *ast.IndexExpr" in_func=discoverModules in_func_pos=/app/tools/find-orphans/main.go:80:1 pos=802529
 
 # Example of "unsupported assignment target" leading to a failed entry point
-time=2025-09-03T02:30:22.753Z level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/deps-walk.main error="symgo runtime error: unsupported assignment target: expected an identifier or selector, but got *ast.IndexExpr\n\t/app/examples/find-orphans/main.go:113:3:\n\t\texcludeMap[dir] = true\n\t/app/examples/find-orphans/main.go:80:1:\tin discoverModules\n\t\tfunc discoverModules(ctx context.Context, root string, excludeDirs []string) ([]string, error) {\n\t/app/examples/find-orphans/main.go:139:1:\tin run\n\t\tfunc run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {\n\t/app/examples/deps-walk/main.go:49:1:\tin main\n\t\tfunc main() {\n"
+time=2025-09-03T02:30:22.753Z level=ERROR msg="symbolic execution failed for entry point" function=github.com/podhmo/go-scan/examples/deps-walk.main error="symgo runtime error: unsupported assignment target: expected an identifier or selector, but got *ast.IndexExpr\n\t/app/tools/find-orphans/main.go:113:3:\n\t\texcludeMap[dir] = true\n\t/app/tools/find-orphans/main.go:80:1:\tin discoverModules\n\t\tfunc discoverModules(ctx context.Context, root string, excludeDirs []string) ([]string, error) {\n\t/app/tools/find-orphans/main.go:139:1:\tin run\n\t\tfunc run(ctx context.Context, all bool, includeTests bool, workspace string, verbose bool, asJSON bool, mode string, startPatterns []string, excludeDirs []string, scanPolicy symgo.ScanPolicyFunc, primaryAnalysisScope []string) error {\n\t/app/examples/deps-walk/main.go:49:1:\tin main\n\t\tfunc main() {\n"
 
 time=2025-09-03T02:30:22.913Z level=INFO msg="symbolic execution complete"
 

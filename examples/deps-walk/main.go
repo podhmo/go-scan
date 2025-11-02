@@ -16,7 +16,6 @@ import (
 	goscan "github.com/podhmo/go-scan"
 )
 
-
 func main() {
 	var (
 		hops        int

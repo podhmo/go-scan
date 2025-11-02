@@ -14,7 +14,6 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-
 func main() {
 	var (
 		defineFile = flag.String("file", "", "path to the go file with conversion definitions")

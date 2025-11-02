@@ -19,7 +19,6 @@ import (
 
 type GeneratorFunc func(context.Context, *goscan.Scanner, *scanner.PackageInfo, *goscan.ImportManager) ([]byte, error)
 
-
 func formatCode(ctx context.Context, filename string, src []byte) ([]byte, error) {
 	formatted, err := imports.Process(filename, src, nil)
 	if err != nil {

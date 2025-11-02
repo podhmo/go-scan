@@ -16,7 +16,6 @@ import (
 	"github.com/podhmo/go-scan/scanner"
 )
 
-
 func main() {
 	var (
 		cwd      string

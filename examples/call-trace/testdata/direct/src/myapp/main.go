@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/podhmo/go-scan/examples/call-trace/testdata/direct/src/mylib"
 )
 

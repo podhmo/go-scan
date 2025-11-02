@@ -13,7 +13,6 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-
 type FileWriter interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm os.FileMode) error
 }

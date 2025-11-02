@@ -12,8 +12,8 @@ import (
 
 func TestSelectorTypeError(t *testing.T) {
 	tests := []struct {
-		name               string
-		input              string
+		name                   string
+		input                  string
 		expectedReasonContains string
 	}{
 		{

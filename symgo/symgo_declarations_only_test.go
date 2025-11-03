@@ -1,4 +1,4 @@
-package integration_test
+package symgo_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/symgo"
+	"github.com/podhmo/go-scan/symgo/object"
 )
 
 func TestDeclarationsOnly(t *testing.T) {
@@ -42,8 +43,6 @@ func ShouldNotBeCalled() {}
 
 	var shouldNotBeCalledReached bool
 
-	// Since this is a true integration test, we set up the scanner
-	// and symgo interpreter as a user of the library would.
 	scanOpts := []goscan.ScannerOption{
 		goscan.WithWorkDir(dir),
 		goscan.WithDeclarationsOnlyPackages([]string{"example.com/me/foreign/lib"}),
@@ -58,27 +57,35 @@ func ShouldNotBeCalled() {}
 		t.Fatalf("s.Scan() failed: %v", err)
 	}
 
-	// Action part of the test
 	interp, err := symgo.NewInterpreter(s)
 	if err != nil {
 		t.Fatalf("could not create symgo interpreter: %v", err)
 	}
 
-	interp.RegisterIntrinsic("example.com/me/foreign/lib.ShouldNotBeCalled", func(i *symgo.Interpreter, args []symgo.Object) symgo.Object {
+	interp.RegisterIntrinsic("example.com/me/foreign/lib.ShouldNotBeCalled", func(ctx context.Context, i *symgo.Interpreter, args []object.Object) object.Object {
 		shouldNotBeCalledReached = true
 		return nil
 	})
 
-	mainPkg := findPackage(t, pkgs, "example.com/me")
-	for _, file := range mainPkg.AstFiles {
-		if _, err := interp.Eval(context.Background(), file, mainPkg); err != nil {
-			t.Fatalf("Eval() returned an error: %v", err)
+	mainPkgInfo := findPackage(t, pkgs, "example.com/me")
+
+	// Evaluate the entire main package file to populate the package's environment.
+	for _, file := range mainPkgInfo.AstFiles {
+		if _, err := interp.Eval(context.Background(), file, mainPkgInfo); err != nil {
+			t.Fatalf("Eval(file) returned an error: %v", err)
 		}
 	}
 
-	varX, ok := interp.FindObject("x")
+	// After evaluation, the package environment should be populated.
+	mainPkgEnv, ok := interp.PackageEnvForTest("example.com/me")
 	if !ok {
-		t.Fatal("variable 'x' not found in symgo environment")
+		t.Fatal("environment for package 'example.com/me' not found")
+	}
+
+	// Check if the variable's type is resolved from the package environment.
+	varX, ok := mainPkgEnv.Get("x")
+	if !ok {
+		t.Fatal("variable 'x' not found in package environment")
 	}
 	xVar, ok := varX.(*symgo.Variable)
 	if !ok {
@@ -95,16 +102,17 @@ func ShouldNotBeCalled() {}
 		t.Fatalf("type name mismatch, want %q, got %q", wantName, gotName)
 	}
 
-	mainFuncObj, ok := interp.FindObject("main")
+	// Apply the main function to check the declarations-only behavior.
+	mainFuncObj, ok := mainPkgEnv.Get("main")
 	if !ok {
-		t.Fatal("main function not found")
+		t.Fatal("main function not found in package environment")
 	}
 	mainFunc, ok := mainFuncObj.(*symgo.Function)
 	if !ok {
-		t.Fatalf("main is not a function object")
+		t.Fatalf("main is not a function object, but %T", mainFuncObj)
 	}
 
-	if _, err := interp.Apply(context.Background(), mainFunc, nil, mainPkg); err != nil {
+	if _, err := interp.Apply(context.Background(), mainFunc, nil, mainPkgInfo); err != nil {
 		t.Fatalf("Apply(main) returned an error: %v", err)
 	}
 

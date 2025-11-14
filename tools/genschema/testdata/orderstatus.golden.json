@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OrderStatus Schema",
+  "description": "Schema for OrderStatus",
+  "type": "string",
+  "enum": [
+    "pending",
+    "shipped",
+    "delivered",
+    "cancelled"
+  ]
+}

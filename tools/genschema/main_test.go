@@ -44,6 +44,22 @@ func TestGenschema(t *testing.T) {
 			description: "Schema for a Product",
 			loose:       false,
 		},
+		{
+			name:        "OrderStatus",
+			query:       "github.com/podhmo/go-scan/tools/genschema/testdata.OrderStatus",
+			goldenFile:  "testdata/orderstatus.golden.json",
+			title:       "OrderStatus Schema",
+			description: "Schema for OrderStatus",
+			loose:       false,
+		},
+		{
+			name:        "MyOrderStatus",
+			query:       "github.com/podhmo/go-scan/tools/genschema/testdata.MyOrderStatus",
+			goldenFile:  "testdata/myorderstatus.golden.json",
+			title:       "MyOrderStatus Schema",
+			description: "Schema for MyOrderStatus",
+			loose:       false,
+		},
 	}
 
 	for _, tc := range testCases {

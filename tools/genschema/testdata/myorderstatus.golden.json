@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MyOrderStatus Schema",
+  "description": "Schema for MyOrderStatus",
+  "$ref": "#/$defs/MyOrderStatus",
+  "$defs": {
+    "MyOrderStatus": {
+      "description": "MyOrderStatus is an alias for OrderStatus.",
+      "$ref": "#/$defs/OrderStatus"
+    },
+    "OrderStatus": {
+      "description": "OrderStatus represents the status of an order.",
+      "type": "string",
+      "enum": [
+        "pending",
+        "shipped",
+        "delivered",
+        "cancelled"
+      ]
+    }
+  }
+}

@@ -149,5 +149,5 @@ For more ambitious, long-term features, see [sketch/near-future.md](./docs/near-
   - [ ] Support parsing of large hex literals (related to `uint64` support).
 
 ### `genschema`: Enhancements
-- [ ] Add support for `enum` types (from `const` blocks).
-- [ ] Add support for `new type` aliases to other named types.
+- [x] Add support for `enum` types (from `const` blocks).
+- [x] Add support for `new type` aliases to other named types.

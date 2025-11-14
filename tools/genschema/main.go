@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/constant"
 	"log"
 	"os"
 	"reflect"
@@ -50,6 +51,24 @@ func main() {
 	if err := run(&Config{CLIOptions: options}); err != nil {
 		log.Fatalf("!! %+v", err)
 	}
+}
+
+// isRef checks if a schema document is a simple reference (`$ref`), possibly with a description.
+func isRef(doc *orderedmap.OrderedMap) bool {
+	if doc == nil {
+		return false
+	}
+	hasRef := false
+	for _, k := range doc.Keys() {
+		if k == "$ref" {
+			hasRef = true
+		} else if k == "description" {
+			// A description is allowed alongside a ref.
+		} else {
+			return false // Found another property, so it's not a simple ref.
+		}
+	}
+	return hasRef
 }
 
 func run(config *Config) error {
@@ -99,16 +118,22 @@ func run(config *Config) error {
 	}
 
 	finalDoc := orderedmap.New()
-	if g.useCounts[ob.Name] > 1 {
-		ref, _ := doc.Get("$ref")
-		finalDoc.Set("$ref", ref)
-	} else {
-		def, _ := g.defs[ob.Name]
+	def, _ := g.defs[ob.Name]
+
+	// Decide whether to inline the root definition.
+	// We inline if the type is used only once AND it's not a simple alias (ref).
+	// Simple aliases should always be presented with their own definition for clarity.
+	if g.useCounts[ob.Name] <= 1 && !isRef(def) {
+		// Inline the definition.
 		for _, k := range def.Keys() {
 			v, _ := def.Get(k)
 			finalDoc.Set(k, v)
 		}
 		delete(g.defs, ob.Name)
+	} else {
+		// Keep it as a reference.
+		ref, _ := doc.Get("$ref")
+		finalDoc.Set("$ref", ref)
 	}
 
 	// 5. assemble and print
@@ -126,6 +151,9 @@ func run(config *Config) error {
 	}
 	for _, k := range finalDoc.Keys() {
 		v, _ := finalDoc.Get(k)
+		if k == "description" && config.Description != "" {
+			continue // Already set from CLI, do not overwrite.
+		}
 		root.Set(k, v)
 	}
 
@@ -164,10 +192,6 @@ func (g *Generator) Generate(ctx context.Context, ob *scanner.TypeInfo) (*ordere
 		return nil, err
 	}
 
-	if ob.Doc != "" {
-		doc.Set("description", ob.Doc)
-	}
-
 	g.defs[refName] = doc
 
 	ref := orderedmap.New()
@@ -176,11 +200,86 @@ func (g *Generator) Generate(ctx context.Context, ob *scanner.TypeInfo) (*ordere
 }
 
 func (g *Generator) generateSchemaForTypeInfo(ctx context.Context, ob *scanner.TypeInfo) (*orderedmap.OrderedMap, error) {
+	// Use the pre-computed enum information from go-scan.
+	if ob.IsEnum {
+		var enumValues []any
+		for _, member := range ob.EnumMembers {
+			if member.ConstVal == nil {
+				log.Printf("[WARN] enum member %s.%s has no resolved constant value, skipping", ob.Name, member.Name)
+				continue
+			}
+			if member.ConstVal.Kind() == constant.String {
+				enumValues = append(enumValues, constant.StringVal(member.ConstVal))
+			} else {
+				// For non-string constants, use the string representation.
+				// This might need refinement for different types (e.g., ints).
+				enumValues = append(enumValues, member.ConstVal.String())
+			}
+		}
+
+		if len(enumValues) > 0 {
+			doc, err := g.generateSchemaForField(ctx, ob.Underlying)
+			if err != nil {
+				return nil, fmt.Errorf("generating schema for enum underlying type %q: %w", ob.Underlying.Name, err)
+			}
+			if ob.Doc != "" {
+				doc.Set("description", ob.Doc)
+			}
+			doc.Set("enum", enumValues)
+			doc.Sort(func(a, b *orderedmap.Pair) bool {
+				order := map[string]int{"description": 1, "type": 2, "enum": 3}
+				aOrder, aOk := order[a.Key()]
+				bOrder, bOk := order[b.Key()]
+				if aOk && bOk {
+					return aOrder < bOrder
+				}
+				if aOk {
+					return true
+				}
+				if bOk {
+					return false
+				}
+				return a.Key() < b.Key()
+			})
+			return doc, nil
+		}
+	}
+
 	switch ob.Kind {
 	case scanner.AliasKind:
-		return g.generateSchemaForField(ctx, ob.Underlying)
+		underlyingSchema, err := g.generateSchemaForField(ctx, ob.Underlying)
+		if err != nil {
+			return nil, fmt.Errorf("generating schema for alias underlying type %q: %w", ob.Underlying.Name, err)
+		}
+		aliasDef := orderedmap.New()
+		if ob.Doc != "" {
+			aliasDef.Set("description", ob.Doc)
+		}
+		if ref, ok := underlyingSchema.Get("$ref"); ok {
+			aliasDef.Set("$ref", ref)
+		} else {
+			underlyingInfo, err := ob.Underlying.Resolve(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("could not resolve underlying type for alias %q: %w", ob.Name, err)
+			}
+			refPath := fmt.Sprintf("#/%s/%s", g.Config.RefRoot, underlyingInfo.Name)
+			aliasDef.Set("$ref", refPath)
+		}
+		aliasDef.Sort(func(a, b *orderedmap.Pair) bool {
+			if a.Key() == "description" {
+				return true
+			}
+			if b.Key() == "description" {
+				return false
+			}
+			return a.Key() < b.Key()
+		})
+		return aliasDef, nil
 	case scanner.StructKind:
 		doc := orderedmap.New()
+		if ob.Doc != "" {
+			doc.Set("description", ob.Doc)
+		}
 		doc.Set("type", "object")
 		doc.Set("additionalProperties", g.Config.Loose)
 

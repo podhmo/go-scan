@@ -27,3 +27,16 @@ type Product struct {
 	Tags        []string          `json:"-"` // This field should be ignored
 	IsAvailable bool              `json:"is_available" required:"false"`
 }
+
+// OrderStatus represents the status of an order.
+type OrderStatus string
+
+const (
+	OrderStatusPending   OrderStatus = "pending"
+	OrderStatusShipped   OrderStatus = "shipped"
+	OrderStatusDelivered OrderStatus = "delivered"
+	OrderStatusCancelled OrderStatus = "cancelled"
+)
+
+// MyOrderStatus is an alias for OrderStatus.
+type MyOrderStatus OrderStatus

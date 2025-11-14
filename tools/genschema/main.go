@@ -12,7 +12,7 @@ import (
 
 	"github.com/iancoleman/orderedmap"
 	"github.com/podhmo/flagstruct"
-	goscan "github.com/podhmo/go-scan"
+	"github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
 
@@ -93,18 +93,23 @@ func run(config *Config) error {
 		seen:      make(map[*scanner.TypeInfo]string),
 		useCounts: make(map[string]int),
 	}
-	_, err = g.Generate(ctx, ob)
+	doc, err := g.Generate(ctx, ob)
 	if err != nil {
 		return fmt.Errorf("generation failed: %w", err)
 	}
 
 	finalDoc := orderedmap.New()
-	def, _ := g.defs[ob.Name]
-	for _, k := range def.Keys() {
-		v, _ := def.Get(k)
-		finalDoc.Set(k, v)
+	if g.useCounts[ob.Name] > 1 {
+		ref, _ := doc.Get("$ref")
+		finalDoc.Set("$ref", ref)
+	} else {
+		def, _ := g.defs[ob.Name]
+		for _, k := range def.Keys() {
+			v, _ := def.Get(k)
+			finalDoc.Set(k, v)
+		}
+		delete(g.defs, ob.Name)
 	}
-	delete(g.defs, ob.Name)
 
 	// 5. assemble and print
 	if len(g.defs) > 0 {

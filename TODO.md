@@ -98,6 +98,7 @@ For more ambitious, long-term features, see [sketch/near-future.md](./docs/near-
 - **`tools/goinspect`: Call-Graph Explorer**: A tool to analyze Go source code and display the call graph for specified functions. It supports multiple output formats (`--short`, `--expand`) and uses stable, position-based UIDs to correctly handle duplicate functions and recursion in expanded view. The test suite is comprehensive, using golden files to validate output for various scenarios including cross-package calls. ([sketch/plan-goinspect.md](./docs/plan-goinspect.md))
     - **Orphan-Style Output**: The tool now filters the call graph to only show true entry points (functions not called by any other scanned function) at the top level. This provides a cleaner, more focused view of a library's public API or an application's main execution flows.
     - **Recursion Detection**: The output now correctly identifies and labels direct, mutual, and indirect recursive calls with a `[recursive]` prefix. The underlying `symgo` engine can now trace call context through higher-order functions to detect these complex cycles. Also enabled memoization for the `symgo` engine in `goinspect`. A bug was fixed where recursive functions were incorrectly filtered from the top-level output. ([sketch/trouble-goinspect-recursive.md](./docs/trouble-goinspect-recursive.md))
+- **`genschema`: Re-implement with `go-scan`**: A new tool `tools/genschema` that uses `go-scan` to generate JSON Schema from Go struct definitions. It supports complex types, struct tags (`json`, `required`, etc.), and circular dependencies. ([sketch/plan-genschema.md](./sketch/plan-genschema.md))
  
 ## To Be Implemented
 
@@ -146,3 +147,7 @@ For more ambitious, long-term features, see [sketch/near-future.md](./docs/near-
   - [x] Implement missing operators for `complex` types.
 - [ ] **Low Priority**:
   - [ ] Support parsing of large hex literals (related to `uint64` support).
+
+### `genschema`: Enhancements
+- [ ] Add support for `enum` types (from `const` blocks).
+- [ ] Add support for `new type` aliases to other named types.

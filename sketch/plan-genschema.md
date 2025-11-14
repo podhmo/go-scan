@@ -1,7 +1,10 @@
+> [!NOTE]
+> This feature has been implemented.
+
 # Design Doc: Re-implementing `genschema` with `go-scan`
 
 **Author:** Jules
-**Status:** Proposed
+**Status:** Implemented
 **Created:** 2025-11-14
 **Last updated:** 2025-11-14
 

@@ -2,34 +2,37 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Person Schema",
     "description": "Schema for a Person",
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-        "name": {
-            "type": "string"
-        },
-        "age": {
-            "type": "integer"
-        },
-        "email": {
-            "type": "string"
-        },
-        "hobbies": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            }
-        },
-        "profile": {
-            "$ref": "#/$defs/Profile"
-        }
-    },
-    "required": [
-        "name",
-        "hobbies",
-        "profile"
-    ],
+    "$ref": "#/$defs/Person",
     "$defs": {
+        "Person": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "age": {
+                    "type": "integer"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "hobbies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "profile": {
+                    "$ref": "#/$defs/Profile"
+                }
+            },
+            "required": [
+                "name",
+                "hobbies",
+                "profile"
+            ]
+        },
         "Profile": {
             "type": "object",
             "additionalProperties": false,

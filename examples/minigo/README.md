@@ -72,10 +72,59 @@ To run the `minigo` interpreter, provide it with the path to a script file.
 
 3.  **Run with both files:**
     ```bash
-    go run ./examples/minigo ./file_a.mgo ./file_b.mgo
+    go run ./examples/minigo ./file_a.go ./file_b.go
     ```
 
 4.  **Output:**
     ```
     hello, minigo
+    ```
+
+## Advanced Usage: Configuration as Code
+
+`minigo` can be used as a powerful tool to execute Go files as configuration and serialize the output to JSON.
+
+### File-Based Configuration
+
+You can execute a specific function from a Go file and get the result in JSON format.
+
+1.  **Create `config.go`:**
+    ```go
+    package main
+
+    type MyConfig struct {
+        Name string
+        Port int
+    }
+
+    func Config() MyConfig {
+        return MyConfig{Name: "test-server", Port: 8080}
+    }
+    ```
+
+2.  **Run `minigo` with flags:**
+    ```bash
+    go run ./examples/minigo --file config.go --func "Config" --output json
+    ```
+
+3.  **Output:**
+    ```json
+    {
+      "Name": "test-server",
+      "Port": 8080
+    }
+    ```
+
+### Inline Code Execution
+
+For quick tests or simple configurations, you can pass a code snippet directly to the `--code` flag.
+
+1.  **Run with `--code` flag:**
+    ```bash
+    go run ./examples/minigo --code 'package main; func main() int { return 42 }' --func "main" --output inspect
+    ```
+
+2.  **Output:**
+    ```
+    42
     ```

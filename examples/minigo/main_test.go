@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -159,6 +162,138 @@ func shout(s string) string {
 		// The expected output is the inspected string, which for minigo is just the raw string value.
 		if !strings.Contains(output, "HELLO\n") {
 			t.Errorf("expected 'HELLO\\n' from loaded function using import, got %q", output)
+		}
+	})
+}
+
+func TestExecutionModes(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	t.Run("file-based config", func(t *testing.T) {
+		configContent := `
+package main
+
+type MyConfig struct {
+	Name string
+	Port int
+}
+
+func Config() MyConfig {
+	return MyConfig{Name: "test-server", Port: 8080}
+}`
+		configFile := filepath.Join(dir, "config.go")
+		if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
+			t.Fatalf("Failed to write config file: %v", err)
+		}
+
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		err := run(ctx, configFile, "Config", "json", "")
+		if err != nil {
+			t.Errorf("run() error = %v", err)
+		}
+
+		w.Close()
+		os.Stdout = oldStdout
+		var out bytes.Buffer
+		out.ReadFrom(r)
+
+		expectedJSON := `{
+  "Name": "test-server",
+  "Port": 8080
+}`
+		if strings.TrimSpace(out.String()) != expectedJSON {
+			t.Errorf("Expected JSON output:\n%s\nGot:\n%s", expectedJSON, out.String())
+		}
+	})
+
+	t.Run("inline code", func(t *testing.T) {
+		evalCode := `
+package main
+func main() (int, int) { return 1, 2 }`
+
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		// This test calls run() directly, so the flag name change in main() doesn't affect it.
+		// No change is needed here.
+		err := run(ctx, "", "main", "inspect", evalCode)
+		if err != nil {
+			t.Errorf("run() error = %v", err)
+		}
+
+		w.Close()
+		os.Stdout = oldStdout
+		var out bytes.Buffer
+		out.ReadFrom(r)
+
+		expectedOutput := `(1, 2)`
+		if strings.TrimSpace(out.String()) != expectedOutput {
+			t.Errorf("Expected output:\n%s\nGot:\n%s", expectedOutput, out.String())
+		}
+	})
+
+	t.Run("self-contained script", func(t *testing.T) {
+		scriptContent := `
+package main
+import "encoding/json"
+
+type MyConfig struct {
+	Name string
+	Port int
+}
+
+func Config() MyConfig {
+	return MyConfig{Name: "script-server", Port: 9090}
+}
+
+func main() []byte {
+	result, err := json.Marshal(Config())
+	if err != nil {
+		return nil
+	}
+	return result
+}`
+		scriptFile := filepath.Join(dir, "script.go")
+		if err := os.WriteFile(scriptFile, []byte(scriptContent), 0644); err != nil {
+			t.Fatalf("Failed to write script file: %v", err)
+		}
+
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		runFile(ctx, scriptFile)
+
+		w.Close()
+		os.Stdout = oldStdout
+		var out bytes.Buffer
+		out.ReadFrom(r)
+
+		// A more robust check for the content of the byte slice.
+		expectedContent := `{"Name":"script-server","Port":9090}`
+		outputStr := strings.TrimSpace(out.String())
+		outputStr = strings.TrimPrefix(outputStr, "[")
+		outputStr = strings.TrimSuffix(outputStr, "]")
+		parts := strings.Split(outputStr, " ")
+		var byteSlice []byte
+		for _, p := range parts {
+			if p == "" {
+				continue
+			}
+			b, err := strconv.Atoi(p)
+			if err != nil {
+				t.Fatalf("failed to parse byte from output: %q", p)
+			}
+			byteSlice = append(byteSlice, byte(b))
+		}
+
+		if string(byteSlice) != expectedContent {
+			t.Errorf("Expected byte slice content:\n%s\nGot:\n%s", expectedContent, string(byteSlice))
 		}
 	})
 }

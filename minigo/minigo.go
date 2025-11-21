@@ -716,3 +716,63 @@ func (i *Interpreter) Files() []*object.FileScope {
 func (i *Interpreter) GlobalEnvForTest() *object.Environment {
 	return i.globalEnv
 }
+
+// ToGoValue converts a minigo object to a native Go value (e.g., map[string]any, []any, etc.).
+// This is useful for serialization, such as converting to JSON.
+func ToGoValue(src object.Object) (any, error) {
+	switch s := src.(type) {
+	case *object.Nil:
+		return nil, nil
+	case *object.Integer:
+		return s.Value, nil
+	case *object.String:
+		return s.Value, nil
+	case *object.Boolean:
+		return s.Value, nil
+	case *object.GoValue:
+		if s.Value.IsValid() {
+			return s.Value.Interface(), nil
+		}
+		return nil, nil
+	case *object.Array:
+		arr := make([]any, len(s.Elements))
+		for i, elem := range s.Elements {
+			var err error
+			arr[i], err = ToGoValue(elem)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return arr, nil
+	case *object.Map:
+		stringMap := make(map[string]any)
+		for _, pair := range s.Pairs {
+			key, err := ToGoValue(pair.Key)
+			if err != nil {
+				return nil, err
+			}
+			val, err := ToGoValue(pair.Value)
+			if err != nil {
+				return nil, err
+			}
+			keyStr, ok := key.(string)
+			if !ok {
+				return nil, fmt.Errorf("json map keys must be strings, got %T", key)
+			}
+			stringMap[keyStr] = val
+		}
+		return stringMap, nil
+	case *object.StructInstance:
+		m := make(map[string]any)
+		for fieldName, srcFieldVal := range s.Fields {
+			var err error
+			m[fieldName], err = ToGoValue(srcFieldVal)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return m, nil
+	default:
+		return nil, fmt.Errorf("unsupported object type for conversion: %s", src.Type())
+	}
+}

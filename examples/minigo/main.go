@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +13,7 @@ import (
 
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/minigo"
+	"github.com/podhmo/go-scan/minigo/object"
 	json_ "github.com/podhmo/go-scan/minigo/stdlib/encoding/json"
 	fmt_ "github.com/podhmo/go-scan/minigo/stdlib/fmt"
 	strconv_ "github.com/podhmo/go-scan/minigo/stdlib/strconv"
@@ -36,24 +39,116 @@ func newInterpreterWithStdlib() (*minigo.Interpreter, error) {
 }
 
 func main() {
+	var (
+		fileOption   string
+		funcOption   string
+		outputOption string
+		evalOption   string
+	)
+
+	// Custom flag set to allow mixing flags and positional args
+	fs := flag.NewFlagSet("minigo", flag.ContinueOnError)
+	fs.StringVar(&fileOption, "file", "", "Go file to load as configuration")
+	fs.StringVar(&funcOption, "func", "Config", "function to call in the file")
+	fs.StringVar(&outputOption, "output", "inspect", "output format (inspect or json)")
+	fs.StringVar(&evalOption, "code", "", "evaluate Go code snippet")
+
+	// Parse flags, allowing for positional arguments to be processed later.
+	fs.Parse(os.Args[1:])
+
 	ctx := context.Background()
-	if len(os.Args) > 1 {
-		subcommand := os.Args[1]
-		switch subcommand {
-		case "gen-bindings":
-			runGenBindings(os.Args[2:])
-			return
-		default:
-			runFile(ctx, os.Args[1])
-			return
-		}
+
+	// High-priority: 'gen-bindings' subcommand
+	if len(os.Args) > 1 && os.Args[1] == "gen-bindings" {
+		runGenBindings(os.Args[2:])
+		return
 	}
 
-	// For runREPL, we now pass standard I/O streams.
+	// New execution path with flags
+	if fileOption != "" || evalOption != "" {
+		if err := run(ctx, fileOption, funcOption, outputOption, evalOption); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Legacy execution path for positional arguments
+	if fs.NArg() > 0 {
+		runFile(ctx, fs.Arg(0))
+		return
+	}
+
+	// Default to REPL
 	if err := runREPL(os.Stdin, os.Stdout, nil); err != nil {
 		slog.ErrorContext(ctx, "REPL error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// run handles the new execution mode for file/eval-based script execution.
+func run(ctx context.Context, filename, funcname, output, eval string) error {
+	interp, err := newInterpreterWithStdlib()
+	if err != nil {
+		return fmt.Errorf("failed to create interpreter: %w", err)
+	}
+
+	if eval != "" {
+		// Execute code snippet from -c flag
+		if err := interp.LoadFile("<cmdline>", []byte(eval)); err != nil {
+			return fmt.Errorf("failed to load code snippet: %w", err)
+		}
+	} else {
+		// Execute from file
+		source, err := os.ReadFile(filename)
+		if err != nil {
+			return fmt.Errorf("error reading script file %q: %w", filename, err)
+		}
+		if err := interp.LoadFile(filename, source); err != nil {
+			return fmt.Errorf("failed to load script %q: %w", filename, err)
+		}
+	}
+
+	// Evaluate all top-level declarations
+	if err := interp.EvalDeclarations(ctx); err != nil {
+		return fmt.Errorf("evaluating declarations: %w", err)
+	}
+
+	// Find the function to execute.
+	fn, fscope, err := interp.FindFunction(funcname)
+	if err != nil {
+		return fmt.Errorf("finding entry point %q: %w", funcname, err)
+	}
+
+	// Execute the function.
+	result, err := interp.Execute(ctx, fn, nil, fscope)
+	if err != nil {
+		return fmt.Errorf("runtime error in %q: %w", funcname, err)
+	}
+
+	if result == nil || result.Value == nil {
+		return nil // No result to print
+	}
+
+	// Handle the output format.
+	switch output {
+	case "json":
+		nativeResult, err := minigo.ToGoValue(result.Value)
+		if err != nil {
+			return fmt.Errorf("failed to convert result to Go value: %w", err)
+		}
+		b, err := json.MarshalIndent(nativeResult, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal result to JSON: %w", err)
+		}
+		fmt.Println(string(b))
+	case "inspect":
+		fmt.Println(result.Value.Inspect())
+	default:
+		return fmt.Errorf("unsupported output format: %q", output)
+	}
+
+	return nil
 }
 
 func runFile(ctx context.Context, filename string) {
@@ -156,7 +251,7 @@ func runREPL(in io.Reader, out io.Writer, interp *minigo.Interpreter) error {
 					continue
 				}
 				// Only print if the result is not nil
-				if result != nil && result.Type() != "NIL" {
+				if result != nil && result.Type() != object.NIL_OBJ {
 					fmt.Fprintln(out, result.Inspect())
 				}
 			}

@@ -132,6 +132,11 @@ For more ambitious, long-term features, see [sketch/near-future.md](./docs/near-
 - [x] **Add test for out-of-policy imports**: Add a test to verify that packages with out-of-policy imports are not scanned.
 - [ ] **Implement Interface Call Tracing**: Extend the tool to trace calls through interfaces by analyzing implementations.
 
+### `minigo`: config-as-code ([sketch/plan-minigo-cont-json.md](./sketch/plan-minigo-cont-json.md))
+- [x] Enhance `main.go` to support `--file`, `--func`, `--output`, and `-c` flags.
+- [x] Add test cases for file-based configuration, self-contained scripts, and command-line snippets.
+- [x] Update `TODO.md` as tasks are completed.
+
 ### `symgo`: Robustness in Test Code Analysis
 - [ ] **Identifier Resolution in Tests**: Improve the resolution of identifiers for test-only variables and constants (e.g., `sampleAPIPath` in `docgen_test.go`) during whole-program analysis to prevent "identifier not found" errors.
 - [x] **Handle `not a function: NIL`**: Fixed "not a function: NIL" errors that occurred during symbolic execution of test files. The root cause was that the tracer would explore an unreachable code path (e.g., inside an `if f != nil` block when `f` is nil) and then raise a fatal error when trying to evaluate the `nil` function call. The fix was to make the function call evaluator (`evalCallExpr`) gracefully handle being passed a `nil` object by returning early, allowing analysis to continue without crashing. ([sketch/trouble-symgo.md](./docs/trouble-symgo.md))

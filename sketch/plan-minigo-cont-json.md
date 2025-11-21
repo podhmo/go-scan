@@ -25,14 +25,14 @@ This document outlines the plan to add a new feature to `minigo` that allows it 
 
 3.  **Command-line Snippet**: A user can provide a snippet of Go code directly on the command line for evaluation.
     ```bash
-    minigo -c 'import "config"; config.Config()' --output json
+    minigo --code 'import "config"; config.Config()' --output json
     ```
 
 ## Implementation Plan
 
 1.  **Enhance `main.go`**:
     -   Add flag parsing to support `--file`, `--func`, and `--output`.
-    -   Add support for a `-c` flag for inline code snippets.
+    -   Add support for a `--code` flag for inline code snippets.
     -   Create a new `run` function that encapsulates the logic for the new execution modes.
     -   The `run` function will:
         -   Initialize the interpreter.

@@ -219,6 +219,8 @@ func main() (int, int) { return 1, 2 }`
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
+		// This test calls run() directly, so the flag name change in main() doesn't affect it.
+		// No change is needed here.
 		err := run(ctx, "", "main", "inspect", evalCode)
 		if err != nil {
 			t.Errorf("run() error = %v", err)

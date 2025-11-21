@@ -133,7 +133,7 @@ For more ambitious, long-term features, see [sketch/near-future.md](./docs/near-
 - [ ] **Implement Interface Call Tracing**: Extend the tool to trace calls through interfaces by analyzing implementations.
 
 ### `minigo`: config-as-code ([sketch/plan-minigo-cont-json.md](./sketch/plan-minigo-cont-json.md))
-- [x] Enhance `main.go` to support `--file`, `--func`, `--output`, and `-c` flags.
+- [x] Enhance `main.go` to support `--file`, `--func`, `--output`, and `--code` flags.
 - [x] Add test cases for file-based configuration, self-contained scripts, and command-line snippets.
 - [x] Update `TODO.md` as tasks are completed.
 

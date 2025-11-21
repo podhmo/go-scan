@@ -51,7 +51,7 @@ func main() {
 	fs.StringVar(&fileOption, "file", "", "Go file to load as configuration")
 	fs.StringVar(&funcOption, "func", "Config", "function to call in the file")
 	fs.StringVar(&outputOption, "output", "inspect", "output format (inspect or json)")
-	fs.StringVar(&evalOption, "c", "", "evaluate Go code snippet")
+	fs.StringVar(&evalOption, "code", "", "evaluate Go code snippet")
 
 	// Parse flags, allowing for positional arguments to be processed later.
 	fs.Parse(os.Args[1:])

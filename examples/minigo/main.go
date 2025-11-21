@@ -133,7 +133,7 @@ func run(ctx context.Context, filename, funcname, output, eval string) error {
 	// Handle the output format.
 	switch output {
 	case "json":
-		nativeResult, err := toGoValue(result.Value)
+		nativeResult, err := minigo.ToGoValue(result.Value)
 		if err != nil {
 			return fmt.Errorf("failed to convert result to Go value: %w", err)
 		}
@@ -149,65 +149,6 @@ func run(ctx context.Context, filename, funcname, output, eval string) error {
 	}
 
 	return nil
-}
-
-// toGoValue converts a minigo object to a native Go value.
-func toGoValue(src object.Object) (any, error) {
-	switch s := src.(type) {
-	case *object.Nil:
-		return nil, nil
-	case *object.Integer:
-		return s.Value, nil
-	case *object.String:
-		return s.Value, nil
-	case *object.Boolean:
-		return s.Value, nil
-	case *object.GoValue:
-		if s.Value.IsValid() {
-			return s.Value.Interface(), nil
-		}
-		return nil, nil
-	case *object.Array:
-		arr := make([]any, len(s.Elements))
-		for i, elem := range s.Elements {
-			var err error
-			arr[i], err = toGoValue(elem)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return arr, nil
-	case *object.Map:
-		stringMap := make(map[string]any)
-		for _, pair := range s.Pairs {
-			key, err := toGoValue(pair.Key)
-			if err != nil {
-				return nil, err
-			}
-			val, err := toGoValue(pair.Value)
-			if err != nil {
-				return nil, err
-			}
-			keyStr, ok := key.(string)
-			if !ok {
-				return nil, fmt.Errorf("json map keys must be strings, got %T", key)
-			}
-			stringMap[keyStr] = val
-		}
-		return stringMap, nil
-	case *object.StructInstance:
-		m := make(map[string]any)
-		for fieldName, srcFieldVal := range s.Fields {
-			var err error
-			m[fieldName], err = toGoValue(srcFieldVal)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return m, nil
-	default:
-		return nil, fmt.Errorf("unsupported object type for conversion: %s", src.Type())
-	}
 }
 
 func runFile(ctx context.Context, filename string) {

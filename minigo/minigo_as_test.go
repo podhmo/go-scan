@@ -245,3 +245,74 @@ var result = shared.Container{
 		})
 	}
 }
+
+func TestToGoValue(t *testing.T) {
+	t.Run("struct", func(t *testing.T) {
+		interp := newTestInterpreter(t)
+		src := `
+package main
+type Person struct {
+	Name string
+	Age  int
+}
+func main() Person {
+	return Person{Name: "Alice", Age: 30}
+}`
+		if err := interp.LoadFile("test.go", []byte(src)); err != nil {
+			t.Fatalf("LoadFile() failed: %v", err)
+		}
+		result, err := interp.Eval(context.Background())
+		if err != nil {
+			t.Fatalf("Eval() failed: %v", err)
+		}
+
+		native, err := ToGoValue(result.Value)
+		if err != nil {
+			t.Fatalf("ToGoValue failed: %v", err)
+		}
+
+		m, ok := native.(map[string]any)
+		if !ok {
+			t.Fatalf("expected map[string]any, got %T", native)
+		}
+
+		if m["Name"] != "Alice" {
+			t.Errorf("expected Name to be Alice, got %v", m["Name"])
+		}
+		if m["Age"] != int64(30) {
+			t.Errorf("expected Age to be 30, got %v", m["Age"])
+		}
+	})
+
+	t.Run("array", func(t *testing.T) {
+		interp := newTestInterpreter(t)
+		src := `
+package main
+func main() []int {
+	return []int{1, 2, 3}
+}`
+		if err := interp.LoadFile("test.go", []byte(src)); err != nil {
+			t.Fatalf("LoadFile() failed: %v", err)
+		}
+		result, err := interp.Eval(context.Background())
+		if err != nil {
+			t.Fatalf("Eval() failed: %v", err)
+		}
+
+		native, err := ToGoValue(result.Value)
+		if err != nil {
+			t.Fatalf("ToGoValue failed: %v", err)
+		}
+
+		s, ok := native.([]any)
+		if !ok {
+			t.Fatalf("expected []any, got %T", native)
+		}
+		if len(s) != 3 {
+			t.Fatalf("expected slice of length 3, got %d", len(s))
+		}
+		if s[0] != int64(1) || s[1] != int64(2) || s[2] != int64(3) {
+			t.Errorf("unexpected slice content: %v", s)
+		}
+	})
+}

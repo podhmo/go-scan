@@ -49,3 +49,11 @@ This document outlines the plan to add a new feature to `minigo` that allows it 
 3.  **Update `TODO.md`**:
     -   Add tasks for the implementation and testing of this new feature.
     -   Update the tasks as they are completed.
+
+## Design Notes
+
+### `As()` vs. `ToGoValue`
+
+During implementation, an investigation was conducted to determine if the existing `minigo.Result.As()` method could be used to convert `minigo` objects to a generic `any` or `map[string]any` for JSON serialization. It was found that `As()` is designed for unmarshaling into concrete, statically-defined Go structs and does not support this dynamic conversion.
+
+Therefore, a new helper function, `ToGoValue`, was created. Initially implemented in `examples/minigo/main.go`, it was determined that this function is a core, reusable utility. Following a code review, it was moved into the `minigo` package as a public function, `minigo.ToGoValue`, and is now accompanied by its own unit tests. This ensures a cleaner separation of concerns and makes the functionality available to any consumer of the `minigo` library.

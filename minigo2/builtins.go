@@ -37,7 +37,14 @@ func builtins(e *Engine) *runtime.Env {
 	})
 	bf("append", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		var s *runtime.Slice
+		var tag *runtime.TypeDef
 		switch x := args[0].(type) {
+		case *runtime.Named:
+			tag = x.Typ
+			s, _ = x.V.(*runtime.Slice)
+			if s == nil {
+				return nil, fmt.Errorf("append on named %s", x.Typ.Name)
+			}
 		case *runtime.Slice:
 			s = x
 		case *runtime.Cell:
@@ -55,11 +62,19 @@ func builtins(e *Engine) *runtime.Env {
 		if s != nil {
 			elems = s.Elems
 		}
-		return &runtime.Slice{Elems: append(append([]runtime.Value{}, elems...), args[1:]...)}, nil
+		res := &runtime.Slice{Elems: append(append([]runtime.Value{}, elems...), args[1:]...)}
+		if tag != nil {
+			return &runtime.Named{Typ: tag, V: res}, nil // append keeps the declared type
+		}
+		return res, nil
 	})
 	bf("copy", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		sliceOf := func(x runtime.Value) (*runtime.Slice, bool) {
 			switch s := x.(type) {
+			case *runtime.Named:
+				if ss, ok := s.V.(*runtime.Slice); ok {
+					return ss, true
+				}
 			case *runtime.Slice:
 				return s, true
 			case *runtime.Cell:
@@ -83,12 +98,19 @@ func builtins(e *Engine) *runtime.Env {
 		return int64(n), nil
 	})
 	bf("delete", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+		key := runtime.Unwrap(args[1])
 		switch m := args[0].(type) {
+		case *runtime.Named:
+			if mm, ok := m.V.(*runtime.Map); ok {
+				delete(mm.Pairs, key)
+				return runtime.NIL, nil
+			}
+			return nil, fmt.Errorf("delete on named %s", m.Typ.Name)
 		case *runtime.Map:
-			delete(m.Pairs, args[1])
+			delete(m.Pairs, key)
 		case *runtime.Cell:
 			if mm, ok := m.Elem.(*runtime.Map); ok {
-				delete(mm.Pairs, args[1])
+				delete(mm.Pairs, key)
 				return runtime.NIL, nil
 			}
 			return nil, fmt.Errorf("delete on %T", args[0])
@@ -108,7 +130,7 @@ func builtins(e *Engine) *runtime.Env {
 		case runtime.KindSlice:
 			n := int64(0)
 			if len(args) > 1 {
-				n = args[1].(int64)
+				n, _ = runtime.Unwrap(args[1]).(int64)
 			}
 			el := make([]runtime.Value, n)
 			for i := range el {
@@ -126,13 +148,15 @@ func builtins(e *Engine) *runtime.Env {
 	})
 	bf("new", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		td, _ := args[0].(*runtime.TypeDef)
-		return &runtime.Cell{Elem: v.Zero(td)}, nil
+		return &runtime.Cell{Elem: v.Zero(td), Typ: td}, nil
 	})
 	bf("close", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		var ch *runtime.Chan
 		switch x := args[0].(type) {
 		case *runtime.Chan:
 			ch = x
+		case *runtime.Named:
+			ch, _ = x.V.(*runtime.Chan)
 		case *runtime.Cell:
 			ch, _ = x.Elem.(*runtime.Chan)
 		case *runtime.TypedNil, *runtime.IfaceNil, runtime.Nil:
@@ -186,6 +210,8 @@ func builtins(e *Engine) *runtime.Env {
 
 func lenOf(v runtime.Value) (runtime.Value, error) {
 	switch x := v.(type) {
+	case *runtime.Named:
+		return lenOf(x.V)
 	case *runtime.Slice:
 		return int64(len(x.Elems)), nil
 	case *runtime.Map:
@@ -205,6 +231,8 @@ func display(v runtime.Value) any {
 	switch x := v.(type) {
 	case runtime.Nil, *runtime.TypedNil, *runtime.IfaceNil:
 		return nil
+	case *runtime.Named:
+		return display(x.V)
 	case *runtime.Cell:
 		return display(x.Elem)
 	case *runtime.Slice:

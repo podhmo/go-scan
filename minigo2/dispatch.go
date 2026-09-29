@@ -20,6 +20,12 @@ import (
 // Structs offer declared + promoted methods; host GoValues expose their
 // reflect method set. Other values have no methods.
 func (e *Engine) methodsOfValue(v runtime.Value) (map[string]bool, error) {
+	// a Named value exposes its own declared method set — `type A B` does
+	// not inherit B's methods (Go). Checked before the deref loop since a
+	// Named with a pointer underlying must not be peeled past its tag.
+	if n, ok := v.(*runtime.Named); ok {
+		return e.typeMethods(n.Typ)
+	}
 	for {
 		dv, ok := runtime.Deref(v)
 		if !ok {
@@ -172,6 +178,16 @@ func (e *Engine) fieldTypes(td *runtime.TypeDef) ([]*runtime.TypeDef, error) {
 			ft, err := e.elemTypeRef(td, fld.Type)
 			if err == nil {
 				out[i] = ft
+			} else {
+				// the declared type did not resolve (missing import, unbound
+				// name): keep a hole typedef instead of nil so the field zero
+				// still produces a typed nil, not a bare NIL.
+				out[i] = &runtime.TypeDef{
+					Kind: runtime.KindNamedBasic,
+					Anon: fld.Type,
+					Pkg:  td.Pkg,
+					File: td.File,
+				}
 			}
 			i++
 		}

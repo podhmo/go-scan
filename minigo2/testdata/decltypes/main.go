@@ -1,5 +1,7 @@
 package main
 
+import "io"
+
 // Declared types are carried, not erased: `var x T` yields a typed zero,
 // typed nils keep their declared type through ==, methods and asserts,
 // and an interface slot holding a typed nil is non-nil (Go semantics).
@@ -312,6 +314,176 @@ func MultiReturnBox() int {
 		return -1
 	}
 	return 1
+}
+
+// --- typed-zero follow-ups (round 6) ---
+
+// NamedIdent: a declared named-basic value carries its declared type, and
+// plain assignment into the typed slot keeps it (`c = v` checks like
+// `var c T = v`). Methods on the named type dispatch through the tag.
+type Celsius float64
+
+func (c Celsius) F() float64 { return float64(c)*9/5 + 32 }
+
+func NamedIdent() float64 {
+	var c Celsius
+	c = 36.5
+	return c.F() // 36.5*9/5+32 = 97.7
+}
+
+// NamedOps: arithmetic on named basics keeps the declared tag — an
+// untyped operand adopts the named type and the result stays named.
+func (s Str) Loud() Str { return s + "!" }
+
+func NamedOps() string {
+	var s Str = "a"
+	t := s + Str("b")
+	if t != Str("ab") {
+		return "concat mismatch"
+	}
+	return string(s.Loud()) // "a!" converted out to a plain string
+}
+
+// NamedStore: assignment into a declared-typed slot re-tags the value —
+// x = v behaves like `var x T = v` for named types too.
+func NamedStore() int {
+	var c Celsius = 1
+	c = 41
+	c = c + 1 // 42, still Celsius
+	var x any = c
+	if _, ok := x.(Celsius); !ok {
+		return -1
+	}
+	return int(c) // 42
+}
+
+// NamedAssert: a named basic value inside any asserts back to its
+// declared type — the underlying builtin name does NOT match.
+func NamedAssert() int {
+	var x any = Celsius(40)
+	if _, ok := x.(float64); ok {
+		return -1 // Celsius is not float64, like Go
+	}
+	c, ok := x.(Celsius)
+	if !ok {
+		return -2
+	}
+	return int(c / 10) // 4
+}
+
+// NoInheritBad: `type A B` shares B's storage, not B's methods — the
+// method select traps like Go's "a.Loud undefined".
+type StrAlias Str
+
+func NoInheritBad() int {
+	var a StrAlias = StrAlias("x")
+	return len(a.Loud())
+}
+
+// MapBindZero: a declared map type stamps the map value on binding, so
+// missing-key reads yield the declared element zero even for maps that
+// were built by a bare literal elsewhere.
+type M2 map[string]int
+
+func MapBindZero() int {
+	var m M2 = map[string]int{"a": 1}
+	if m["missing"] != 0 {
+		return -1 // m carries M2 -> missing key is int's zero
+	}
+	var m2 M2 = m
+	if v, ok := m2["missing"]; ok || v != 0 {
+		return -2
+	}
+	var nilM M2
+	if nilM["k"] != 0 {
+		return -3 // nil M2 reads through its declared element type
+	}
+	return m["a"]
+}
+
+// MapBindTrap: a named map type where a differently-shaped declared map
+// binds is a type error (the shape check runs through the underlying).
+type M3 map[string]float64
+
+func MapBindTrap() int {
+	var m M2 = map[string]int{}
+	var o M3 = m // M3's element is float64 — map[string]int does not fit
+	_ = o
+	return 0
+}
+
+// FieldHoleZero: a field whose declared type does not resolve (missing
+// import, unbound name) keeps a typed-nil hole inside an otherwise typed
+// struct zero — boxed into an interface it is non-nil, like a typed nil.
+type Holder struct {
+	R io.Reader // io is deliberately not imported
+}
+
+func FieldHoleZero() int {
+	var h Holder
+	var x any = h.R
+	if x == nil {
+		return -1 // a typed-nil hole keeps its dynamic type — non-nil
+	}
+	if h.R != nil {
+		return -2 // but it still compares nil like a nil interface member
+	}
+	return 1
+}
+
+// AssignOK: legal `var x T = v` binds pass the check — literals adopt
+// declared types and interface satisfaction is enforced.
+type IArea interface{ Area() int }
+
+func AssignOK() int {
+	var i int = 41
+	i = i + 1
+	var sh IArea = Sq{Side: 2}
+	if sh.Area() != 4 {
+		return -1
+	}
+	var s Str = "hi"
+	if s != "hi" {
+		return -2
+	}
+	return i // 42
+}
+
+// AssignBadInt: a string literal cannot bind an int var.
+func AssignBadInt() int {
+	var i int = "nope"
+	return i
+}
+
+// AssignBadNamed: a named basic value cannot bind a different builtin —
+// `var i int = c` needs a conversion in Go.
+func AssignBadNamed() int {
+	var c Celsius = 1
+	var i int = c
+	return i
+}
+
+// AssignMix: two different declared types refuse to mix in one op.
+func AssignMix() int {
+	var a Celsius = 1
+	var b Str = "x"
+	_ = a + b // mismatched types Celsius and Str
+	return 0
+}
+
+// IfaceBad: a value without the method set cannot bind an interface var.
+func IfaceBad() int {
+	var sh IArea = 42
+	_ = sh
+	return 0
+}
+
+// NilBadShape: a typed nil retags only through matching shapes —
+// (*Sq)(nil) does not fit a *int slot.
+func NilBadShape() int {
+	var p *int = (*Sq)(nil)
+	_ = p
+	return 0
 }
 
 func main() {}

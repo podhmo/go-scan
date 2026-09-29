@@ -111,6 +111,17 @@ func (f *frame) trap(format string, args ...any) {
 	panic(&runtime.Trap{Pos: f.pos(), Reason: fmt.Sprintf(format, args...)})
 }
 
+// assignCell stores into a cell, coercing to the cell's declared type
+// first when one was stamped by a `var x T` / typed-param / named-result
+// coerce. `x = v` then enforces the same assignability as `var x T = v`,
+// and a named basic type keeps its tag across plain assignment.
+func (v *VM) assignCell(f *frame, c *runtime.Cell, val runtime.Value) {
+	if c.Typ != nil {
+		val = v.coerce(f, val, c.Typ)
+	}
+	c.Elem = valueCopy(val)
+}
+
 // Call invokes a function-like value: Function, Closure, BoundMethod,
 // BuiltinFunc, TypeDef (conversion), or Cell wrapping any of those.
 // It is the engine boundary: script panics and traps unwind as Go panics
@@ -139,6 +150,10 @@ func (v *VM) call(callee runtime.Value, args []runtime.Value) (runtime.Value, er
 		case *runtime.TypedNil, *runtime.IfaceNil:
 			// calling a nil function value panics in Go
 			panic(&runtime.Panic{Value: "call of nil function"})
+		case *runtime.Named:
+			// a value of a named func type calls through its underlying
+			callee = c.V
+			continue
 		default:
 			if dv, ok := runtime.Deref(callee); ok {
 				callee = dv
@@ -377,6 +392,9 @@ func (v *VM) invokeDeferred(d deferredCall) {
 				panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
 			}
 			return
+		case *runtime.Named:
+			callee = c.V
+			continue
 		default:
 			if dv, ok := runtime.Deref(callee); ok {
 				callee = dv
@@ -450,27 +468,27 @@ func (v *VM) loop(f *frame) {
 		case bytecode.OpLocal:
 			f.push(f.locals[ins.A].Elem)
 		case bytecode.OpSetLocal:
-			f.locals[ins.A].Elem = valueCopy(f.pop())
+			v.assignCell(f, f.locals[ins.A], f.pop())
 		case bytecode.OpLocalRef:
 			f.push(f.locals[ins.A])
 		case bytecode.OpUpval:
 			f.push(f.upvals[ins.A].Elem)
 		case bytecode.OpSetUpval:
-			f.upvals[ins.A].Elem = f.pop()
+			v.assignCell(f, f.upvals[ins.A], f.pop())
 		case bytecode.OpGlobal:
 			f.push(v.resolveGlobal(f, consts[ins.A].(string)))
 		case bytecode.OpNewGlobal:
 			f.fn.Pkg.Globals.Set(consts[ins.A].(string), &runtime.Cell{Elem: valueCopy(f.pop())})
 		case bytecode.OpSetGlobal:
 			name := consts[ins.A].(string)
-			val := valueCopy(f.pop())
+			val := f.pop()
 			if old, ok := f.fn.Pkg.Globals.Get(name); ok {
 				if c, isCell := old.(*runtime.Cell); isCell {
-					c.Elem = val
+					v.assignCell(f, c, val)
 					break
 				}
 			}
-			f.fn.Pkg.Globals.Set(name, val)
+			f.fn.Pkg.Globals.Set(name, valueCopy(val))
 		case bytecode.OpGlobalRef:
 			name := consts[ins.A].(string)
 			if old, ok := f.fn.Pkg.Globals.Get(name); ok {
@@ -524,6 +542,9 @@ func (v *VM) loop(f *frame) {
 			if tn, ok := asTypedNil(ref); ok && tn.Typ.Kind == runtime.KindPointer {
 				panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
 			}
+			if c, ok := ref.(*runtime.Cell); ok && c.Typ != nil {
+				val = v.coerce(f, val, c.Typ)
+			}
 			if !runtime.SetRef(ref, val) {
 				f.trap("indirect store to non-pointer %T", ref)
 			}
@@ -561,7 +582,9 @@ func (v *VM) loop(f *frame) {
 			if td == nil {
 				f.trap("declared type is not a type")
 			}
-			f.locals[ins.A].Elem = v.coerce(f, f.locals[ins.A].Elem, td)
+			c := f.locals[ins.A]
+			c.Elem = v.coerce(f, c.Elem, td)
+			c.Typ = td // future stores into this cell coerce the same way
 		case bytecode.OpCoerceTop:
 			td := typedefOf(f.pop())
 			if td == nil {
@@ -599,6 +622,7 @@ func (v *VM) loop(f *frame) {
 			if gv, ok := f.fn.Pkg.Globals.Get(name); ok {
 				if c, isCell := gv.(*runtime.Cell); isCell {
 					c.Elem = v.coerce(f, c.Elem, td)
+					c.Typ = td
 				}
 			}
 		case bytecode.OpSpecialCall:
@@ -729,7 +753,7 @@ func (v *VM) loop(f *frame) {
 			f.push(recvChanOK(f, f.pop()))
 		case bytecode.OpSelSend:
 			val := f.pop()
-			chv := f.pop()
+			chv := runtime.Unwrap(f.pop())
 			if ch, ok := chv.(*runtime.Chan); ok && !ch.Closed {
 				ch.Elems = append(ch.Elems, val)
 				f.push(true)
@@ -737,7 +761,7 @@ func (v *VM) loop(f *frame) {
 				f.push(false)
 			}
 		case bytecode.OpSelRecv:
-			chv := f.pop()
+			chv := runtime.Unwrap(f.pop())
 			ch, ok := chv.(*runtime.Chan)
 			if !ok || (len(ch.Elems) == 0 && !ch.Closed) {
 				f.push(false)
@@ -937,10 +961,14 @@ func (v *VM) selectMember(f *frame, base runtime.Value, name string) runtime.Val
 		return mv
 	case *runtime.Struct:
 		return v.structMember(f, b, name, b)
+	case *runtime.Named:
+		return v.namedMember(f, b, name, b)
 	case *runtime.Cell:
 		switch e := b.Elem.(type) {
 		case *runtime.Struct:
 			return v.structMember(f, e, name, b)
+		case *runtime.Named:
+			return v.namedMember(f, e, name, b)
 		case *runtime.TypedNil:
 			return v.memberOfType(f, e.Typ, name, e, false)
 		case *runtime.IfaceNil:
@@ -1023,7 +1051,8 @@ func goValueOf(rv reflect.Value) runtime.Value {
 		*runtime.Map, *runtime.Struct, *runtime.Function, *runtime.Closure,
 		*runtime.BoundMethod, *runtime.BuiltinFunc, *runtime.GoValue,
 		*runtime.Chan, *runtime.TypeDef, *runtime.Iterator, *runtime.Package,
-		*runtime.ImportRef, *runtime.TypedNil, *runtime.IfaceNil:
+		*runtime.ImportRef, *runtime.TypedNil, *runtime.IfaceNil,
+		*runtime.Named:
 		return v
 	default:
 		return &runtime.GoValue{V: x}
@@ -1084,10 +1113,50 @@ func (v *VM) structMember(f *frame, s *runtime.Struct, name string, recv runtime
 	return nil
 }
 
+// namedMember resolves base.name on a Named value: methods come only from
+// the declared typedef (`type A B` does not inherit B's methods, like
+// Go); fields reach through to the underlying struct's layout.
+func (v *VM) namedMember(f *frame, n *runtime.Named, name string, recv runtime.Value) runtime.Value {
+	if m, ok := n.Typ.Methods[name]; ok {
+		if err := m.EnsureCompiled(); err != nil {
+			f.trap("%s", err)
+		}
+		r := recv
+		if m.PtrRecv {
+			if _, ok := runtime.Deref(r); !ok {
+				r = &runtime.Cell{Elem: r}
+			}
+		} else {
+			if dv, ok := runtime.Deref(r); ok {
+				r = dv
+			}
+			r = valueCopy(r)
+		}
+		return &runtime.BoundMethod{Recv: r, Fn: m}
+	}
+	// fields live on the underlying struct value — promoted fields of the
+	// underlying type are stored as fields on it, but promoted METHODS of
+	// the underlying type are not part of the named type's method set.
+	if s, ok := n.V.(*runtime.Struct); ok {
+		for i, fn := range s.Def.Fields {
+			if fn == name {
+				return s.Fields[i]
+			}
+		}
+	}
+	f.trap("%s has no field or method %s", tdName(n.Typ), name)
+	return nil
+}
+
 func (v *VM) setField(f *frame, base runtime.Value, name string, val runtime.Value) {
 	// write through any pointer chain: *Cell (local var or *T), FieldRef,
-	// IndexRef — assignment targets the struct they resolve to.
+	// IndexRef — assignment targets the struct they resolve to. Named
+	// struct-underlying values write into the underlying fields.
 	for {
+		if n, ok := base.(*runtime.Named); ok {
+			base = n.V
+			continue
+		}
 		dv, ok := runtime.Deref(base)
 		if !ok {
 			break
@@ -1098,7 +1167,13 @@ func (v *VM) setField(f *frame, base runtime.Value, name string, val runtime.Val
 	case *runtime.Struct:
 		for i, fn := range b.Def.Fields {
 			if fn == name {
-				b.Fields[i] = val
+				// the field's declared type constrains the write —
+				// `s.f = nil` on a *T field stores a typed nil.
+				var ft *runtime.TypeDef
+				if fts := v.fieldTypedefs(b.Def); i < len(fts) {
+					ft = fts[i]
+				}
+				b.Fields[i] = v.coerce(f, val, ft)
 				return
 			}
 		}
@@ -1112,7 +1187,10 @@ func (v *VM) index(f *frame, base, idx runtime.Value) runtime.Value {
 	if dv, ok := runtime.Deref(base); ok {
 		return v.index(f, dv, idx)
 	}
+	idx = runtime.Unwrap(idx) // named key/index types hash as their value
 	switch b := base.(type) {
+	case *runtime.Named:
+		return v.index(f, b.V, idx)
 	case *runtime.IfaceNil:
 		return v.index(f, &runtime.TypedNil{Typ: b.Typ}, idx)
 	case *runtime.TypedNil:
@@ -1152,7 +1230,7 @@ func (v *VM) index(f *frame, base, idx runtime.Value) runtime.Value {
 // fieldTypedefs returns declared field types for a struct typedef (nil
 // when the hook is unset or resolution fails — coerce passes through).
 func (v *VM) fieldTypedefs(td *runtime.TypeDef) []*runtime.TypeDef {
-	if v.H.FieldTypes == nil {
+	if td == nil || v.H.FieldTypes == nil {
 		return nil
 	}
 	fts, err := v.H.FieldTypes(td)
@@ -1168,7 +1246,7 @@ func (v *VM) elemTypedef(f *frame, td *runtime.TypeDef) *runtime.TypeDef {
 	if v.H.ElemOf == nil {
 		return nil
 	}
-	et, err := v.H.ElemOf(td)
+	et, err := v.H.ElemOf(v.peelNamed(td))
 	if err != nil {
 		return nil
 	}
@@ -1182,7 +1260,9 @@ func (v *VM) mapZero(f *frame, td *runtime.TypeDef) runtime.Value {
 	if td == nil || v.H.ElemOf == nil {
 		return runtime.NIL
 	}
-	et, err := v.H.ElemOf(td)
+	// `type M2 M` maps: ElemOf on the declared name resolves to the
+	// underlying typedef, so peel first to reach the element type.
+	et, err := v.H.ElemOf(v.peelNamed(td))
 	if err != nil || et == nil {
 		return runtime.NIL
 	}
@@ -1194,6 +1274,10 @@ func (v *VM) mapZero(f *frame, td *runtime.TypeDef) runtime.Value {
 func (v *VM) indexOK(f *frame, base, idx runtime.Value) runtime.Value {
 	if dv, ok := runtime.Deref(base); ok {
 		return v.indexOK(f, dv, idx)
+	}
+	idx = runtime.Unwrap(idx)
+	if n, ok := base.(*runtime.Named); ok {
+		return v.indexOK(f, n.V, idx)
 	}
 	if in, ok := base.(*runtime.IfaceNil); ok {
 		return v.indexOK(f, &runtime.TypedNil{Typ: in.Typ}, idx)
@@ -1219,6 +1303,11 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 		v.setIndex(f, dv, idx, val)
 		return
 	}
+	if n, ok := base.(*runtime.Named); ok {
+		v.setIndex(f, n.V, idx, val)
+		return
+	}
+	idx = runtime.Unwrap(idx)
 	switch b := base.(type) {
 	case *runtime.IfaceNil:
 		v.setIndex(f, &runtime.TypedNil{Typ: b.Typ}, idx, val)
@@ -1241,6 +1330,10 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 		if idx != nil && !reflect.TypeOf(idx).Comparable() {
 			f.trap("map key %T is not comparable", idx)
 		}
+		// the map's declared element type constrains the write.
+		if et := v.elemTypedef(f, b.Typ); et != nil {
+			val = v.coerce(f, val, et)
+		}
 		if _, exists := b.Pairs[idx]; !exists {
 			b.Order = append(b.Order, idx)
 		}
@@ -1253,6 +1346,9 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 func (v *VM) slice(f *frame, base, lo, hi runtime.Value) runtime.Value {
 	if dv, ok := runtime.Deref(base); ok {
 		return v.slice(f, dv, lo, hi)
+	}
+	if n, ok := base.(*runtime.Named); ok {
+		return v.slice(f, n.V, lo, hi)
 	}
 	switch b := base.(type) {
 	case *runtime.IfaceNil:
@@ -1282,11 +1378,11 @@ func (v *VM) slice(f *frame, base, lo, hi runtime.Value) runtime.Value {
 func bounds(f *frame, lo, hi runtime.Value, n int64) (int64, int64) {
 	l := int64(0)
 	h := n
-	if _, isNil := lo.(runtime.Nil); !isNil {
-		l = lo.(int64)
+	if lv, ok := runtime.Unwrap(lo).(int64); ok {
+		l = lv
 	}
-	if _, isNil := hi.(runtime.Nil); !isNil {
-		h = hi.(int64)
+	if hv, ok := runtime.Unwrap(hi).(int64); ok {
+		h = hv
 	}
 	return l, h
 }
@@ -1309,6 +1405,12 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 	td, ok := tdv.(*runtime.TypeDef)
 	if !ok {
 		f.trap("composite literal on non-type %T", tdv)
+	}
+	// a type alias builds the underlying composite
+	if td.Kind == runtime.KindAlias && v.H.Underlying != nil {
+		if u, err := v.H.Underlying(td); err == nil && u != nil {
+			td = u
+		}
 	}
 	switch td.Kind {
 	case runtime.KindSlice:
@@ -1346,7 +1448,7 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 		m := &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}, Typ: td}
 		et := v.elemTypedef(f, td)
 		for i := 0; i < n; i++ {
-			k := raw[i*2]
+			k := runtime.Unwrap(raw[i*2])
 			m.Pairs[k] = v.coerce(f, raw[i*2+1], et)
 			m.Order = append(m.Order, k)
 		}
@@ -1404,23 +1506,42 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 			}
 		}
 		return &runtime.Cell{Elem: es}
-	case runtime.KindStruct, runtime.KindNamedBasic, runtime.KindAlias:
-		s, _ := v.zeroValue(f, td).(*runtime.Struct)
+	case runtime.KindStruct, runtime.KindNamedBasic:
+		// `type A B` literals build the underlying composite while keeping
+		// the declared tag: zeroValue returns Named{A, <underlying>}, and
+		// field names/types resolve through the underlying typedef.
+		etd := td
+		if td.Kind == runtime.KindNamedBasic {
+			if p := v.peelNamed(td); p != nil && p != td {
+				etd = p
+			}
+		}
+		z := v.zeroValue(f, td)
+		wrap, _ := z.(*runtime.Named)
+		var s *runtime.Struct
+		if wrap != nil {
+			s, _ = wrap.V.(*runtime.Struct)
+		} else {
+			s, _ = z.(*runtime.Struct)
+		}
 		if s == nil {
-			s = &runtime.Struct{Def: td, Fields: make([]runtime.Value, len(td.Fields))}
+			s = &runtime.Struct{Def: etd, Fields: make([]runtime.Value, len(etd.Fields))}
 			for i := range s.Fields {
 				s.Fields[i] = runtime.NIL
 			}
+			if wrap != nil {
+				wrap.V = s
+			}
 		}
 		if kv {
-			fts := v.fieldTypedefs(td)
+			fts := v.fieldTypedefs(etd)
 			for i := 0; i < n; i++ {
 				name, ok := raw[i*2].(string)
 				if !ok {
 					f.trap("struct literal key %T", raw[i*2])
 				}
 				found := false
-				for fi, fn := range td.Fields {
+				for fi, fn := range etd.Fields {
 					if fn == name {
 						var ft *runtime.TypeDef
 						if fi < len(fts) {
@@ -1432,11 +1553,11 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 					}
 				}
 				if !found {
-					f.trap("%s has no field %s", td.Name, name)
+					f.trap("%s has no field %s", tdName(td), name)
 				}
 			}
 		} else {
-			fts := v.fieldTypedefs(td)
+			fts := v.fieldTypedefs(etd)
 			for i := 0; i < n && i < len(s.Fields); i++ {
 				var ft *runtime.TypeDef
 				if i < len(fts) {
@@ -1444,6 +1565,9 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 				}
 				s.Fields[i] = v.coerce(f, raw[i], ft)
 			}
+		}
+		if wrap != nil {
+			return wrap
 		}
 		return s
 	default:
@@ -1456,10 +1580,14 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 // valueCopy implements Go assignment semantics: structs copy by value;
 // slices, maps and pointers share.
 func valueCopy(v runtime.Value) runtime.Value {
-	if s, ok := v.(*runtime.Struct); ok {
-		cp := &runtime.Struct{Def: s.Def, Fields: make([]runtime.Value, len(s.Fields))}
-		copy(cp.Fields, s.Fields)
+	switch x := v.(type) {
+	case *runtime.Struct:
+		cp := &runtime.Struct{Def: x.Def, Fields: make([]runtime.Value, len(x.Fields))}
+		copy(cp.Fields, x.Fields)
 		return cp
+	case *runtime.Named:
+		// assignment copies the underlying value but keeps the declared tag
+		return &runtime.Named{Typ: x.Typ, V: valueCopy(x.V)}
 	}
 	return v
 }
@@ -1474,6 +1602,8 @@ func asChan(f *frame, v runtime.Value) *runtime.Chan {
 		return x
 	case *runtime.Cell:
 		return asChan(f, x.Elem)
+	case *runtime.Named:
+		return asChan(f, x.V)
 	case *runtime.IfaceNil:
 		return asChan(f, &runtime.TypedNil{Typ: x.Typ})
 	case *runtime.TypedNil:
@@ -1529,6 +1659,8 @@ func newIterator(f *frame, coll runtime.Value) *runtime.Iterator {
 	switch c := coll.(type) {
 	case *runtime.Cell:
 		return newIterator(f, c.Elem)
+	case *runtime.Named:
+		return newIterator(f, c.V)
 	case *runtime.Slice:
 		return &runtime.Iterator{Kind: 's', Elems: c.Elems}
 	case *runtime.Map:
@@ -1620,6 +1752,8 @@ func truthy(v runtime.Value) bool {
 		return false
 	case *runtime.IfaceNil:
 		return true // interface with a dynamic type is not nil
+	case *runtime.Named:
+		return truthy(x.V)
 	case int64:
 		return x != 0
 	case float64:
@@ -1632,6 +1766,31 @@ func truthy(v runtime.Value) bool {
 }
 
 func binaryOp(f *frame, op bytecode.BinOp, a, b runtime.Value) runtime.Value {
+	// named basic values operate on their underlying value; two different
+	// declared types in one operation is a type error (Go: `x + y` on
+	// MyInt and Other traps), and an arithmetic result keeps the
+	// operand's declared tag — comparisons produce an untyped bool, which
+	// stays bare.
+	var tag *runtime.TypeDef
+	if n, ok := a.(*runtime.Named); ok {
+		tag = n.Typ
+		a = n.V
+	}
+	if n, ok := b.(*runtime.Named); ok {
+		if tag != nil && !sameTypeDef(tag, n.Typ) {
+			f.trap("invalid operation: mismatched types %s and %s", tdName(tag), tdName(n.Typ))
+		}
+		tag = n.Typ
+		b = n.V
+	}
+	if tag != nil {
+		res := binaryOp(f, op, a, b)
+		switch res.(type) {
+		case int64, float64, string:
+			return &runtime.Named{Typ: tag, V: res}
+		}
+		return res
+	}
 	// equality works on any comparable pair
 	switch op {
 	case bytecode.BinEql:
@@ -1750,6 +1909,7 @@ func stringBinOp(f *frame, op bytecode.BinOp, a string, b runtime.Value) runtime
 }
 
 func unaryOp(f *frame, op bytecode.UnOp, a runtime.Value) runtime.Value {
+	a = runtime.Unwrap(a)
 	switch op {
 	case bytecode.UnNot:
 		return !truthy(a)
@@ -1774,6 +1934,12 @@ func unaryOp(f *frame, op bytecode.UnOp, a runtime.Value) runtime.Value {
 }
 
 func eqlValue(a, b runtime.Value) bool {
+	if n, ok := a.(*runtime.Named); ok {
+		a = n.V
+	}
+	if n, ok := b.(*runtime.Named); ok {
+		b = n.V
+	}
 	if ai, ok := a.(int64); ok {
 		switch bv := b.(type) {
 		case int64:
@@ -1919,6 +2085,8 @@ func toFloat(v runtime.Value) float64 {
 		return x
 	case int64:
 		return float64(x)
+	case *runtime.Named:
+		return toFloat(x.V)
 	}
 	return 0
 }
@@ -1946,6 +2114,15 @@ func convert(td *runtime.TypeDef, v runtime.Value) (runtime.Value, error) {
 		case runtime.KindInterface:
 			return &runtime.IfaceNil{Typ: tn.Typ}, nil
 		}
+	}
+	// a Named value converts through its underlying value — `string(x)` on
+	// a named string value works like the underlying conversion; `T(x)`
+	// on the same declared type is a no-op.
+	if n, ok := v.(*runtime.Named); ok {
+		if sameTypeDef(n.Typ, td) {
+			return v, nil
+		}
+		v = n.V
 	}
 	switch td.Name {
 	case "int", "int64", "int32", "byte", "rune":
@@ -1978,8 +2155,26 @@ func convert(td *runtime.TypeDef, v runtime.Value) (runtime.Value, error) {
 	case "bool":
 		return truthy(v), nil
 	}
-	// named types: pass through
-	if td.Kind == runtime.KindNamedBasic || td.Name != "" {
+	// declared named basic types tag the converted value so its declared
+	// identity survives reads (MyInt(5) is MyInt, not int). The value
+	// itself converts through the underlying ident's builtin family when
+	// one is known; unresolvable chains pass through unchecked, like every
+	// other dynamic fallthrough.
+	if td.Kind == runtime.KindNamedBasic {
+		if !declaredType(td) {
+			return v, nil
+		}
+		u := v
+		if id, ok := td.Anon.(*ast.Ident); ok {
+			cv, err := convert(&runtime.TypeDef{Kind: runtime.KindNamedBasic, Name: id.Name}, v)
+			if err != nil {
+				return nil, err
+			}
+			u = cv
+		}
+		return &runtime.Named{Typ: td, V: u}, nil
+	}
+	if td.Name != "" {
 		return v, nil
 	}
 	return nil, fmt.Errorf("cannot convert %T to %s", v, td.Name)
@@ -2011,6 +2206,9 @@ func (v *VM) popArgs(f *frame, argc int, spread bool, pos token.Pos) []runtime.V
 			}
 			args = args[:argc-1] // nil slice spreads to zero args
 			return args
+		}
+		if n, ok := last.(*runtime.Named); ok {
+			last = n.V
 		}
 		if _, isNil := last.(runtime.Nil); isNil {
 			args = args[:argc-1]
@@ -2089,6 +2287,11 @@ func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
 		// nil has no dynamic type: every assert fails, including .(any).
 		// (`case nil:` in a type switch is matched by BinEql, not here.)
 		return false
+	}
+	if n, ok := x.(*runtime.Named); ok {
+		// a Named value's dynamic type is its declared typedef —
+		// `x.(MyInt)` on MyInt matches, `x.(int)` does not.
+		return v.typeMatchesTD(f, td, n.Typ)
 	}
 	if tn, ok := asTypedNil(x); ok {
 		return v.typeMatchesTD(f, td, tn.Typ)
@@ -2275,8 +2478,11 @@ func (v *VM) memberOfType(f *frame, td *runtime.TypeDef, name string, recv runti
 
 // coerce applies a declared type `td` to the value being bound: NIL picks
 // up the type's zero value (var x T), a TypedNil crossing into an
-// interface-typed slot boxes as an IfaceNil (var x any = (*int)(nil)).
-// Every other value passes through — the VM stays dynamically typed.
+// interface-typed slot boxes as an IfaceNil (var x any = (*int)(nil)),
+// and `var x T = v` runs an assignability check — a value of a different
+// named type or a mismatched basic family traps, like Go's type checker.
+// Declared named basic types tag the result as *runtime.Named so the
+// declared identity survives reads.
 func (v *VM) coerce(f *frame, x runtime.Value, td *runtime.TypeDef) runtime.Value {
 	if td == nil {
 		return x
@@ -2293,9 +2499,176 @@ func (v *VM) coerce(f *frame, x runtime.Value, td *runtime.TypeDef) runtime.Valu
 		if tn, ok := x.(*runtime.TypedNil); ok {
 			return &runtime.IfaceNil{Typ: tn.Typ}
 		}
+		if !v.satisfiesIface(f, td, x) {
+			f.trap("cannot use %s as %s", typeNameOf(x), tdName(td))
+		}
 		return x
 	}
+	return v.coerceConcrete(f, x, td)
+}
+
+// declaredType reports whether td is a defined (declared) type rather than
+// a builtin or anonymous shape: builtins carry only a Name, declared types
+// carry their TypeSpec (or at least a package).
+func declaredType(td *runtime.TypeDef) bool {
+	return td.Spec != nil || td.Pkg != nil
+}
+
+// coerceConcrete applies td to a non-nil x under a non-interface target.
+// A Named value keeps its identity only for the identical declared type
+// (Go: named-to-named needs a conversion); GoValues pass unchecked at the
+// host boundary; a TypedNil re-tags when the underlying shape matches.
+func (v *VM) coerceConcrete(f *frame, x runtime.Value, td *runtime.TypeDef) runtime.Value {
+	if n, ok := x.(*runtime.Named); ok {
+		if sameTypeDef(n.Typ, td) || sameTypeDef(n.Typ, v.peelNamed(td)) {
+			return x
+		}
+		f.trap("cannot use %s as %s", tdName(n.Typ), tdName(td))
+	}
+	if _, ok := x.(*runtime.GoValue); ok {
+		return x // host boundary: assignability is unknowable
+	}
+	if tn, ok := x.(*runtime.TypedNil); ok {
+		if sameTypeDef(tn.Typ, td) || v.tdShapeEq(tn.Typ, td) {
+			return &runtime.TypedNil{Typ: td} // re-tag to the declared type
+		}
+		f.trap("cannot use nil %s as %s", tdName(tn.Typ), tdName(td))
+	}
+	if _, ok := x.(*runtime.IfaceNil); ok {
+		f.trap("cannot use interface value as %s", tdName(td))
+	}
+	utd := v.peelNamed(td)
+	if utd.Kind == runtime.KindInterface {
+		// `type I2 I` — the declared name's method set is the underlying
+		// interface's; check and store unboxed, like a direct I slot.
+		if !v.satisfiesIface(f, utd, x) {
+			f.trap("cannot use %s as %s", typeNameOf(x), tdName(td))
+		}
+		return x
+	}
+	if !v.shapeOK(f, x, utd) {
+		f.trap("cannot use %s as %s", typeNameOf(x), tdName(td))
+	}
+	if utd.Kind == runtime.KindMap {
+		if m, ok := x.(*runtime.Map); ok {
+			if m.Typ == nil {
+				// a declared map type stamps the map value so missing-key
+				// reads yield the declared element zero instead of NIL.
+				m.Typ = td
+			} else if !sameTypeDef(m.Typ, td) {
+				// two named map types do not re-bind (Go: named-to-named
+				// needs a conversion); anonymous/underlying shapes may
+				// re-bind only when the shapes match element-for-element.
+				if m.Typ.Name != "" && td.Name != "" {
+					f.trap("cannot use %s as %s", tdName(m.Typ), tdName(td))
+				}
+				if !v.tdShapeEq(m.Typ, td) {
+					f.trap("cannot use %s as %s", tdName(m.Typ), tdName(td))
+				}
+			}
+		}
+	}
+	if td.Kind == runtime.KindNamedBasic && declaredType(td) {
+		return &runtime.Named{Typ: td, V: x}
+	}
 	return x
+}
+
+// peelNamed follows a typedef through Alias and `type A B` (NamedBasic)
+// chains to the typedef that gives its storage shape — builtin or
+// composite — stopping on unresolvable references.
+func (v *VM) peelNamed(td *runtime.TypeDef) *runtime.TypeDef {
+	for i := 0; td != nil && (td.Kind == runtime.KindAlias || td.Kind == runtime.KindNamedBasic) && v.H.Underlying != nil && i < 32; i++ {
+		u, err := v.H.Underlying(td)
+		if err != nil || u == nil || u == td {
+			break
+		}
+		td = u
+	}
+	return td
+}
+
+// tdShapeEq reports whether two typedefs have the same underlying shape —
+// for typed-nil retagging (`var s S = ([]int)(nil)` needs S ~ []int).
+func (v *VM) tdShapeEq(a, b *runtime.TypeDef) bool {
+	pa, pb := v.peelNamed(a), v.peelNamed(b)
+	if pa == pb {
+		return true
+	}
+	if pa == nil || pb == nil || pa.Kind != pb.Kind {
+		return false
+	}
+	if sameTypeDef(pa, pb) {
+		return true
+	}
+	if pa.Anon != nil && pb.Anon != nil {
+		return typeExprName(pa.Anon) == typeExprName(pb.Anon)
+	}
+	return pa.Anon == nil && pb.Anon == nil
+}
+
+// shapeOK checks a bare value against a fully-peeled (non-named) typedef:
+// basic families match by kind, structs by typedef identity, containers by
+// kind. Unverifiable cases pass — the check is assignability, not typing.
+func (v *VM) shapeOK(f *frame, x runtime.Value, td *runtime.TypeDef) bool {
+	switch td.Kind {
+	case runtime.KindNamedBasic, runtime.KindAlias:
+		name := td.Name
+		if name == "" {
+			if id, ok := td.Anon.(*ast.Ident); ok {
+				name = id.Name
+			}
+		}
+		switch name {
+		case "int", "int8", "int16", "int32", "int64",
+			"uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune", "uintptr":
+			_, ok := x.(int64)
+			return ok
+		case "float32", "float64":
+			// int64 is accepted too: the VM cannot distinguish an untyped
+			// constant (`var f float64 = 1`) from an int-typed variable.
+			switch x.(type) {
+			case int64, float64:
+				return true
+			}
+			return false
+		case "string":
+			_, ok := x.(string)
+			return ok
+		case "bool":
+			_, ok := x.(bool)
+			return ok
+		}
+		return true // unknown underlying name — pass through
+	case runtime.KindStruct:
+		s, ok := x.(*runtime.Struct)
+		if !ok {
+			return false
+		}
+		if s.Def == nil || td.Name == "" {
+			return true // anonymous shape — approximated ok
+		}
+		return sameTypeDef(s.Def, td)
+	case runtime.KindSlice:
+		_, ok := x.(*runtime.Slice)
+		return ok
+	case runtime.KindMap:
+		_, ok := x.(*runtime.Map)
+		return ok
+	case runtime.KindChan:
+		_, ok := x.(*runtime.Chan)
+		return ok
+	case runtime.KindFunc:
+		switch x.(type) {
+		case *runtime.Function, *runtime.Closure, *runtime.BoundMethod, *runtime.BuiltinFunc:
+			return true
+		}
+		return false
+	case runtime.KindPointer:
+		_, ok := runtime.Deref(x)
+		return ok
+	}
+	return true
 }
 
 // zeroValue returns the Go zero value of a typedef: runtime.Zero plus a
@@ -2313,34 +2686,46 @@ func (v *VM) zeroSeen(f *frame, td *runtime.TypeDef, seen map[*runtime.TypeDef]b
 	}
 	seen[td] = true
 	defer delete(seen, td) // sibling fields may share a type
+	orig := td
 	// Named basics peel to their underlying typedef so `type S string`
 	// zeros as "" and `type A B` chains resolve transitively. The cap
 	// keeps a self-referential chain from looping forever.
-	for i := 0; i < 32 && td.Kind == runtime.KindNamedBasic && v.H.Underlying != nil; i++ {
-		u, err := v.H.Underlying(td)
-		if err != nil || u == nil || u == td {
-			break
-		}
-		td = u
-	}
+	td = v.peelNamed(td)
 	z := runtime.Zero(td)
 	s, ok := z.(*runtime.Struct)
-	if !ok || v.H.FieldTypes == nil {
+	if ok && v.H.FieldTypes != nil {
+		fts, err := v.H.FieldTypes(td)
+		if err != nil {
+			if f != nil {
+				f.trap("zero of %s: %s", tdName(td), err)
+			}
+			return v.wrapZero(orig, z)
+		}
+		for i := range s.Fields {
+			if i < len(fts) && fts[i] != nil {
+				s.Fields[i] = v.zeroSeen(f, fts[i], seen)
+			}
+		}
+	}
+	return v.wrapZero(orig, z)
+}
+
+// wrapZero restores the declared identity on a zero value built from the
+// peeled underlying typedef: a declared named basic type gets a Named tag
+// (`var x MyInt` reads as MyInt, not int64), while a nilable zero re-tags
+// its TypedNil to the declared name (`var p P2` where P2's underlying is
+// a pointer type).
+func (v *VM) wrapZero(td *runtime.TypeDef, z runtime.Value) runtime.Value {
+	if td.Kind != runtime.KindNamedBasic || !declaredType(td) {
 		return z
 	}
-	fts, err := v.H.FieldTypes(td)
-	if err != nil {
-		if f != nil {
-			f.trap("zero of %s: %s", tdName(td), err)
-		}
+	if _, ok := z.(*runtime.TypedNil); ok {
+		return &runtime.TypedNil{Typ: td}
+	}
+	if _, ok := z.(runtime.Nil); ok {
 		return z
 	}
-	for i := range s.Fields {
-		if i < len(fts) && fts[i] != nil {
-			s.Fields[i] = v.zeroSeen(f, fts[i], seen)
-		}
-	}
-	return s
+	return &runtime.Named{Typ: td, V: z}
 }
 
 // Zero implements the VMCaller hook for the new() builtin.
@@ -2350,6 +2735,8 @@ func (v *VM) Zero(td *runtime.TypeDef) runtime.Value {
 
 func typeNameOf(x runtime.Value) string {
 	switch xv := x.(type) {
+	case *runtime.Named:
+		return tdName(xv.Typ)
 	case *runtime.Struct:
 		if xv.Def != nil && xv.Def.Name != "" {
 			return xv.Def.Name
@@ -2637,6 +3024,8 @@ func (v *VM) typeOfValue(x runtime.Value) *runtime.TypeDef {
 		return &runtime.TypeDef{Kind: runtime.KindChan}
 	case *runtime.Struct:
 		return xv.Def
+	case *runtime.Named:
+		return xv.Typ // a named arg binds T to its declared type
 	case *runtime.TypedNil:
 		return xv.Typ
 	case *runtime.IfaceNil:

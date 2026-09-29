@@ -1098,4 +1098,98 @@ traps, never compile errors, so the total-function invariant holds.
   spell `*target` the way Go requires; the current binding-of-first-
   cause is documented rather than re-engineered.
 
+## 25. Round-6 notes: assignability checks and `*runtime.Named`
+
+This round closed the four typed-zero follow-ups: maps now stamp their
+declared typedef on binds, `var x T = v` (and `x = v`) enforces
+assignability, declared named-basic values keep their declared identity
+through `*runtime.Named`, and unresolvable struct field types yield
+typed-nil holes instead of bare `NIL`.
+
+### `Cell.Typ` — the declared type of a slot
+
+- `runtime.Cell` grew `Typ *TypeDef`, stamped wherever a slot is
+  declared (`OpCoerce`/`OpCoerceGlobal` on locals/globals, `new(T)`).
+  `assignCell` — used by `OpSetLocal`/`OpSetUpval`/`OpSetGlobal` and
+  the `*p = v` path (`OpSetInd`) — re-coerces on every store, so
+  `x = v` on a `var x T` enforces the same contract as the
+  declaration. This is the piece that makes plain assignment
+  type-checked, not just `var` initializers.
+- `FieldRef`/`IndexRef` writes coerce against the struct's declared
+  field type / the map or slice's declared element type — so
+  `s.f = v` and `m[k] = v` are checked too, not just variable stores.
+
+### Assignability at run time (`coerce` → `coerceConcrete`)
+
+- Non-interface targets go through `coerceConcrete`: peel the target
+  through `Alias`/`NamedBasic` (`peelNamed`, capped), check the
+  unboxed value against the peeled shape (`shapeOK` — basic families,
+  `*Struct` by typedef identity, `Slice`/`Map`/`Chan`/`Func`/`Pointer`
+  kind checks), then re-tag. Interfaces still route through
+  `satisfiesIface` and keep boxing semantics.
+- `TypedNil` re-tags only through `sameTypeDef`/`tdShapeEq`, so
+  `(*Sq)(nil)` cannot bind a `*int` slot. `IfaceNil` traps on
+  re-assignment to a concrete type (a boxed nil keeps its dynamic
+  type), matching Go.
+- Two named map types refuse to re-bind (`var o M3 = m` where `m` is
+  `M2` traps); an anonymous-shaped map may bind into a declared map
+  type only when the element shapes match (`tdShapeEq`), and a map
+  with no typedef yet gets stamped so missing-key reads resolve the
+  declared element zero.
+
+### `*runtime.Named` — declared identity on basic values
+
+- `Named{Typ, V}` wraps a value with its *declared* typedef. Only
+  typedefs that came from a `type` spec (`Spec`/`Pkg` set — builtins
+  and anonymous shapes have neither) produce `Named`, so
+  `Convert[int](40)`/`T(x)` on builtins stay bare and all the
+  untyped-constant semantics keep working.
+- Arith on a single declared tag re-tags the result (`var c Celsius;
+  c + 1` is `Celsius`); mixing two different declared tags traps
+  "mismatched types", which is the closest a run-time check gets to
+  Go's compile error. An untyped operand adopts the named operand's
+  tag. `x.(T)` on a Named checks `Typ` identity — `x.(float64)` on a
+  `Celsius` correctly fails.
+- `type A B` shares B's storage, not B's methods: `namedMember`
+  resolves methods only from `n.Typ.Methods`, and `methodsOfValue`
+  checks `*Named` before deref (a Named over a pointer-like
+  underlying must not dereference through its tag). Fields still read
+  through `n.V` when it is a `*Struct`.
+- `runtime.Unwrap(v)` peels `Named→V` and is used at ~30 consumption
+  sites (truthy/binaryOp/eqlValue/index/lenOf/asChan/convert/
+  intrinsics/`assignReflect`…), so the tag is invisible everywhere a
+  value flows outward and visible only where type identity matters.
+
+### Field-type fallback
+
+- `fieldTypes` (dispatch.go) now synthesizes a `NamedBasic` typedef
+  (`Anon` = the field's unresolved type expr) when `elemTypeRef`
+  fails, and `runtime.Zero` maps an unresolvable `NamedBasic` to
+  `TypedNil{td}` — so `type W struct{ R io.Reader }` with `io`
+  unresolvable fills `W.R` with a typed-nil hole: `h.R == nil` is
+  true, and `var x any = h.R` boxes non-nil, like any typed nil.
+
+### Approximations taken (unplanned, documented)
+
+- **Bare values act as untyped constants.** Once a `:=` value erases
+  its type, `var y MyInt = intVar` wraps instead of rejecting —
+  `int`-vs-`MyInt` named-to-named rejection needs static type
+  information the runtime does not have. Consequences: numeric
+  families widen loosely (int names take int64, float names take
+  int64|float64).
+- **`x = v` inherits declaration semantics silently.** `var x int;
+  x = nil` zero-fills rather than trapping — coerce is shared.
+- **Boxed pointers are unchecked.** `OpBox` cells (from `&literal`)
+  carry no `Typ`; stores through them can't re-coerce.
+- **Consts are never coerced** — `const k MyInt = 5` stores a bare
+  `int64`, so a const read cannot assert back to `MyInt`.
+- **Named-pointer/map/chan/func typedefs can only tag nil.** A
+  `*Cell`/`*Map` has nowhere to carry a declared tag short of
+  wrapping every pointer-like value; `type P *T` therefore stays
+  shape-approximate on values (though its `TypedNil` retags).
+- **`type I2 I` peels to the underlying interface** — `x.(I2)`
+  behaves as `x.(I)`; the I2 name is lost in matching.
+- Only int64/float64/string results re-tag in `binaryOp` — bool
+  results stay bare (correct: they re-coerce on the next bind).
+
 ## (end)

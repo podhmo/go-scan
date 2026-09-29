@@ -220,6 +220,8 @@ func assignReflect(dst reflect.Value, v runtime.Value) error {
 			return nil
 		}
 		return assignReflect(dst, x.Elem)
+	case *runtime.Named:
+		return assignReflect(dst, x.V)
 	case *runtime.Struct:
 		if dst.Kind() != reflect.Struct {
 			return fmt.Errorf("cannot assign struct to %s", dst.Type())

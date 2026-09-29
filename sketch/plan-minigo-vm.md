@@ -1,11 +1,14 @@
 # Plan: minigo Redesign — A Lazy, Stack-VM Go Interpreter
 
 > **Status**: merged proposal. v1 of this document proposed the stack-VM +
-> lazy-import redesign; this revision folds in a second proposal ("案2") that
-> sharpened several points: strict phase separation, `TRAP` vs script `Panic`,
-> the package lifecycle state machine, per-function lazy compilation,
-> `go list -find` as a resolver oracle, stub-package host intrinsics, and a
-> `PackageProvider` abstraction. Divergences and open questions are marked.
+> lazy-import redesign; this revision folds in two external proposals ("案2")
+> that sharpened several points: strict phase separation, `TRAP` vs script
+> `Panic`, the package lifecycle state machine, per-function lazy
+> compilation, `go list -find` as a resolver oracle, stub-package host
+> intrinsics, a `PackageProvider` abstraction — and, for special forms,
+> canonical-symbol dispatch, a `SPECIAL_CALL` convention with a quote table,
+> the `SpecialContext` abstraction, and partial argument evaluation.
+> Divergences and open questions are marked.
 
 This document proposes a ground-up redesign of `minigo` — **as a separate
 `minigo2` implementation, not an in-place rewrite** — that keeps the core
@@ -26,6 +29,14 @@ addressing three regrets of the v1 design:
 `go-scan` is **not** a dependency of `minigo2`; it is an optional adapter
 behind the resolver interface.
 
+The redesign can be framed as three pillars:
+
+```text
+1. Lazy Go        — never read a package/symbol until it's needed
+2. Executable Go  — a stack VM executing a Go subset
+3. Quoted Go      — special forms: ordinary Go syntax used as a DSL
+```
+
 ## 1. Requirements
 
 | Requirement | Consequence |
@@ -33,10 +44,10 @@ behind the resolver interface.
 | Depend on `go/ast` only | Frontend is `go/parser` → `*ast.File`. No `go/types`, no `go/packages` in the core. |
 | All code must be parseable; runtime panic allowed | The compiler is a *total function* over the AST: it never rejects a construct. Unsupported features compile to `TRAP` and panic only if executed. |
 | Free entry point | Execution API is `Run(Entry{Package, Function, Args})`; an entry point is just a lazy package load + index lookup + call. |
-| gopls works | The implementation is an ordinary Go module; scripts are ordinary `.go` files in real modules. No magic globals, no language extensions — host extensions are real (stub) packages. |
+| gopls works | The implementation is an ordinary Go module; scripts are ordinary `.go` files in real modules. Two invariants: *every minigo program stays a valid Go program*; *interpreter extensions are expressed as valid Go stub APIs*. |
 | Per-package lazy imports | `import` records an `ImportRef` only. A package is located, parsed, indexed and initialized the first time one of its symbols is fetched at runtime. |
 | Go module system works | A `PackageResolver` resolves import path → package dir + file list without expanding the import graph. |
-| Macro-like features | Special forms (v1's `RegisterSpecial`: call sites receiving unevaluated `[]ast.Expr`) are preserved via the constant pool. |
+| Macro-like features | Special forms (v1's `RegisterSpecial`) become a first-class VM call convention (`SPECIAL_CALL` + quote table) — runtime calls over quoted args, **not** AST→AST macros. |
 
 ## 2. Pipeline
 
@@ -204,8 +215,8 @@ it evaluates only at package `Initialize`.
   package compiles nothing. This composes perfectly with lazy packages.
 - **Total coverage**: `default:` case of every node-kind switch emits
   `TRAP`.
-- **Constants & positions**: literals, names, and call-site `[]ast.Expr`
-  (special forms) go into `Chunk.Consts`; every `Instruction` carries
+- **Constants & positions**: literals, names, and quote-table entries
+  (special-form call sites) go into the chunk; every `Instruction` carries
   `token.Pos` for clean stack traces.
 - **Generics = monomorphize-on-use**: `Foo[int](x)` → specialization cache
   `InstanceKey{FuncID, TypeArgs}` → compile `Foo[int]`. Start with explicit
@@ -220,7 +231,11 @@ it evaluates only at package `Initialize`.
 
 ```go
 type Instruction struct { Op Op; A, B uint32; Pos token.Pos }
-type Chunk struct { Code []Instruction; Consts []Value }
+type Chunk struct {
+    Code   []Instruction
+    Consts []Value
+    Quotes []QuotedCall   // special-form call sites
+}
 
 type Frame struct { Func *Function; IP, Base int; Defers []Value }
 type VM struct { Stack []Value; Frames []Frame; Runtime *Runtime }
@@ -236,7 +251,7 @@ Representative opcodes:
 | packages | `PKG_GET` |
 | ops | `ADD`, `SUB`, `EQ`, `LT`, `UNARY` |
 | control | `JUMP`, `JUMP_IF_FALSE`, `RANGE_NEXT` |
-| calls | `CALL`, `RETURN`, `MAKE_CLOSURE` |
+| calls | `CALL`, `RETURN`, `MAKE_CLOSURE`, `SPECIAL_CALL` |
 | composites | `MAKE_STRUCT`, `MAKE_SLICE`, `MAKE_MAP` |
 | access | `GET_FIELD`, `SET_FIELD`, `INDEX`, `SET_INDEX` |
 | semantics | `CONVERT`, `TYPE_ASSERT` |
@@ -344,8 +359,12 @@ Provider chain: `IntrinsicProvider` → `SourceProvider` →
 
 ### Host extension via stub packages — the gopls-friendly pattern
 
-No magic `Globals` map for new code (kept as convenience for embedding):
-host capabilities live behind a *real* package path:
+Two invariants make this concrete:
+
+> **Every minigo program SHOULD remain a valid ordinary Go program.**
+> **Interpreter extensions SHOULD be represented by valid Go stub APIs.**
+
+Host capabilities live behind a *real* package path:
 
 ```go
 import "minigo.dev/host"
@@ -354,10 +373,165 @@ func Config() string { return host.Getenv("HOME") }
 
 The repo ships `package host` with stub bodies (`panic("minigo intrinsic")`),
 so gopls/gofmt/goimports/rename all work on scripts; the VM intercepts
-`minigo.dev/host.*` as intrinsics. Special forms work the same way
-(convert-define's `define` package is the existing precedent).
+`minigo.dev/host.*` as intrinsics. No magic `Globals` map for new code (kept
+as convenience for embedding). A `//go:build codegen`-style tag on DSL files
+remains the *user's* choice — useful to keep DSL files out of normal builds,
+never required by minigo itself.
 
-## 12. API — Engine + Session
+## 12. Special Forms — "Quoted Go"
+
+Special forms are not a side feature; they are a third pillar. The design
+rule: **a special form is an execution-semantics overlay on an ordinary Go
+symbol, dispatched by canonical symbol identity — not a special global
+function, and not a macro.**
+
+### 12.1 Why it matters
+
+`convert-define` is the proof: its `define` package contains ordinary Go
+stubs (`Convert(any)`, `Rule(any)`, `(*Config).Map(any,any)`), so scripts are
+statically valid Go — gopls resolves `dst *destination.DstUser`, renames
+work, imports are real. Meanwhile the interpreter treats
+`github.com/.../define.Convert` as a *quoted call*: the `*ast.FuncLit` and
+its interior (`c.Map`, `c.Compute`, `convutil.TimeToString`) are received as
+syntax, never executed as Go. Typed Go syntax + source identity + AST
+quotation = a type-aware DSL.
+
+### 12.2 Dispatch by canonical identity, before materialization
+
+```go
+import d "github.com/foo/define"
+d.Convert(...)
+```
+
+The compiler canonicalizes `SelectorExpr{Ident("d"), "Convert"}` through the
+file's import table → `github.com/foo/define.Convert` → looks up
+`SymbolID{PackagePath, Name}` in the special registry. On hit it emits
+`SPECIAL_CALL`; **the `define` package itself is never loaded or even parsed
+by the runtime** — the import spec alone yields the path. On miss, it falls
+through to normal lazy-package dispatch:
+
+```text
+CanonicalSymbol
+     ├─ special?   → SPECIAL_CALL (quoted args)
+     ├─ intrinsic? → native primitive
+     ├─ native?    → evaluated args + FFI
+     └─ otherwise  → lazy source package (PKG_GET)
+```
+
+```go
+type SymbolID struct { PackagePath string; Name string }
+engine.RegisterSpecial(SymbolID{definePath, "Convert"}, handleConvert)
+engine.RegisterSpecial(SymbolID{definePath, "Rule"},    handleRule)
+// convenience: engine.SpecialPackage(path).Register("Convert", h).Register("Rule", h)
+```
+
+### 12.3 `SPECIAL_CALL` is runtime, not compile-time
+
+```go
+if enabled { define.Rule(foo.Convert) }
+```
+
+compiles to
+
+```text
+EVAL enabled
+JUMP_IF_FALSE L1
+SPECIAL_CALL special=#3 quote=#42
+L1:
+```
+
+A special handler fires only when the VM *reaches* the call — never when the
+compiler *sees* it. `quote=#42` indexes the chunk's quote table:
+
+```go
+type QuotedCall struct {
+    Call  *ast.CallExpr
+    Args  []QuotedExpr
+    File  *SourceFile
+    Scope ScopeID        // lexical context, incl. a handle to the caller's env
+}
+```
+
+### 12.4 `QuotedExpr` carries lexical context
+
+Bare `[]ast.Expr` (v1's API) forces handlers to re-walk `FileScope.Aliases`
+and the scanner. A quote keeps the context:
+
+```go
+type QuotedExpr struct {
+    Expr    ast.Expr
+    FileID  FileID
+    ScopeID ScopeID   // resolves locals/imports/types in the caller's scope
+}
+```
+
+so that `ctx.Eval(call.Args[0])` inside `special.Do(x)` returns the value of
+local `x` — the scope is a handle, not a raw `*Frame` (lifetime-safe).
+
+### 12.5 `SpecialContext` hides the interpreter guts
+
+v1 handlers receive `(*evaluator.Evaluator, *object.FileScope, pos, []ast.Expr)`
+— convert-define reaches into `fscope.Aliases` and the scanner. New surface:
+
+```go
+type SpecialContext interface {
+    Context() context.Context
+    Position(ast.Node) token.Position
+
+    File() *SourceFile
+    Package() *Package
+
+    Resolve(ast.Expr) (Ref, error)
+    ResolveType(ast.Expr) (TypeRef, error)
+    ResolveSymbol(ast.Expr) (SymbolRef, error)
+
+    Eval(QuotedExpr) (Value, error)   // evaluate in the caller's scope
+    Format(ast.Node) string
+    Errorf(ast.Node, string, ...any) error
+}
+```
+
+convert-define's alias+scanner dance collapses to
+`ctx.ResolveType(param.Type)` / `ctx.ResolveSymbol(expr)`. Crucially,
+`ResolveSymbol` needs only the *package index* level of laziness — a special
+form quoting `huge.ConvertFoo` resolves its `SymbolRef{PackagePath, Name}`
+without initializing `huge`, and without evaluating the selector (which
+would materialize the package). Special forms don't break laziness; they
+exploit it.
+
+### 12.6 Partial evaluation — the actual superpower
+
+```go
+func when(ctx *SpecialContext, call *QuotedCall) (Value, error) {
+    cond, _ := ctx.Eval(call.Args[0])     // evaluate arg 0
+    if cond.Bool() { return ctx.Eval(call.Args[1]) } // arg 1 lazy
+    return Nil, nil
+}
+```
+
+Impossible in an ordinary Go call — this is what makes the mechanism a DSL
+extension API and not just an FFI variant.
+
+### 12.7 Boundaries — what it is *not*
+
+| Kind | Fires | Example |
+|---|---|---|
+| `SpecialForm` | at runtime, quoted args | `define.Convert` |
+| `CompilerIntrinsic` | compiled specially | `len`, `make`, `new` |
+| `Macro` (AST→AST) | — **not built** | source positions, hygiene, gopls divergence — explicitly out of scope |
+
+Same goes for `SemanticOverlay` as a model: a canonical symbol may resolve to
+`Source` / `Native` / `Special` / `Intrinsic` binding kinds; the registries
+stay separate (`engine.SpecialForms`, `.NativeBindings`, `.Intrinsics`),
+sharing only `SymbolID` identity.
+
+Method special forms (`MethodSymbolID{PackagePath, Receiver, Name}`, e.g.
+`(*define.Config).Map`) are supported by the registry shape but **not
+recommended** for convert-define-style usage: there the enclosing
+`FuncLit` is data to be walked wholesale by the outer `define.Convert`
+handler, not calls to dispatch individually.
+
+## 13. API — Engine + Session
 
 ```go
 engine := minigo.New(minigo.Config{
@@ -377,10 +551,10 @@ engine.NewSession()                      // fresh globals for isolation
   — so scripts remain perfectly ordinary Go.
 - `Session` naturally extends to a REPL; `engine.NewSession()` gives a clean
   global state.
-- `Result.As(&dst)` reflect-unmarshal and `Register(pkg, symbols)`/`Globals`
-  port over as convenience APIs.
+- `Result.As(&dst)` reflect-unmarshal, `Register(pkg, symbols)`/`Globals`,
+  and `RegisterSpecial(SymbolID, handler)` port over as APIs.
 
-## 13. Package Layout
+## 14. Package Layout
 
 ```text
 minigo2/
@@ -396,11 +570,12 @@ minigo2/
   runtime/               value.go, heap.go, slice.go, map.go, iface.go
   builtin/               builtin.go
   intrinsic/             provider.go, host.go, runtime.go
+  special/               registry.go, quote.go, context.go
   ffi/                   reflect.go, generated.go
   debug/                 stacktrace.go, position.go
 ```
 
-## 14. Boot Sequence
+## 15. Boot Sequence
 
 ```text
 minigo run ./app --entry BuildConfig
@@ -408,11 +583,12 @@ minigo run ./app --entry BuildConfig
     → initialize app → compile BuildConfig → CALL
         ... PKG_GET("foo","X") → first access
             → Resolve foo → Parse foo → Index foo → Initialize foo → X
+        ... SPECIAL_CALL define.Rule → handler fires, define never loaded
 ```
 
 Every step after the entry is demand-driven.
 
-## 15. Trade-offs and Risks
+## 16. Trade-offs and Risks
 
 - **Runtime name resolution cost** — map lookup per global/member access;
   mitigated by per-callsite member caches, later an `OpSelect` inline cache.
@@ -435,8 +611,13 @@ Every step after the entry is demand-driven.
 - **Imported visibility** — source-interpreted packages expose only exported
   symbols to importers (filter at `PKG_GET`); internals stay in the package
   env.
+- **Special-form silent divergence** — a `d.Convert` that is *meant* to be
+  special but isn't registered compiles to an ordinary `PKG_GET` call into
+  the stub package, whose body is `panic("minigo intrinsic")` — the failure
+  is loud but late; a `minigo vet`-style checker listing unregistered stub
+  calls is a cheap safety net.
 
-## 16. Alternatives Considered
+## 17. Alternatives Considered
 
 - **In-place refactor of the tree-walker** — keeps the coupled monolith and
   delivers no VM. Rejected.
@@ -447,11 +628,13 @@ Every step after the entry is demand-driven.
 - **Transpile to Go + plugin/compile** — `plugin` is Linux/FreeBSD/macOS-only
   and requires exact toolchain/build-tag match (runtime crash risk per Go
   docs); loses lazy embeddability anyway. Rejected.
+- **AST→AST macros** — source positions, hygiene, debugging, gopls
+  divergence. Rejected; `Quoted Go` covers the use cases.
 - **`go/types`-assisted compilation** — reintroduces eager transitive loading.
   Rejected. Editor-level type correctness is delegated to gopls; the VM's
   runtime type system stays deliberately dumber (clean responsibility split).
 
-## 17. Phased Implementation
+## 18. Phased Implementation
 
 1. **Skeleton**: resolver + parser + `PackageIndex` — parse/index GOROOT and
    large repos *without executing*; proves the lazy pipeline.
@@ -464,25 +647,26 @@ Every step after the entry is demand-driven.
 6. **Generics-lite** (monomorphize-on-use), iterators/range-over-func as
    yield-closure calls.
 7. **Intrinsic boundary + stdlib via source**, `minigo.dev/host` stubs,
-   special forms, CLI/REPL.
+   `SPECIAL_CALL` + `SpecialContext`, CLI/REPL.
 8. **Conformance harness**: differential tests — golden `.go` files under
    `go run` vs VM; port v1 `testdata`.
 
 Rough estimate in Devin terms: a demonstrable core (1–3) ≈ 1 session; a
 solid MVP (through 7) ≈ 2–3 sessions; conformance is ongoing.
 
-## 18. Open Questions
+## 19. Open Questions
 
 1. **`go list -e -json -find` as default resolver?** Conflicts with the repo's
    `go list` ban (the ban's eager-loading rationale doesn't apply to `-find`,
    but it needs explicit approval). Alternative: pure-Go resolver default +
    go-command opt-in.
 2. **Location**: `minigo2/` inside go-scan (side-by-side, then swap) vs a new
-   standalone repo/module? 案2 recommends separate implementation regardless;
-   in-repo `minigo2/` keeps CI/tooling and is recommended here.
+   standalone repo/module? In-repo `minigo2/` keeps CI/tooling; recommended.
 3. **Reuse `locator`** as the pure-Go resolver backend via adapter, or write
-   `resolve/gomod.go` fresh? (locator already does the job but has a
-   hand-rolled go.mod parser; `x/mod/modfile` is cleaner.)
+   `resolve/gomod.go` fresh? (locator works but has a hand-rolled go.mod
+   parser; `x/mod/modfile` is cleaner.)
 4. **GoCompatibleInit** — needed in v2.0 or defer until requested?
 5. **`OP_EVAL_AST` migration bridge** — port constructs incrementally from
    the v1 evaluator (faster MVP) vs clean-slate VM (smaller final code)?
+6. **`SpecialContext` surface** — the full interface above, or start with
+   `Eval`/`Resolve`/`Format` only and grow on demand?

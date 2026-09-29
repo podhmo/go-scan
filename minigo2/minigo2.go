@@ -1,0 +1,317 @@
+// Package minigo2 is a redesigned Go interpreter on a stack VM.
+//
+// Three pillars: Lazy Go (packages parse/index on demand, initialize on
+// first member touch), Executable Go (functions compile to bytecode on first
+// call), Quoted Go (special forms — wired in a later phase).
+//
+// The central invariant: every syntactically valid Go source parses and
+// compiles; unsupported constructs become OpTrap instructions that fail at
+// run time with position info instead of at parse/compile time.
+package minigo2
+
+import (
+	"context"
+	"fmt"
+	"go/ast"
+	"go/token"
+	"sync"
+
+	"github.com/podhmo/go-scan/minigo2/bytecode"
+	"github.com/podhmo/go-scan/minigo2/compile"
+	"github.com/podhmo/go-scan/minigo2/index"
+	"github.com/podhmo/go-scan/minigo2/resolve"
+	"github.com/podhmo/go-scan/minigo2/runtime"
+	"github.com/podhmo/go-scan/minigo2/syntax"
+	"github.com/podhmo/go-scan/minigo2/vm"
+)
+
+// Engine is a long-lived interpreter instance: resolver, package cache,
+// builtins, and host bindings.
+type Engine struct {
+	resolver resolve.Resolver
+	cfg      resolve.BuildConfig
+	fset     *token.FileSet
+
+	builtins *runtime.Env
+	vmm      *vm.VM
+
+	mu    sync.Mutex
+	pkgs  map[string]*runtime.Package // by import path
+	byDir map[string]*runtime.Package // synthetic packages by dir
+}
+
+// Option configures an Engine.
+type Option func(*Engine)
+
+// WithBuildConfig sets GOOS/GOARCH/build tags for file selection.
+func WithBuildConfig(cfg resolve.BuildConfig) Option {
+	return func(e *Engine) { e.cfg = cfg }
+}
+
+// NewEngine creates an engine whose default resolver is go-scan
+// (locator.WithGoModuleResolver). startDir is used to locate the go.mod /
+// go.work anchor for import-path resolution.
+func NewEngine(startDir string, opts ...Option) *Engine {
+	e := &Engine{
+		fset:     token.NewFileSet(),
+		builtins: builtins(),
+		pkgs:     map[string]*runtime.Package{},
+		byDir:    map[string]*runtime.Package{},
+	}
+	for _, o := range opts {
+		o(e)
+	}
+	res, err := resolve.NewGoScanResolver(startDir, e.cfg)
+	if err != nil {
+		// fall back to GOPATH-less dir resolution only; Locate() will still
+		// work for relative/GOROOT paths.
+		res = nil
+	}
+	e.resolver = res
+	e.vmm = &vm.VM{H: vm.Hooks{
+		Builtin:     e.builtins.Get,
+		Materialize: e.materialize,
+	}}
+	return e
+}
+
+// WithResolver swaps the resolver (e.g. a testing stub).
+func (e *Engine) WithResolver(r resolve.Resolver) *Engine {
+	e.resolver = r
+	return e
+}
+
+// Package returns a loaded (Indexed) package by import path or directory.
+func (e *Engine) Package(ctx context.Context, ref string) (*runtime.Package, error) {
+	if resolve.LooksLikeDir(ref) {
+		return e.loadDir(ctx, ref)
+	}
+	return e.loadPath(ctx, ref)
+}
+
+// Call invokes a named member of a package: fn may be a function or anything
+// callable. The package is Initialized first if needed.
+func (e *Engine) Call(ctx context.Context, pkg *runtime.Package, name string, args ...runtime.Value) (runtime.Value, error) {
+	member, err := pkg.Member(name, e.materialize)
+	if err != nil {
+		return nil, err
+	}
+	return e.vmm.Call(member, args)
+}
+
+// Run is the high-level entry point: locate ref (dir or import path), ensure
+// the package is ready, then call fnName(args...). A bare "" fnName calls
+// main.main.
+func (e *Engine) Run(ctx context.Context, ref, fnName string, args ...runtime.Value) (runtime.Value, error) {
+	if fnName == "" {
+		fnName = "main"
+	}
+	pkg, err := e.Package(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return e.Call(ctx, pkg, fnName, args...)
+}
+
+// Bind registers a host package: import path -> symbols. The package is
+// marked Ready (no source needed). This is the host-extension point.
+func (e *Engine) Bind(importPath string, symbols map[string]runtime.Value) {
+	p := &runtime.Package{
+		Path:    importPath,
+		Name:    lastElem(importPath),
+		State:   runtime.Ready,
+		Globals: runtime.NewEnv(),
+	}
+	for k, v := range symbols {
+		p.Globals.Set(k, v)
+	}
+	e.mu.Lock()
+	e.pkgs[importPath] = p
+	e.mu.Unlock()
+}
+
+func lastElem(path string) string {
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' {
+			return path[i+1:]
+		}
+	}
+	return path
+}
+
+// ---- loading ----
+
+func (e *Engine) loadPath(ctx context.Context, path string) (*runtime.Package, error) {
+	e.mu.Lock()
+	if p, ok := e.pkgs[path]; ok {
+		e.mu.Unlock()
+		return p, nil
+	}
+	e.mu.Unlock()
+
+	if e.resolver == nil {
+		return nil, fmt.Errorf("minigo2: no resolver configured; cannot import %q", path)
+	}
+	meta, err := e.resolver.Locate(ctx, "", path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %q: %w", path, err)
+	}
+	return e.buildPackage(meta)
+}
+
+func (e *Engine) loadDir(ctx context.Context, dir string) (*runtime.Package, error) {
+	e.mu.Lock()
+	if p, ok := e.byDir[dir]; ok {
+		e.mu.Unlock()
+		return p, nil
+	}
+	e.mu.Unlock()
+
+	meta, err := e.resolver.LocateDir(ctx, dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dir %q: %w", dir, err)
+	}
+	return e.buildPackage(meta)
+}
+
+// buildPackage runs the pipeline Locate->Parse->Index for one package.
+// Initialize stays lazy (Bootstrap hook).
+func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, error) {
+	e.mu.Lock()
+	if p, ok := e.pkgs[meta.ImportPath]; ok {
+		e.mu.Unlock()
+		return p, nil
+	}
+	e.mu.Unlock()
+
+	p := &runtime.Package{
+		Path:    meta.ImportPath,
+		Name:    meta.Name,
+		State:   runtime.Parsed,
+		Dir:     meta.Dir,
+		Fset:    e.fset,
+		Globals: runtime.NewEnv(),
+		Scopes:  map[*syntax.File]map[string]*runtime.ImportRef{},
+	}
+	// publish before parsing to make import cycles convergent
+	e.mu.Lock()
+	e.pkgs[meta.ImportPath] = p
+	if meta.Dir != "" {
+		e.byDir[meta.Dir] = p
+	}
+	e.mu.Unlock()
+
+	var files []*syntax.File
+	for _, f := range meta.GoFiles {
+		sf, err := syntax.ParseFile(e.fset, f, nil)
+		if err != nil {
+			p.State = runtime.Failed
+			return nil, fmt.Errorf("parse %s: %w", f, err)
+		}
+		files = append(files, sf)
+	}
+	p.Files = files
+
+	ix, err := index.Build(files)
+	if err != nil {
+		p.State = runtime.Failed
+		return nil, fmt.Errorf("index %s: %w", meta.ImportPath, err)
+	}
+	p.Index = ix
+	p.State = runtime.Indexed
+
+	// file-scope import refs
+	for _, sf := range files {
+		m := map[string]*runtime.ImportRef{}
+		for _, imp := range sf.Imports {
+			m[imp.LocalName()] = &runtime.ImportRef{
+				Path:  imp.Path,
+				Alias: imp.Alias,
+				Load:  func(path string) (*runtime.Package, error) { return e.loadPath(context.Background(), path) },
+			}
+		}
+		p.Scopes[sf] = m
+	}
+
+	p.Bootstrap = e.bootstrap
+	return p, nil
+}
+
+// bootstrap runs the synthetic __init__ function of a package.
+func (e *Engine) bootstrap(p *runtime.Package) error {
+	ch, err := compile.InitFunc(p)
+	if err != nil {
+		return err
+	}
+	bindCompiles(p, ch)
+	fn := &runtime.Function{Pkg: p, Name: p.Name + ".__init__", Chunk: ch}
+	_, err = e.vmm.Call(fn, nil)
+	return err
+}
+
+// bindCompiles attaches the compile hook to every *runtime.Function found in
+// chunk constants (init functions, function literals).
+func bindCompiles(p *runtime.Package, ch *bytecode.Chunk) {
+	for _, cv := range ch.Consts {
+		if fn, ok := cv.(*runtime.Function); ok {
+			fn.Pkg = p
+			fn.Compile = compile.Func
+		}
+	}
+}
+
+// materialize builds the runtime value for one decl on first access.
+func (e *Engine) materialize(pkg *runtime.Package, d *index.Decl) (runtime.Value, error) {
+	switch d.Kind {
+	case index.FuncDecl:
+		return &runtime.Function{Pkg: pkg, File: d.File, Decl: d.Func, Name: d.Name, Compile: compile.Func}, nil
+	case index.TypeDecl:
+		return e.typeDefOf(pkg, d)
+	case index.ConstDecl, index.VarDecl:
+		// values appear in Globals at package init; reaching here means the
+		// name was never bound (e.g. blank var) — return nil rather than fail.
+		return runtime.NIL, nil
+	default:
+		return nil, fmt.Errorf("cannot materialize %s", d.Name)
+	}
+}
+
+func (e *Engine) typeDefOf(pkg *runtime.Package, d *index.Decl) (runtime.Value, error) {
+	ts := d.Spec.(*ast.TypeSpec)
+	td := &runtime.TypeDef{Pkg: pkg, Name: d.Name, File: d.File, Spec: ts}
+	switch t := ts.Type.(type) {
+	case *ast.StructType:
+		td.Kind = runtime.KindStruct
+		for _, f := range t.Fields.List {
+			for _, n := range f.Names {
+				td.Fields = append(td.Fields, n.Name)
+			}
+		}
+	case *ast.ArrayType:
+		td.Kind = runtime.KindSlice
+	case *ast.MapType:
+		td.Kind = runtime.KindMap
+	case *ast.FuncType:
+		td.Kind = runtime.KindFunc
+	case *ast.InterfaceType:
+		td.Kind = runtime.KindInterface
+	case *ast.Ident:
+		td.Kind = runtime.KindNamedBasic
+	default:
+		td.Kind = runtime.KindNamedBasic
+	}
+	if ts.Assign.IsValid() {
+		td.Kind = runtime.KindAlias
+	}
+	// methods
+	if info, ok := pkg.Index.Types[d.Name]; ok && len(info.Methods) > 0 {
+		td.Methods = map[string]*runtime.Function{}
+		for name, md := range info.Methods {
+			td.Methods[name] = &runtime.Function{
+				Pkg: pkg, File: md.File, Decl: md.Func, Name: d.Name + "." + name,
+				Compile: compile.Func,
+			}
+		}
+	}
+	return td, nil
+}

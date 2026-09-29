@@ -32,7 +32,7 @@ func (r *GoScanResolver) Locate(ctx context.Context, fromDir, importPath string)
 	if err != nil {
 		return nil, fmt.Errorf("resolving import %q: %w", importPath, err)
 	}
-	if err := r.cfg.checkDir(dir); err != nil {
+	if err := r.cfg.CheckDir(dir); err != nil {
 		return nil, err
 	}
 	return ReadPackageFiles(dir, importPath, r.cfg)
@@ -46,7 +46,7 @@ func (r *GoScanResolver) LocateDir(ctx context.Context, dir string) (*PackageMet
 	if err != nil {
 		return nil, err
 	}
-	if err := r.cfg.checkDir(abs); err != nil {
+	if err := r.cfg.CheckDir(abs); err != nil {
 		return nil, err
 	}
 	st, err := os.Stat(abs)

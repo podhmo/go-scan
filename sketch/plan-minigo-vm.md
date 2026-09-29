@@ -1257,8 +1257,130 @@ pay off against a real tool.
   DSL-package-never-parsed claim even when the DSL file is the only
   package on disk.
 - **`Resolve`/`ResolveType` on `SpecialContext` remain unimplemented** —
-  convert-define is their first real consumer shape; `ResolveSymbol` (in
-  flight on the parallel round-6 PR) can collapse the `Scopes` alias
-  lookup when it lands.
+  convert-define is their first real consumer shape; `ResolveSymbol`
+  landed in §27 and now backs convert-define's alias lookup (§28).
+
+## 27. Round-8 notes: host stub package, ResolveSymbol, REPL, unsafe/runtime intrinsics
+
+### `minigo.dev/host` resolves through the same intrinsic table as the in-repo stub
+
+§11's gopls-friendly pattern lands as `minigo2/host`: a stub package
+whose bodies are `panic("minigo intrinsic")`, so real Go tooling can
+type-check scripts while the interpreter never runs them.
+`installStdlib` binds one host table under both `minigo.dev/host` and
+the in-repo import path — the `pkgs` check in `loadPath` makes bound
+paths win before the resolver is consulted, so the stub's panic bodies
+are unreachable in either spelling. `host.Exit` always errors (an
+interpreted program cannot terminate its host); the env/argv/wd helpers
+bind only when the engine is unrestricted, on the same condition as
+`os.Getenv`/`os.Args`.
+
+### `SpecialContext.ResolveSymbol` — index-level laziness for quoters
+
+The §12.5 interface sketched `Resolve`/`ResolveType`/`ResolveSymbol`;
+only `ResolveSymbol` landed because it is the one needing no evaluation:
+`pkg.Sym` maps through the caller file's import table straight to
+`SymbolID{path, name}` (no `Materialize` call — quoting
+`huge.ConvertFoo` does not initialize `huge`), a bare identifier maps to
+a member of the caller's package, and locals/upvals error out.
+`Resolve`/`ResolveType` remain unimplemented: `Eval`/`Call` cover the
+evaluated cases and no consumer is driving type-level queries yet.
+
+### REPL: persistent globals by hoisting, not by replay
+
+`engine.NewREPL()` keeps a scratch `*runtime.Package` (`<repl>`) on a
+session engine. Each line classifies as declarations (imports and
+func/type decls accumulate; var/const names are *hoisted* into
+`pkg.Globals` as cells and their initializers run as a step) or
+statements (a generated `func __stepN() any`). `reload()` re-parses the
+accumulated source and swaps Files/Index/Scopes/Imports while keeping
+`Globals` and `State` — the `__init__` once is already consumed, so
+re-indexing is free and values persist. Divergences worth noting:
+
+- `x := e` inside a line rewrites to `=` against the hoisted global —
+  re-declaration updates rather than shadows, matching Python-REPL
+  intuition, not Go scoping.
+- `var x T` without a value lowers to `x = *new(T)`; `var`/`const` in
+  statement position hoist the same way, so block scope does not exist
+  at the prompt.
+- The step must always end in an explicit `return`: declaring `any`
+  makes the implicit `OpReturn` pop a result, which underflows on
+  statement-only input — `return nil` is appended when missing.
+- Blank imports added mid-session need an explicit `EnsureReady` — the
+  synthetic `__init__` ran once, before the import existed.
+- Input is line-oriented only (no brace continuation yet).
+
+`cmd/minigo` grew `run --entry F` and `repl` subcommands; the bare
+`minigo <ref> [func]` shorthand is unchanged. `--entry` is extracted
+manually because `flag` stops parsing at the first positional argument.
+
+### `unsafe`/`runtime` intrinsics are host approximations by design
+
+The §11 intrinsic table gained `unsafe` (`Sizeof`/`Alignof` over the
+boxed 64-bit representation — `Offsetof` errors since selector results
+are not values) and `runtime` (`GOOS`/`GOARCH`/`Version`/`NumCPU`/
+`GOMAXPROCS` pass through, `NumGoroutine` pins to 1 under the
+single-threaded model, `GC` no-ops). `sort.Search`/`SliceStable` and
+`slices.BinarySearch`/`BinarySearchFunc`/`SortStableFunc` close out the
+ordering surface; `(index, found)` returns as a `*runtime.Tuple`.
+
+## 28. Round-9 notes: verifying convert-define against the plan
+
+This round turned the §12 claims about convert-define into executable
+acceptance tests on the tool itself
+(`examples/convert-define/internal/plan_test.go` —
+`TestConvertDefineSatisfiesPlan`, plus the module-wide
+`migration_guard_test.go` — `TestNoMinigoV1Dependency`). The assertions
+that now pass:
+
+- **Zero resolver traffic end-to-end.** A spying `resolve.Resolver`
+  installed on the real `Runner` records **no** `Locate`/`LocateDir`
+  calls for a full define run — `define` (special target),
+  `convutil`/`source`/`destination` (quoted args), and `bogus`
+  (dead-branch arg) are never materialized, not even to `Indexed`.
+- **Alias-agnostic dispatch.** `import d ".../define"` still compiles
+  `d.Rule`/`d.Convert` to `SPECIAL_CALL` — canonicalization happens
+  per-file from the import table, so the local name is irrelevant.
+- **Reachability, not existence.** `if false { define.Rule(bogus.Nope) }`
+  never fires: the compiler emits `SPECIAL_CALL` behind a conditional
+  jump (compile stays total; no dead-code analysis), and `bogus` is
+  touched by neither the interpreter nor the host scanner.
+- **Source-level dependency guard.** v1 `minigo` and `minigo2` share the
+  `github.com/podhmo/go-scan` module, so "no v1 dependency" cannot be
+  expressed in `go.mod` — `TestNoMinigoV1Dependency` scans every `.go`
+  file's imports instead (and asserts `minigo2` is actually imported, so
+  the check can't pass on a tree that uses neither).
+
+### Out-of-plan observations
+
+- **Host-side observability needs a seam.** §12.5 narrows what a special
+  handler sees (`SpecialContext`), but nothing addresses the reverse —
+  how a *host* observes its own engine. A tool that builds the engine
+  internally (`Runner.Run`) cannot attach a spy from outside;
+  convert-define now keeps an unexported `resolver` field as the test
+  hook rather than widening `NewRunner`'s public API. Expect other
+  consumers to need the same pattern (or an `Option`-style engine seam).
+- **`LoadFile` is lazier than the plan promised.** §12.2 only claims the
+  *special's* package is never located; in fact the *entry* package
+  isn't either — `LoadFile` parses the named file and checks
+  `BuildConfig.CheckDir` directly, so a fully-quoted DSL run issues zero
+  resolver calls total, not just zero for the quoted packages.
+- **Quoted args can name packages the host never reads.** The `bogus`
+  fixture is real on disk and the DSL file stays statically valid Go
+  (§12.1's property), yet neither engine nor scanner touches it —
+  laziness extends past "not parsed by the runtime" to "never read by
+  anyone". This also means the *dead-branch* form is a valid idiom for
+  host-only annotation calls.
+- **Specials registered for canonical paths ignore local names — a
+  feature to test per consumer.** The plan assumed alias-tolerance; the
+  first real consumer confirms it, but each new special-form host should
+  keep an aliased-import case in its own acceptance suite, since the
+  dispatch table is populated per tool, not per engine.
+- **`ResolveSymbol` beats a raw `Scopes` lookup for exactly the reason
+  the plan gave the interface the method.** convert-define now calls
+  `ctx.ResolveSymbol(expr)` for both quoted `pkg.Type` and `pkg.Func`
+  args: it still never materializes, and it additionally rejects a local
+  or captured variable shadowing an import name — silent
+  misresolution the direct `Scopes[file][name]` read could not see.
 
 ## (end)

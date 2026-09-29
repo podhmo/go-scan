@@ -22,7 +22,7 @@ const (
 	OpSwap     // swap top two stack slots
 	OpRot3     // rotate top three: a,b,c -> b,c,a
 	OpPop      // discard top
-	OpNewLocal // pop -> new cell at slot A (variable declaration)
+	OpNewLocal // pop -> new cell at slot A (variable declaration); B=1 makes it ReadOnly (local const)
 	OpRenewVar // replace cell at slot A with a fresh cell (per-iteration loop var)
 	OpLocal    // push cell(slot A).Elem
 	OpSetLocal // pop -> cell(slot A).Elem
@@ -32,7 +32,7 @@ const (
 
 	// global / package scope
 	OpGlobal    // push resolve(name Consts[A]): file imports -> pkg env -> builtins
-	OpNewGlobal // pop -> pkg.Globals[name] = &Cell{v} (var decl)
+	OpNewGlobal // pop -> pkg.Globals[name] = &Cell{v}; B=1 binds a ReadOnly cell (const decl)
 	OpSetGlobal // pop -> pkg.Globals[name] (cell-aware store)
 	OpGlobalRef // push the package cell for name (address-of a package var)
 

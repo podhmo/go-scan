@@ -225,12 +225,36 @@ func TestStdlibIntrinsics(t *testing.T) {
 		{"ErrorsNew", "oops"},
 		{"SortIntsInPlace", int64(123)}, // sort mutates the slice
 		{"SlicesSortInPlace", "abc"},    // slices.Sort mutates too
+		{"SortSearch", int64(6)},
+		{"SortStableByLen", "adbbcc"},
+		{"SortStableFuncByLen", "adbbcc"},
+		{"BinarySearchHit", int64(2)},
+		{"BinarySearchMiss", int64(2)},
+		{"BinarySearchFunc", int64(3)},
+		{"BinarySearchNamed", int64(1)}, // named-string elements
+		{"RuntimeGOOS", true},
+		{"RuntimeGoroutines", int64(1)}, // single-threaded approximation
+		{"RuntimeGOMAXPROCS", int64(1)}, // read-only: setter arg is ignored
+		{"UnsafeSizeofInt", int64(8)},
+		{"UnsafeSizeofSlice", int64(24)},
+		{"UnsafeAlignofEmpty", int64(1)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/intrins", c.fn)
 		if diff := cmp.Diff(c.want, got); diff != "" {
 			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
 		}
+	}
+}
+
+func TestConstAssignTraps(t *testing.T) {
+	e := newEngine(t)
+	_, err := e.Run(context.Background(), "./testdata/constreassign", "AssignConst")
+	if err == nil {
+		t.Fatal("expected a cannot-assign-to-const trap")
+	}
+	if !strings.Contains(err.Error(), "cannot assign") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -340,6 +364,41 @@ func TestOsHostSurface(t *testing.T) {
 	}
 }
 
+func TestHostStubPackage(t *testing.T) {
+	e := newEngine(t)
+	// the in-repo stub path resolves to intrinsics, never the stub bodies
+	if got := run(t, e, "./testdata/hostpkg", "EnvPath"); got == "" {
+		t.Fatal("host.Getenv(PATH) should return the host PATH")
+	}
+	if got := run(t, e, "./testdata/hostpkg", "Argc"); got.(int64) < 1 {
+		t.Fatalf("host.Args should be non-empty, got %v", got)
+	}
+	if got := run(t, e, "./testdata/hostpkg", "Host"); got == "" || got == "err" {
+		t.Fatalf("host.Hostname: got %v", got)
+	}
+	if got := run(t, e, "./testdata/hostpkg", "Cwd"); got != "ok" {
+		t.Fatalf("host.Getwd: got %v", got)
+	}
+	// the canonical minigo.dev/host path binds the same intrinsics
+	if got := run(t, e, "./testdata/hostdev", "EnvPath"); got == "" {
+		t.Fatal("minigo.dev/host.Getenv(PATH) should return the host PATH")
+	}
+	// host.Exit never terminates the host, like os.Exit
+	_, err := e.Run(context.Background(), "./testdata/hostpkg", "Exit")
+	if err == nil || !strings.Contains(err.Error(), "cannot terminate the host") {
+		t.Fatalf("host.Exit must trap, got %v", err)
+	}
+	// restricted engines drop the environment surface
+	td, err := filepath.Abs("./testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := minigo2.NewEngine("..", minigo2.WithAllowedRoots(td))
+	if _, err := re.Run(context.Background(), "./testdata/hostpkg", "EnvPath"); err == nil {
+		t.Fatal("host.Getenv must be unbound under AllowedRoots")
+	}
+}
+
 func TestFeatures(t *testing.T) {
 	e := newEngine(t)
 	cases := []struct {
@@ -418,6 +477,14 @@ func TestSpecialForms(t *testing.T) {
 		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
 			return int64(42), nil // arg never evaluated -> no panic
 		})
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "SymOf"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			id, err := ctx.ResolveSymbol(call.Call.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			return id.PackagePath + "::" + id.Name, nil
+		})
 
 	cases := []struct {
 		fn   string
@@ -426,12 +493,33 @@ func TestSpecialForms(t *testing.T) {
 		{"TwiceIt", int64(44)}, // Eval sees caller's local x=21
 		{"Quoted", "y + 1"},    // quoted, unevaluated source
 		{"Lazy", int64(42)},    // handler never Evals -> boom() never runs
+		// ResolveSymbol resolves through the import table only: lazyboom's
+		// panicking init must not run, proving index-level laziness.
+		{"SymPkg", "github.com/podhmo/go-scan/minigo2/testdata/lazyboom::Get"},
+		{"SymGreet", "github.com/podhmo/go-scan/minigo2/testdata/greet::Hello"},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/special", c.fn)
 		if diff := cmp.Diff(c.want, got); diff != "" {
 			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
 		}
+	}
+	// a bare ident resolves to a member of the caller's own package
+	got := run(t, e, "./testdata/special", "SymSelf")
+	s, ok := got.(string)
+	if !ok || !strings.HasSuffix(s, "::TwiceIt") {
+		t.Fatalf("SymSelf: got %v", got)
+	}
+	// a local variable is not a package symbol — the handler's error
+	// surfaces through Run
+	_, err := e.Run(context.Background(), "./testdata/special", "SymLocal")
+	if err == nil || !strings.Contains(err.Error(), "local variable") {
+		t.Fatalf("SymLocal: expected local-variable error, got %v", err)
+	}
+	// a local variable shadowing an import alias is not a package symbol
+	_, err = e.Run(context.Background(), "./testdata/special", "SymShadow")
+	if err == nil || !strings.Contains(err.Error(), "local variable") {
+		t.Fatalf("SymShadow: expected local-variable error, got %v", err)
 	}
 }
 

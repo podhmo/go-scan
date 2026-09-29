@@ -6,8 +6,10 @@ package vm
 import (
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/token"
 	"reflect"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/podhmo/go-scan/minigo2/bytecode"
@@ -27,6 +29,21 @@ type Hooks struct {
 	// OpEvalAST (the migration bridge; expressions see globals, file
 	// imports and builtins but not the caller's locals).
 	CompileExpr func(pkg *runtime.Package, file *syntax.File, e ast.Expr) (*bytecode.Chunk, error)
+	// CompileScopedExpr compiles an expression with a caller-scope overlay
+	// (name -> caller slot/upval index) — used by special-form Eval.
+	CompileScopedExpr func(pkg *runtime.Package, file *syntax.File, e ast.Expr, locals, upvals map[string]int) (*bytecode.Chunk, error)
+	// Special resolves a canonical symbol to its special-form handler.
+	Special func(id runtime.SymbolID) (runtime.SpecialFunc, bool)
+	// MethodsOf returns the method names callable on a dynamic value
+	// (structs: declared + promoted; host values: reflect method set).
+	MethodsOf func(v runtime.Value) (map[string]bool, error)
+	// IfaceReqs returns the required method set of an interface typedef.
+	IfaceReqs func(td *runtime.TypeDef) (map[string]bool, error)
+	// FindMethod resolves a promoted method on a struct through embedded
+	// fields: (fn, recv, true) binds fn to recv; (nil, field, true) means
+	// the embedded field is interface-typed and the VM should select the
+	// member on the stored concrete value.
+	FindMethod func(s *runtime.Struct, name string) (*runtime.Function, runtime.Value, bool)
 }
 
 // VM is a stack machine. It is safe for sequential use from one goroutine.
@@ -104,9 +121,11 @@ func (v *VM) call(callee runtime.Value, args []runtime.Value) (runtime.Value, er
 				return nil, fmt.Errorf("conversion to %s needs exactly one argument", c.Name)
 			}
 			return convert(c, args[0])
-		case *runtime.Cell:
-			callee = c.Elem
-			continue
+		default:
+			if dv, ok := runtime.Deref(callee); ok {
+				callee = dv
+				continue
+			}
 		}
 		break
 	}
@@ -318,9 +337,11 @@ func (v *VM) invokeDeferred(d deferredCall) {
 				panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
 			}
 			return
-		case *runtime.Cell:
-			callee = c.Elem
-			continue
+		default:
+			if dv, ok := runtime.Deref(callee); ok {
+				callee = dv
+				continue
+			}
 		}
 		break
 	}
@@ -362,6 +383,18 @@ func (v *VM) loop(f *frame) {
 			f.push(runtime.NIL)
 		case bytecode.OpDup:
 			f.push(f.stack[len(f.stack)-1])
+		case bytecode.OpDup2:
+			n := len(f.stack)
+			a, b := f.stack[n-2], f.stack[n-1]
+			f.push(a)
+			f.push(b)
+		case bytecode.OpFieldRef:
+			base := f.pop()
+			f.push(&runtime.FieldRef{Base: base, Name: consts[ins.A].(string)})
+		case bytecode.OpIndexRef:
+			key := f.pop()
+			base := f.pop()
+			f.push(&runtime.IndexRef{Base: base, Key: key})
 		case bytecode.OpSwap:
 			n := len(f.stack)
 			f.stack[n-1], f.stack[n-2] = f.stack[n-2], f.stack[n-1]
@@ -433,28 +466,53 @@ func (v *VM) loop(f *frame) {
 			base := f.pop()
 			f.push(v.slice(f, base, lo, hi))
 		case bytecode.OpDeref:
-			v := f.pop()
-			if cell, ok := v.(*runtime.Cell); ok {
-				f.push(cell.Elem)
+			x := f.pop()
+			if dv, ok := runtime.Deref(x); ok {
+				f.push(dv)
 			} else {
-				f.trap("deref of non-pointer %T", v)
+				f.trap("deref of non-pointer %T", x)
 			}
 		case bytecode.OpSetInd:
 			val := f.pop()
-			cell := f.pop()
-			if c, ok := cell.(*runtime.Cell); ok {
-				c.Elem = val
-			} else {
-				f.trap("indirect store to non-pointer %T", cell)
+			ref := f.pop()
+			if !runtime.SetRef(ref, val) {
+				f.trap("indirect store to non-pointer %T", ref)
 			}
+		case bytecode.OpAssert:
+			tdv := f.pop()
+			x := f.pop()
+			f.push(v.typeAssert(f, x, tdv, ins.Pos))
+		case bytecode.OpAssertOK:
+			tdv := f.pop()
+			x := f.pop()
+			f.push(v.typeAssertOK(f, x, tdv))
+		case bytecode.OpInstantiate:
+			ntargs := int(ins.A)
+			targs := make([]runtime.Value, ntargs)
+			for i := ntargs - 1; i >= 0; i-- {
+				targs[i] = f.pop()
+			}
+			base := f.pop()
+			f.push(v.instantiate(f, base, targs, ins.Pos))
+		case bytecode.OpSpecialCall:
+			sym := consts[ins.A].(runtime.SymbolID)
+			q := consts[ins.B].(*runtime.QuotedCall)
+			if v.H.Special == nil {
+				f.trap("OpSpecialCall: no special-form registry")
+			}
+			h, ok := v.H.Special(sym)
+			if !ok {
+				f.trap("unregistered special form %s.%s", sym.PackagePath, sym.Name)
+			}
+			res, err := h(&specialCtx{v: v, f: f, q: q}, q)
+			if err != nil {
+				panic(&runtime.Trap{Pos: ins.Pos, Reason: err.Error()})
+			}
+			f.push(res)
 		case bytecode.OpBox:
 			f.push(&runtime.Cell{Elem: f.pop()})
 		case bytecode.OpCall:
-			argc := int(ins.A)
-			args := make([]runtime.Value, argc)
-			for i := argc - 1; i >= 0; i-- {
-				args[i] = f.pop()
-			}
+			args := v.popArgs(f, int(ins.A), ins.B == 1, ins.Pos)
 			fn := f.pop()
 			r, err := v.call(fn, args)
 			if err != nil {
@@ -464,21 +522,13 @@ func (v *VM) loop(f *frame) {
 		case bytecode.OpDefer:
 			// callee + args are evaluated now (Go semantics); the call itself
 			// runs at frame teardown, LIFO.
-			argc := int(ins.A)
-			args := make([]runtime.Value, argc)
-			for i := argc - 1; i >= 0; i-- {
-				args[i] = f.pop()
-			}
+			args := v.popArgs(f, int(ins.A), ins.B == 1, ins.Pos)
 			fn := f.pop()
 			f.defers = append(f.defers, deferredCall{fn: fn, args: args, pos: ins.Pos})
 		case bytecode.OpGo:
 			// single-threaded approximation: `go f(x)` runs f synchronously;
 			// its result is discarded and a panic propagates immediately.
-			argc := int(ins.A)
-			args := make([]runtime.Value, argc)
-			for i := argc - 1; i >= 0; i-- {
-				args[i] = f.pop()
-			}
+			args := v.popArgs(f, int(ins.A), ins.B == 1, ins.Pos)
 			fn := f.pop()
 			if _, err := v.call(fn, args); err != nil {
 				panic(&runtime.Trap{Pos: ins.Pos, Reason: err.Error()})
@@ -772,6 +822,15 @@ func (v *VM) selectMember(f *frame, base runtime.Value, name string) runtime.Val
 		default:
 			f.trap("select %s on cell of %T", name, b.Elem)
 		}
+	case *runtime.FieldRef, *runtime.IndexRef:
+		dv, ok := runtime.Deref(base)
+		if !ok {
+			f.trap("select %s on unresolved reference %T", name, base)
+		}
+		if s, isStruct := dv.(*runtime.Struct); isStruct {
+			return v.structMember(f, s, name, base)
+		}
+		f.trap("select %s on %T", name, dv)
 	case *runtime.TypeDef:
 		if m, ok := b.Methods[name]; ok {
 			return m // method expression: T.M(recv, ...)
@@ -854,24 +913,57 @@ func (v *VM) structMember(f *frame, s *runtime.Struct, name string, recv runtime
 		}
 		r := recv
 		if m.PtrRecv {
-			// pointer receiver needs an addressable cell
-			if _, isCell := r.(*runtime.Cell); !isCell {
+			// pointer receiver needs an addressable reference
+			if _, ok := runtime.Deref(r); !ok {
 				r = &runtime.Cell{Elem: r}
 			}
 		} else {
 			// value receiver operates on a copy
-			if c, isCell := r.(*runtime.Cell); isCell {
-				r = c.Elem
+			if dv, ok := runtime.Deref(r); ok {
+				r = dv
 			}
 			r = valueCopy(r)
 		}
 		return &runtime.BoundMethod{Recv: r, Fn: m}
+	}
+	// promoted method: reach through embedded fields via the engine hook
+	if v.H.FindMethod != nil {
+		if m, rcv, ok := v.H.FindMethod(s, name); ok {
+			if m == nil {
+				// interface-typed embedded field: dispatch on the stored value
+				return v.selectMember(f, rcv, name)
+			}
+			if err := m.EnsureCompiled(); err != nil {
+				f.trap("%s", err)
+			}
+			r := rcv
+			if m.PtrRecv {
+				if _, ok := runtime.Deref(r); !ok {
+					r = &runtime.Cell{Elem: r}
+				}
+			} else {
+				if dv, ok := runtime.Deref(r); ok {
+					r = dv
+				}
+				r = valueCopy(r)
+			}
+			return &runtime.BoundMethod{Recv: r, Fn: m}
+		}
 	}
 	f.trap("%s has no field or method %s", def.Name, name)
 	return nil
 }
 
 func (v *VM) setField(f *frame, base runtime.Value, name string, val runtime.Value) {
+	// write through any pointer chain: *Cell (local var or *T), FieldRef,
+	// IndexRef — assignment targets the struct they resolve to.
+	for {
+		dv, ok := runtime.Deref(base)
+		if !ok {
+			break
+		}
+		base = dv
+	}
 	switch b := base.(type) {
 	case *runtime.Struct:
 		for i, fn := range b.Def.Fields {
@@ -881,21 +973,16 @@ func (v *VM) setField(f *frame, base runtime.Value, name string, val runtime.Val
 			}
 		}
 		f.trap("%s has no field %s", b.Def.Name, name)
-	case *runtime.Cell:
-		if s, ok := b.Elem.(*runtime.Struct); ok {
-			v.setField(f, s, name, val)
-			return
-		}
-		f.trap("set field %s on cell of %T", name, b.Elem)
 	default:
 		f.trap("set field %s on %T", name, base)
 	}
 }
 
 func (v *VM) index(f *frame, base, idx runtime.Value) runtime.Value {
+	if dv, ok := runtime.Deref(base); ok {
+		return v.index(f, dv, idx)
+	}
 	switch b := base.(type) {
-	case *runtime.Cell:
-		return v.index(f, b.Elem, idx)
 	case *runtime.Slice:
 		i, ok := idx.(int64)
 		if !ok {
@@ -919,8 +1006,8 @@ func (v *VM) index(f *frame, base, idx runtime.Value) runtime.Value {
 // indexOK implements the comma-ok form `v, ok := m[k]`: for maps ok is
 // whether the key is present; other indexables always report ok.
 func (v *VM) indexOK(f *frame, base, idx runtime.Value) runtime.Value {
-	if c, ok := base.(*runtime.Cell); ok {
-		return v.indexOK(f, c.Elem, idx)
+	if dv, ok := runtime.Deref(base); ok {
+		return v.indexOK(f, dv, idx)
 	}
 	if m, ok := base.(*runtime.Map); ok {
 		val, found := m.Pairs[idx]
@@ -933,9 +1020,11 @@ func (v *VM) indexOK(f *frame, base, idx runtime.Value) runtime.Value {
 }
 
 func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
+	if dv, ok := runtime.Deref(base); ok {
+		v.setIndex(f, dv, idx, val)
+		return
+	}
 	switch b := base.(type) {
-	case *runtime.Cell:
-		v.setIndex(f, b.Elem, idx, val)
 	case *runtime.Slice:
 		i, ok := idx.(int64)
 		if !ok {
@@ -956,9 +1045,10 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 }
 
 func (v *VM) slice(f *frame, base, lo, hi runtime.Value) runtime.Value {
+	if dv, ok := runtime.Deref(base); ok {
+		return v.slice(f, dv, lo, hi)
+	}
 	switch b := base.(type) {
-	case *runtime.Cell:
-		return v.slice(f, b.Elem, lo, hi)
 	case *runtime.Slice:
 		l, h := bounds(f, lo, hi, int64(len(b.Elems)))
 		return &runtime.Slice{Elems: b.Elems[l:h]}
@@ -1441,4 +1531,345 @@ func convert(td *runtime.TypeDef, v runtime.Value) (runtime.Value, error) {
 		return v, nil
 	}
 	return nil, fmt.Errorf("cannot convert %T to %s", v, td.Name)
+}
+
+// ---- references, spread, types, specials (round 4) ----
+
+// popArgs pops argc args off the stack. When spread is set the last arg
+// must be a *Slice (f(xs...)) and is expanded in place.
+func (v *VM) popArgs(f *frame, argc int, spread bool, pos token.Pos) []runtime.Value {
+	args := make([]runtime.Value, argc)
+	for i := argc - 1; i >= 0; i-- {
+		args[i] = f.pop()
+	}
+	if spread {
+		if argc == 0 {
+			f.trap("spread call with no arguments")
+		}
+		last := args[argc-1]
+		if dv, ok := runtime.Deref(last); ok {
+			last = dv
+		}
+		s, ok := last.(*runtime.Slice)
+		if !ok {
+			f.trap("cannot use %T as spread argument", last)
+		}
+		args = append(args[:argc-1], s.Elems...)
+	}
+	return args
+}
+
+// typedefOf unwraps references down to a *TypeDef, or nil.
+func typedefOf(v runtime.Value) *runtime.TypeDef {
+	for {
+		if td, ok := v.(*runtime.TypeDef); ok {
+			return td
+		}
+		dv, ok := runtime.Deref(v)
+		if !ok {
+			return nil
+		}
+		v = dv
+	}
+}
+
+// typeAssert implements x.(T): returns x on match, panics with a script
+// Panic (recoverable) on mismatch — Go semantics for a failed assertion.
+func (v *VM) typeAssert(f *frame, x, tdv runtime.Value, pos token.Pos) runtime.Value {
+	td := typedefOf(tdv)
+	if td == nil {
+		f.trap("type assertion target %T is not a type", tdv)
+	}
+	if v.typeMatches(f, td, x) {
+		return x
+	}
+	panic(&runtime.Panic{Value: fmt.Sprintf("interface conversion: %s is not %s", typeNameOf(x), tdName(td))})
+}
+
+// typeAssertOK implements the comma-ok form: pushes Tuple{val, ok}.
+func (v *VM) typeAssertOK(f *frame, x, tdv runtime.Value) runtime.Value {
+	td := typedefOf(tdv)
+	if td == nil {
+		f.trap("type assertion target %T is not a type", tdv)
+	}
+	if v.typeMatches(f, td, x) {
+		return &runtime.Tuple{Elems: []runtime.Value{x, true}}
+	}
+	return &runtime.Tuple{Elems: []runtime.Value{runtime.NIL, false}}
+}
+
+// typeMatches implements duck-typing: interfaces check the method set via
+// engine hooks; concrete typedefs match by descriptor identity (or name
+// for builtins / primitives).
+func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
+	if td.Kind == runtime.KindInterface {
+		return v.satisfiesIface(f, td, x)
+	}
+	dv := x
+	// a *Struct under a Cell/other ref still matches T — pointers share the
+	// element typedef in this model.
+	if d, ok := runtime.Deref(dv); ok {
+		if _, isStruct := d.(*runtime.Struct); isStruct {
+			dv = d
+		}
+	}
+	switch xv := dv.(type) {
+	case *runtime.Struct:
+		if xv.Def == td {
+			return true
+		}
+		return xv.Def != nil && td.Name != "" && xv.Def.Name == td.Name && xv.Def.Pkg == td.Pkg && td.Pkg != nil
+	case int64:
+		switch td.Name {
+		case "int", "int8", "int16", "int32", "int64", "uint", "uint8",
+			"uint16", "uint32", "uint64", "byte", "rune", "uintptr":
+			return true
+		}
+		// named basic type: match its underlying literal type name
+		if td.Kind == runtime.KindNamedBasic && td.Anon != nil {
+			if id, ok := td.Anon.(*ast.Ident); ok {
+				return v.typeMatches(f, &runtime.TypeDef{Kind: td.Kind, Name: id.Name}, x)
+			}
+		}
+		return false
+	case float64:
+		return td.Name == "float64" || td.Name == "float32"
+	case string:
+		return td.Name == "string"
+	case bool:
+		return td.Name == "bool"
+	case *runtime.Slice:
+		return td.Kind == runtime.KindSlice
+	case *runtime.Map:
+		return td.Kind == runtime.KindMap
+	case *runtime.Chan:
+		return td.Kind == runtime.KindChan
+	case *runtime.Function, *runtime.Closure, *runtime.BoundMethod, *runtime.BuiltinFunc:
+		return td.Kind == runtime.KindFunc
+	default:
+		return false
+	}
+}
+
+// satisfiesIface checks a value against an interface typedef's method set.
+func (v *VM) satisfiesIface(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
+	if len(td.MReqs) == 0 && len(td.IEmbeds) == 0 {
+		return true // empty interface
+	}
+	if v.H.IfaceReqs == nil || v.H.MethodsOf == nil {
+		f.trap("interface checks require engine hooks")
+	}
+	reqs, err := v.H.IfaceReqs(td)
+	if err != nil {
+		f.trap("%s", err)
+	}
+	if len(reqs) == 0 {
+		return true
+	}
+	have, err := v.H.MethodsOf(x)
+	if err != nil {
+		f.trap("%s", err)
+	}
+	for m := range reqs {
+		if !have[m] {
+			return false
+		}
+	}
+	return true
+}
+
+func tdName(td *runtime.TypeDef) string {
+	if td.Name != "" {
+		return td.Name
+	}
+	switch td.Kind {
+	case runtime.KindInterface:
+		return "interface{}"
+	case runtime.KindSlice:
+		return "slice"
+	case runtime.KindMap:
+		return "map"
+	case runtime.KindFunc:
+		return "func"
+	case runtime.KindChan:
+		return "chan"
+	}
+	return "type"
+}
+
+func typeNameOf(x runtime.Value) string {
+	switch xv := x.(type) {
+	case *runtime.Struct:
+		if xv.Def != nil && xv.Def.Name != "" {
+			return xv.Def.Name
+		}
+		return "struct"
+	case int64:
+		return "int64"
+	case float64:
+		return "float64"
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case *runtime.Slice:
+		return "slice"
+	case *runtime.Map:
+		return "map"
+	case runtime.Nil:
+		return "nil"
+	default:
+		return fmt.Sprintf("%T", x)
+	}
+}
+
+// instantiate implements F[T, U] / T[Args] on generic functions and types;
+// a non-generic base falls back to index lookup so `a[i]` and `F[T]` share
+// one encoding.
+func (v *VM) instantiate(f *frame, base runtime.Value, targs []runtime.Value, pos token.Pos) runtime.Value {
+	if dv, ok := runtime.Deref(base); ok {
+		base = dv
+	}
+	switch g := base.(type) {
+	case *runtime.Function:
+		if len(g.TParams) == 0 {
+			return v.indexFallback(f, base, targs)
+		}
+		if len(targs) != len(g.TParams) {
+			f.trap("cannot instantiate %s: needs %d type arguments, got %d", g.Name, len(g.TParams), len(targs))
+		}
+		binds := map[string]runtime.Value{}
+		for i, tp := range g.TParams {
+			binds[tp] = targs[i]
+		}
+		return &runtime.Function{
+			Pkg: g.Pkg, File: g.File, Decl: g.Decl, Name: g.Name,
+			Recv: g.Recv, PtrRecv: g.PtrRecv,
+			TParams: g.TParams, Binds: binds, Compile: g.Compile,
+		}
+	case *runtime.TypeDef:
+		if len(g.TParams) == 0 {
+			return v.indexFallback(f, base, targs)
+		}
+		if len(targs) != len(g.TParams) {
+			f.trap("cannot instantiate %s: needs %d type arguments, got %d", g.Name, len(g.TParams), len(targs))
+		}
+		return v.specializeType(g, targs)
+	default:
+		return v.indexFallback(f, base, targs)
+	}
+}
+
+// indexFallback applies plain index semantics when the [..] was not a
+// generic instantiation after all (single index only).
+func (v *VM) indexFallback(f *frame, base runtime.Value, targs []runtime.Value) runtime.Value {
+	if len(targs) != 1 {
+		f.trap("cannot index %T with %d indices", base, len(targs))
+	}
+	return v.index(f, base, targs[0])
+}
+
+// specializeType clones a generic typedef with its methods re-bound to the
+// concrete type arguments.
+func (v *VM) specializeType(g *runtime.TypeDef, targs []runtime.Value) *runtime.TypeDef {
+	td := &runtime.TypeDef{
+		Pkg: g.Pkg, Name: g.Name, File: g.File, Spec: g.Spec, Kind: g.Kind,
+		Fields: g.Fields, FTags: g.FTags, Anon: g.Anon, TParams: g.TParams,
+		MReqs: g.MReqs, IEmbeds: g.IEmbeds,
+		EmbedSpecs: g.EmbedSpecs, EmbedIdx: g.EmbedIdx, Embeds: g.Embeds,
+	}
+	if len(g.Methods) > 0 {
+		td.Methods = make(map[string]*runtime.Function, len(g.Methods))
+		for name, m := range g.Methods {
+			binds := map[string]runtime.Value{}
+			for k, bv := range m.Binds {
+				binds[k] = bv
+			}
+			for i, tp := range g.TParams {
+				binds[tp] = targs[i]
+			}
+			td.Methods[name] = &runtime.Function{
+				Pkg: m.Pkg, File: m.File, Decl: m.Decl, Name: m.Name,
+				Recv: m.Recv, PtrRecv: m.PtrRecv,
+				TParams: m.TParams, Binds: binds, Compile: m.Compile,
+			}
+		}
+	}
+	return td
+}
+
+// ---- special forms ----
+
+// specialCtx implements runtime.SpecialContext: the surface a special-form
+// handler sees of the caller's frame.
+type specialCtx struct {
+	v *VM
+	f *frame
+	q *runtime.QuotedCall
+}
+
+func (s *specialCtx) Position(n ast.Node) token.Position {
+	if s.f.fn.Pkg != nil && s.f.fn.Pkg.Fset != nil {
+		return s.f.fn.Pkg.Fset.Position(n.Pos())
+	}
+	return token.Position{}
+}
+
+func (s *specialCtx) File() *syntax.File        { return s.q.File }
+func (s *specialCtx) Package() *runtime.Package { return s.f.fn.Pkg }
+
+func (s *specialCtx) Format(n ast.Node) string {
+	var b strings.Builder
+	var fset *token.FileSet
+	if s.f.fn.Pkg != nil {
+		fset = s.f.fn.Pkg.Fset
+	}
+	if fset == nil {
+		fset = token.NewFileSet()
+	}
+	if err := format.Node(&b, fset, n); err != nil {
+		return fmt.Sprintf("<bad node %T>", n)
+	}
+	return b.String()
+}
+
+func (s *specialCtx) Call(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	return s.v.Call(fn, args)
+}
+
+// Eval compiles expr against the caller's live scope (locals/upvals snap-
+// shotted at the special call site) and runs it in a fresh frame sharing
+// the caller's cells — writes by the quoted expr are visible to the caller.
+func (s *specialCtx) Eval(e ast.Expr) (runtime.Value, error) {
+	if s.v.H.CompileScopedExpr == nil {
+		return nil, fmt.Errorf("no scoped-expression compiler")
+	}
+	ch, err := s.v.H.CompileScopedExpr(s.f.fn.Pkg, s.q.File, e, s.q.Locals, s.q.Upvals)
+	if err != nil {
+		return nil, err
+	}
+	fr := &frame{
+		fn:     &runtime.Function{Pkg: s.f.fn.Pkg, File: s.q.File, Name: "<special-eval>"},
+		ch:     ch,
+		locals: make([]*runtime.Cell, ch.NLocals),
+		upvals: s.f.upvals,
+	}
+	// share the caller's cells — slot indices line up by construction
+	n := len(s.f.locals)
+	if n > len(fr.locals) {
+		n = len(fr.locals)
+	}
+	copy(fr.locals, s.f.locals[:n])
+	for i := n; i < len(fr.locals); i++ {
+		fr.locals[i] = &runtime.Cell{Elem: runtime.NIL}
+	}
+	s.v.exec(fr)
+	if len(fr.stack) == 0 {
+		return runtime.NIL, nil
+	}
+	return fr.stack[len(fr.stack)-1], nil
+}
+
+func (s *specialCtx) Errorf(n ast.Node, formatStr string, args ...any) error {
+	return fmt.Errorf("%s: %s", s.Position(n), fmt.Sprintf(formatStr, args...))
 }

@@ -134,12 +134,16 @@ func TestTrapOnCall(t *testing.T) {
 		t.Fatalf("Good: got %v", got)
 	}
 	_, err := e.Run(context.Background(), "./testdata/traponcall", "Bad")
-	if err == nil || !strings.Contains(err.Error(), "fallthrough") {
-		t.Fatalf("Bad: expected fallthrough trap, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "3-index") {
+		t.Fatalf("Bad: expected 3-index-slice trap, got %v", err)
 	}
 	_, err = e.Run(context.Background(), "./testdata/traponcall", "Channy")
-	if err == nil || !strings.Contains(err.Error(), "type assert") {
-		t.Fatalf("Channy: expected type-assert trap, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "label not defined") {
+		t.Fatalf("Channy: expected undefined-label trap, got %v", err)
+	}
+	// fallthrough + type assert work now: both old traps became real code
+	if got := run(t, e, "./testdata/traponcall", "FallthroughAndAssert"); got != int64(16) {
+		t.Fatalf("FallthroughAndAssert: got %v", got)
 	}
 }
 
@@ -331,5 +335,107 @@ func TestOsHostSurface(t *testing.T) {
 	if _, err := newEngine(t).Run(context.Background(), "./testdata/hostenv", "Exit"); err == nil ||
 		!strings.Contains(err.Error(), "cannot terminate the host") {
 		t.Fatalf("os.Exit must trap, got %v", err)
+	}
+}
+
+func TestFeatures(t *testing.T) {
+	e := newEngine(t)
+	cases := []struct {
+		fn   string
+		want runtime.Value
+	}{
+		// spread calls
+		{"Spread", int64(36)},
+		{"SpreadTail", int64(8)},
+		// compound assign & ++/-- on fields, indices, derefs
+		{"CompoundOps", int64(172)},
+		{"PtrOps", int64(12)},
+		// labels, break/continue L, goto
+		{"LabeledBreak", int64(3)},
+		{"LabeledContinue", int64(16)},
+		{"GotoSkip", int64(5)},
+		{"LabeledSwitch", int64(3)},
+		{"SelectLabel", int64(2)},
+		// interfaces: dispatch, embedding, satisfaction
+		{"InterfaceDispatch", int64(16)},
+		{"EmbeddedMethod", int64(25)},
+		{"IfaceHolds", int64(1)},
+		// assertions + type switches
+		{"AssertFail", false},
+		{"TypeSwitch", int64(120)},
+		{"TypeSwitchBind", "hey!"},
+		{"AssertPanic", int64(99)},
+		// generics
+		{"GenericFns", int64(42)},
+		{"GenericConvert", int64(42)},
+		{"GenericType", int64(42)},
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/features", c.fn)
+		if diff := cmp.Diff(c.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+	// comma-ok assert returns a tuple
+	got := run(t, e, "./testdata/features", "AssertOK")
+	tp, ok := got.(*runtime.Tuple)
+	if !ok || len(tp.Elems) != 2 || tp.Elems[0] != int64(2) || tp.Elems[1] != true {
+		t.Fatalf("AssertOK: got %v", got)
+	}
+}
+
+func TestSpecialForms(t *testing.T) {
+	e := minigo2.NewEngine("..")
+	e.Bind("example.com/dsl", map[string]runtime.Value{})
+
+	twice := func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+		v, err := ctx.Eval(call.Call.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		n, ok := v.(int64)
+		if !ok {
+			return nil, ctx.Errorf(call.Call, "Twice arg is %T, want int", v)
+		}
+		return n * 2, nil
+	}
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "Twice"}, twice)
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "Show"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			// the quoted arg renders as source, never evaluated
+			return ctx.Format(call.Call.Args[0]), nil
+		})
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "Skipped"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			return int64(42), nil // arg never evaluated -> no panic
+		})
+
+	cases := []struct {
+		fn   string
+		want runtime.Value
+	}{
+		{"TwiceIt", int64(44)}, // Eval sees caller's local x=21
+		{"Quoted", "y + 1"},    // quoted, unevaluated source
+		{"Lazy", int64(42)},    // handler never Evals -> boom() never runs
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/special", c.fn)
+		if diff := cmp.Diff(c.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+}
+
+func TestHostPolicy(t *testing.T) {
+	// deny the whole os package: bound but empty — script sees "undefined"
+	e := minigo2.NewEngine("..", minigo2.WithHostPolicy(func(path, sym string) bool {
+		return path != "os"
+	}))
+	if got := run(t, e, "./testdata/hostpolicy", "PolicyOK"); got != "OK" {
+		t.Fatalf("PolicyOK: got %v", got)
+	}
+	_, err := e.Run(context.Background(), "./testdata/hostpolicy", "PolicyDenied")
+	if err == nil || !strings.Contains(err.Error(), "Getenv") {
+		t.Fatalf("os.Getenv must be denied by policy, got %v", err)
 	}
 }

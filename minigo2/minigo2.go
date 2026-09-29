@@ -32,9 +32,11 @@ type Engine struct {
 	cfg      resolve.BuildConfig
 	fset     *token.FileSet
 
-	builtins *runtime.Env
-	vmm      *vm.VM
-	initMode InitMode
+	builtins   *runtime.Env
+	vmm        *vm.VM
+	initMode   InitMode
+	specials   map[runtime.SymbolID]runtime.SpecialFunc
+	hostPolicy func(importPath, symbol string) bool // nil = allow all bound intrinsics
 
 	mu    sync.Mutex
 	pkgs  map[string]*runtime.Package // by import path
@@ -75,6 +77,14 @@ func WithAllowedRoots(roots ...string) Option {
 	return func(e *Engine) { e.cfg.AllowedRoots = roots }
 }
 
+// WithHostPolicy gates which bound host symbols are visible to scripts:
+// deny (returns false) removes the symbol from the package's environment,
+// so a script referencing it gets "undefined". Applied at Bind time for
+// every bound package (std intrinsics and user binds alike).
+func WithHostPolicy(allow func(importPath, symbol string) bool) Option {
+	return func(e *Engine) { e.hostPolicy = allow }
+}
+
 // NewEngine creates an engine whose default resolver is go-scan
 // (locator.WithGoModuleResolver). startDir is used to locate the go.mod /
 // go.work anchor for import-path resolution.
@@ -95,13 +105,29 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 		res = nil
 	}
 	e.resolver = res
+	e.specials = map[runtime.SymbolID]runtime.SpecialFunc{}
 	e.vmm = &vm.VM{H: vm.Hooks{
-		Builtin:     e.builtins.Get,
-		Materialize: e.materialize,
-		CompileExpr: compile.Expr,
+		Builtin:           e.builtins.Get,
+		Materialize:       e.materialize,
+		CompileExpr:       compile.Expr,
+		CompileScopedExpr: compile.ExprScoped,
+		Special:           func(id runtime.SymbolID) (runtime.SpecialFunc, bool) { h, ok := e.specials[id]; return h, ok },
+		MethodsOf:         e.methodsOfValue,
+		IfaceReqs:         e.ifaceReqs,
+		FindMethod:        e.findMethod,
 	}}
 	e.installStdlib()
 	return e
+}
+
+// RegisterSpecial installs a special-form handler for a canonical symbol
+// (import path + member name). Calls shaped `pkgAlias.Name(args...)` whose
+// alias resolves to that package compile to OpSpecialCall: the handler
+// fires at run time with the call's AST quoted.
+func (e *Engine) RegisterSpecial(id runtime.SymbolID, h runtime.SpecialFunc) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.specials[id] = h
 }
 
 // WithResolver swaps the resolver (e.g. a testing stub).
@@ -144,14 +170,19 @@ func (e *Engine) Run(ctx context.Context, ref, fnName string, args ...runtime.Va
 
 // Bind registers a host package: import path -> symbols. The package is
 // marked Ready (no source needed). This is the host-extension point.
+// WithHostPolicy filters symbols: denied names stay undefined in scripts.
 func (e *Engine) Bind(importPath string, symbols map[string]runtime.Value) {
 	p := &runtime.Package{
-		Path:    importPath,
-		Name:    lastElem(importPath),
-		State:   runtime.Ready,
-		Globals: runtime.NewEnv(),
+		Path:     importPath,
+		Name:     lastElem(importPath),
+		State:    runtime.Ready,
+		Globals:  runtime.NewEnv(),
+		Specials: e.specials,
 	}
 	for k, v := range symbols {
+		if e.hostPolicy != nil && !e.hostPolicy(importPath, k) {
+			continue
+		}
 		p.Globals.Set(k, v)
 	}
 	e.mu.Lock()
@@ -223,6 +254,7 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 		Globals:  runtime.NewEnv(),
 		Scopes:   map[*syntax.File]map[string]*runtime.ImportRef{},
 		Imports:  map[*syntax.File][]*runtime.ImportRef{},
+		Specials: e.specials,
 	}
 	// publish before parsing to make import cycles convergent
 	e.mu.Lock()
@@ -342,7 +374,8 @@ func (e *Engine) EvalExpr(ctx context.Context, pkg *runtime.Package, file *synta
 func (e *Engine) materialize(pkg *runtime.Package, d *index.Decl) (runtime.Value, error) {
 	switch d.Kind {
 	case index.FuncDecl:
-		return &runtime.Function{Pkg: pkg, File: d.File, Decl: d.Func, Name: d.Name, Compile: compile.Func}, nil
+		return &runtime.Function{Pkg: pkg, File: d.File, Decl: d.Func, Name: d.Name,
+			TParams: typeParamNames(d.Func.Type.TypeParams), Compile: compile.Func}, nil
 	case index.TypeDecl:
 		return e.typeDefOf(pkg, d)
 	case index.ConstDecl, index.VarDecl:
@@ -356,13 +389,33 @@ func (e *Engine) materialize(pkg *runtime.Package, d *index.Decl) (runtime.Value
 
 func (e *Engine) typeDefOf(pkg *runtime.Package, d *index.Decl) (runtime.Value, error) {
 	ts := d.Spec.(*ast.TypeSpec)
-	td := &runtime.TypeDef{Pkg: pkg, Name: d.Name, File: d.File, Spec: ts}
+	td := &runtime.TypeDef{Pkg: pkg, Name: d.Name, File: d.File, Spec: ts,
+		TParams: typeParamNames(ts.TypeParams), Anon: ts.Type}
 	switch t := ts.Type.(type) {
 	case *ast.StructType:
 		td.Kind = runtime.KindStruct
 		for _, f := range t.Fields.List {
+			if len(f.Names) == 0 {
+				// embedded field: the field name is the base type's name
+				td.EmbedSpecs = append(td.EmbedSpecs, f.Type)
+				td.EmbedIdx = append(td.EmbedIdx, len(td.Fields))
+				td.Fields = append(td.Fields, embedBaseName(f.Type))
+				continue
+			}
 			for _, n := range f.Names {
 				td.Fields = append(td.Fields, n.Name)
+			}
+		}
+	case *ast.InterfaceType:
+		td.Kind = runtime.KindInterface
+		for _, m := range t.Methods.List {
+			if len(m.Names) == 0 {
+				// embedded element: io.Reader, ~int unions, constraints
+				td.IEmbeds = append(td.IEmbeds, m.Type)
+				continue
+			}
+			for _, n := range m.Names {
+				td.MReqs = append(td.MReqs, n.Name)
 			}
 		}
 	case *ast.ArrayType:
@@ -371,8 +424,6 @@ func (e *Engine) typeDefOf(pkg *runtime.Package, d *index.Decl) (runtime.Value, 
 		td.Kind = runtime.KindMap
 	case *ast.FuncType:
 		td.Kind = runtime.KindFunc
-	case *ast.InterfaceType:
-		td.Kind = runtime.KindInterface
 	case *ast.Ident:
 		td.Kind = runtime.KindNamedBasic
 	default:

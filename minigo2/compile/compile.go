@@ -107,9 +107,26 @@ func (s *fscope) capture(name string) bool {
 // (for, range, switch, select).
 type ctrlCtx struct {
 	isLoop     bool
-	continueIP int   // -1 until post position is known
-	continues  []int // continue jumps to patch once continueIP is known
-	breaks     []int // instruction indices to patch to construct end
+	labels     []string // label names attached by enclosing LabeledStmt
+	continueIP int      // -1 until post position is known
+	continues  []int    // continue jumps to patch once continueIP is known
+	breaks     []int    // instruction indices to patch to construct end
+}
+
+// labelInfo is a label statement's jump target (ip is its instruction
+// position). `goto L` resolves against it; `break L`/`continue L` find the
+// control construct it was attached to.
+type labelInfo struct {
+	name string
+	ip   int
+}
+
+// pendingGoto is a goto emitted before its label was defined; resolved at
+// the end of the function's compilation.
+type pendingGoto struct {
+	ins  int
+	name string
+	pos  token.Pos
 }
 
 // compiler holds the state for one chunk under construction.
@@ -119,6 +136,12 @@ type compiler struct {
 	fs   *fscope
 	ch   *bytecode.Chunk
 	ctrl []*ctrlCtx
+
+	binds         map[string]runtime.Value // generic instantiation: type-param name -> *TypeDef
+	labels        map[string]*labelInfo
+	pendingGotos  []pendingGoto
+	pendingLabels []*labelInfo // labels waiting to be claimed by a construct
+	falls         *[]int       // fallthrough jump sites in the current case body
 }
 
 func (c *compiler) emit(op bytecode.Op, a, b int, pos token.Pos) int {
@@ -134,8 +157,8 @@ func (c *compiler) emit3(op bytecode.Op, a, b, cc int, pos token.Pos) int {
 
 func (c *compiler) patchA(i, target int) { c.ch.Code[i].A = int32(target) }
 
-func (c *compiler) trap(pos token.Pos, format string, args ...any) {
-	c.emit(bytecode.OpTrap, c.constIdx(fmt.Sprintf(format, args...)), 0, pos)
+func (c *compiler) trap(pos token.Pos, format string, args ...any) int {
+	return c.emit(bytecode.OpTrap, c.constIdx(fmt.Sprintf(format, args...)), 0, pos)
 }
 
 func (c *compiler) constIdx(v any) int {
@@ -151,6 +174,11 @@ func (c *compiler) getRef(name string, pos token.Pos) {
 	isUp, idx, ok := c.fs.find(name)
 	switch {
 	case !ok:
+		// compile-time bindings from generic instantiation (type param -> TypeDef)
+		if bv, bound := c.binds[name]; bound {
+			c.emit(bytecode.OpConst, c.constIdx(bv), 0, pos)
+			return
+		}
 		c.emit(bytecode.OpGlobal, c.nameIdx(name), 0, pos)
 	case !isUp:
 		c.emit(bytecode.OpLocal, idx, 0, pos)
@@ -187,7 +215,7 @@ func (c *compiler) refRef(name string, pos token.Pos) {
 
 // Func compiles fn.Decl into fn.Chunk.
 func Func(fn *runtime.Function) error {
-	c := &compiler{pkg: fn.Pkg, file: fn.File, fs: newFScope(nil), ch: &bytecode.Chunk{Name: fn.Name}}
+	c := &compiler{pkg: fn.Pkg, file: fn.File, fs: newFScope(nil), ch: &bytecode.Chunk{Name: fn.Name}, labels: map[string]*labelInfo{}, binds: fn.Binds}
 	c.fs.pushBlock()
 
 	// Params (and the receiver for methods) are pre-bound by the VM into
@@ -234,6 +262,7 @@ func Func(fn *runtime.Function) error {
 	c.ch.NResults = nresults
 
 	c.stmt(fn.Decl.Body)
+	c.resolveGotos()
 	// implicit return
 	c.emit(bytecode.OpReturn, nresults, 0, fn.Decl.End())
 	c.ch.NLocals = c.fs.nlocals
@@ -251,6 +280,32 @@ func Func(fn *runtime.Function) error {
 func Expr(pkg *runtime.Package, file *syntax.File, e ast.Expr) (*bytecode.Chunk, error) {
 	c := &compiler{pkg: pkg, file: file, fs: newFScope(nil), ch: &bytecode.Chunk{Name: "<eval>"}}
 	c.fs.pushBlock()
+	c.expr(e)
+	c.emit(bytecode.OpReturn, 1, 0, e.End())
+	c.ch.NLocals = c.fs.nlocals
+	return c.ch, nil
+}
+
+// ExprScoped compiles expr so free identifiers resolve against a caller
+// frame: locals/upvals are name->index maps into the caller's locals and
+// upvalue tables. It backs special-form Eval — the produced chunk reads
+// and writes the caller's live cells.
+func ExprScoped(pkg *runtime.Package, file *syntax.File, e ast.Expr, locals, upvals map[string]int) (*bytecode.Chunk, error) {
+	c := &compiler{pkg: pkg, file: file, fs: newFScope(nil), ch: &bytecode.Chunk{Name: "<special-eval>"}, labels: map[string]*labelInfo{}}
+	c.fs.pushBlock()
+	max := -1
+	for name, slot := range locals {
+		c.fs.blocks[0][name] = slot
+		if slot > max {
+			max = slot
+		}
+	}
+	c.fs.nlocals = max + 1
+	// Pre-seeding upmap both resolves the name and pins the caller's index —
+	// find() returns it without consulting the (nil) parent scope.
+	for name, i := range upvals {
+		c.fs.upmap[name] = i
+	}
 	c.expr(e)
 	c.emit(bytecode.OpReturn, 1, 0, e.End())
 	c.ch.NLocals = c.fs.nlocals
@@ -297,6 +352,7 @@ func InitFunc(pkg *runtime.Package) (*bytecode.Chunk, error) {
 	}
 	// Go initializes vars/consts in dependency order, not textual order.
 	for _, d := range orderSpecs(pkg.Index, specReps) {
+		c.file = d.File // per-file: import aliases and scope lookups
 		if d.Kind == index.ConstDecl {
 			c.emit(bytecode.OpConst, c.constIdx(int64(d.Idx)), 0, d.Pos)
 			c.emit(bytecode.OpSetLocal, iotaSlot, 0, d.Pos)
@@ -304,6 +360,7 @@ func InitFunc(pkg *runtime.Package) (*bytecode.Chunk, error) {
 		c.valueSpec(d.Spec.(*ast.ValueSpec), d)
 	}
 	for _, d := range pkg.Index.Inits {
+		c.file = d.File
 		fv := &runtime.Function{Pkg: pkg, File: d.File, Decl: d.Func, Name: "init"}
 		c.emit(bytecode.OpConst, c.constIdx(fv), 0, d.Pos)
 		c.emit(bytecode.OpCall, 0, 0, d.Pos)
@@ -400,7 +457,15 @@ func (c *compiler) stmt(s ast.Stmt) {
 			op = bytecode.BinSub
 		}
 		one := func() { c.emit(bytecode.OpConst, c.constIdx(int64(1)), 0, st.Pos()) }
-		switch t := st.X.(type) {
+		xe := st.X
+		for {
+			if p, ok := xe.(*ast.ParenExpr); ok {
+				xe = p.X
+				continue
+			}
+			break
+		}
+		switch t := xe.(type) {
 		case *ast.Ident:
 			c.getRef(t.Name, t.Pos())
 			one()
@@ -413,6 +478,21 @@ func (c *compiler) stmt(s ast.Stmt) {
 			one()
 			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
 			c.emit(bytecode.OpSetField, c.nameIdx(t.Sel.Name), 0, t.Pos())
+		case *ast.IndexExpr:
+			c.expr(t.X)
+			c.expr(t.Index)
+			c.emit(bytecode.OpDup2, 0, 0, t.Pos())
+			c.emit(bytecode.OpIndex, 0, 0, t.Pos())
+			one()
+			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
+			c.emit(bytecode.OpSetIndex, 0, 0, st.Pos())
+		case *ast.StarExpr:
+			c.expr(t.X)
+			c.emit(bytecode.OpDup, 0, 0, t.Pos())
+			c.emit(bytecode.OpDeref, 0, 0, t.Pos())
+			one()
+			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
+			c.emit(bytecode.OpSetInd, 0, 0, st.Pos())
 		default:
 			c.trap(st.Pos(), "++/-- on %T is not supported", st.X)
 		}
@@ -440,9 +520,9 @@ func (c *compiler) stmt(s ast.Stmt) {
 	case *ast.SelectStmt:
 		c.selectStmt(st)
 	case *ast.LabeledStmt:
-		c.trap(st.Pos(), "labels/goto are not supported")
+		c.labeledStmt(st)
 	case *ast.TypeSwitchStmt:
-		c.trap(st.Pos(), "type switch is not supported yet")
+		c.typeSwitchStmt(st)
 	case *ast.CaseClause, *ast.CommClause:
 		c.trap(st.Pos(), "case clause outside switch")
 	default:
@@ -462,15 +542,15 @@ func (c *compiler) bindLocal(name string, pos token.Pos, _ bool) {
 // callStmt compiles `defer f(x)` / `go f(x)`: callee and args are
 // evaluated immediately; op (OpDefer/OpGo) decides when the call runs.
 func (c *compiler) callStmt(call *ast.CallExpr, op bytecode.Op, pos token.Pos) {
-	if call.Ellipsis.IsValid() {
-		c.trap(pos, "spread calls are not supported")
-		return
-	}
 	c.calleeExpr(call.Fun)
 	for _, a := range call.Args {
 		c.expr(a)
 	}
-	c.emit(op, len(call.Args), 0, pos)
+	spread := 0
+	if call.Ellipsis.IsValid() {
+		spread = 1
+	}
+	c.emit(op, len(call.Args), spread, pos)
 }
 
 // assign handles =, :=, and compound ops.
@@ -479,25 +559,46 @@ func (c *compiler) assign(st *ast.AssignStmt) {
 	simple := st.Tok == token.ASSIGN || isDefine
 
 	if !simple {
-		// compound: only identifier LHS for now
 		if len(st.Lhs) != 1 || len(st.Rhs) != 1 {
 			c.trap(st.Pos(), "compound assignment requires single operands")
 			return
 		}
-		id, ok := st.Lhs[0].(*ast.Ident)
+		op, ok := binOpOf(st.Tok)
 		if !ok {
-			c.trap(st.Pos(), "compound assignment on non-identifier")
-			return
-		}
-		c.getRef(id.Name, id.Pos())
-		c.expr(st.Rhs[0])
-		if op, ok := binOpOf(st.Tok); ok {
-			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
-		} else {
 			c.trap(st.Pos(), "unsupported assign op %s", st.Tok)
 			return
 		}
-		c.setRef(id.Name, id.Pos())
+		switch lhs := st.Lhs[0].(type) {
+		case *ast.Ident:
+			c.getRef(lhs.Name, lhs.Pos())
+			c.expr(st.Rhs[0])
+			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
+			c.setRef(lhs.Name, lhs.Pos())
+		case *ast.SelectorExpr:
+			c.expr(lhs.X)
+			c.emit(bytecode.OpDup, 0, 0, lhs.Pos())
+			c.emit(bytecode.OpSelect, c.nameIdx(lhs.Sel.Name), 0, lhs.Pos())
+			c.expr(st.Rhs[0])
+			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
+			c.emit(bytecode.OpSetField, c.nameIdx(lhs.Sel.Name), 0, st.Pos())
+		case *ast.IndexExpr:
+			c.expr(lhs.X)
+			c.expr(lhs.Index)
+			c.emit(bytecode.OpDup2, 0, 0, lhs.Pos())
+			c.emit(bytecode.OpIndex, 0, 0, lhs.Pos())
+			c.expr(st.Rhs[0])
+			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
+			c.emit(bytecode.OpSetIndex, 0, 0, st.Pos())
+		case *ast.StarExpr:
+			c.expr(lhs.X)
+			c.emit(bytecode.OpDup, 0, 0, lhs.Pos())
+			c.emit(bytecode.OpDeref, 0, 0, lhs.Pos())
+			c.expr(st.Rhs[0])
+			c.emit(bytecode.OpBinary, int(op), 0, st.Pos())
+			c.emit(bytecode.OpSetInd, 0, 0, st.Pos())
+		default:
+			c.trap(st.Pos(), "compound assignment on %T is not supported", lhs)
+		}
 		return
 	}
 
@@ -521,6 +622,20 @@ func (c *compiler) assign(st *ast.AssignStmt) {
 				c.expr(x.X)
 				c.expr(x.Index)
 				c.emit(bytecode.OpIndexOK, 0, 0, x.Pos())
+				c.emit3(bytecode.OpUnpack, 2, 0, 0, st.Pos())
+				for i := n - 1; i >= 0; i-- {
+					c.storeTarget(st.Lhs[i], isDefine)
+				}
+				return
+			case *ast.TypeAssertExpr:
+				// comma-ok assert: v, ok := x.(T)
+				c.expr(x.X)
+				if x.Type == nil {
+					c.trap(x.Pos(), ".(type) outside type switch")
+					return
+				}
+				c.typeExpr(x.Type)
+				c.emit(bytecode.OpAssertOK, 0, 0, x.Pos())
 				c.emit3(bytecode.OpUnpack, 2, 0, 0, st.Pos())
 				for i := n - 1; i >= 0; i-- {
 					c.storeTarget(st.Lhs[i], isDefine)
@@ -598,7 +713,7 @@ func (c *compiler) forStmt(st *ast.ForStmt) {
 	if st.Init != nil {
 		c.stmt(st.Init)
 	}
-	lc := &ctrlCtx{isLoop: true, continueIP: -1}
+	lc := &ctrlCtx{isLoop: true, continueIP: -1, labels: c.takeLabels()}
 	c.ctrl = append(c.ctrl, lc)
 	condIP := len(c.ch.Code)
 	var jEnd int
@@ -641,7 +756,7 @@ func (c *compiler) rangeStmt(st *ast.RangeStmt) {
 	if st.Value != nil {
 		nvars++
 	}
-	lc := &ctrlCtx{isLoop: true}
+	lc := &ctrlCtx{isLoop: true, labels: c.takeLabels()}
 	c.ctrl = append(c.ctrl, lc)
 	topIP := len(c.ch.Code)
 	nextI := c.emit3(bytecode.OpRangeNext, 0, itSlot, nvars, st.Pos())
@@ -684,11 +799,12 @@ func (c *compiler) switchStmt(st *ast.SwitchStmt) {
 		tagSlot = c.fs.declare("$tag")
 		c.emit(bytecode.OpNewLocal, tagSlot, 0, st.Tag.Pos())
 	}
-	cc := &ctrlCtx{}
+	cc := &ctrlCtx{labels: c.takeLabels()}
 	c.ctrl = append(c.ctrl, cc)
 
 	var defaultBody []ast.Stmt
 	var jumpOuts []int
+	var pendingFalls []int // fallthrough sites in the previous clause body
 	for _, s := range st.Body.List {
 		clause := s.(*ast.CaseClause)
 		if clause.List == nil {
@@ -714,15 +830,36 @@ func (c *compiler) switchStmt(st *ast.SwitchStmt) {
 		for _, bj := range bodyJumps {
 			c.patchA(bj, bodyStart)
 		}
+		for _, fi := range pendingFalls {
+			c.patchA(fi, bodyStart)
+		}
+		pendingFalls = nil
+		c.fs.pushBlock()
+		var falls []int
+		c.falls = &falls
 		for _, bs := range clause.Body {
 			c.stmt(bs)
 		}
+		c.falls = nil
+		c.fs.popBlock()
+		pendingFalls = falls
 		jumpOuts = append(jumpOuts, c.emit(bytecode.OpJump, 0, 0, clause.Pos()))
 		c.patchA(jNext, len(c.ch.Code))
 	}
 	if defaultBody != nil {
+		defStart := len(c.ch.Code)
+		for _, fi := range pendingFalls {
+			c.patchA(fi, defStart)
+		}
+		pendingFalls = nil
 		for _, bs := range defaultBody {
 			c.stmt(bs)
+		}
+	}
+	if len(pendingFalls) > 0 {
+		ti := c.trap(st.Pos(), "fallthrough out of the final case clause")
+		for _, fi := range pendingFalls {
+			c.patchA(fi, ti)
 		}
 	}
 	end := len(c.ch.Code)
@@ -745,7 +882,7 @@ func (c *compiler) switchStmt(st *ast.SwitchStmt) {
 // a default the select would block forever, so it traps.
 func (c *compiler) selectStmt(st *ast.SelectStmt) {
 	c.fs.pushBlock()
-	cc := &ctrlCtx{}
+	cc := &ctrlCtx{labels: c.takeLabels()}
 	c.ctrl = append(c.ctrl, cc)
 
 	type selCase struct {
@@ -892,7 +1029,49 @@ func (c *compiler) returnStmt(st *ast.ReturnStmt) {
 
 func (c *compiler) branchStmt(st *ast.BranchStmt) {
 	if st.Label != nil {
-		c.trap(st.Pos(), "labeled branch is not supported")
+		switch st.Tok {
+		case token.BREAK:
+			for i := len(c.ctrl) - 1; i >= 0; i-- {
+				cc := c.ctrl[i]
+				for _, name := range cc.labels {
+					if name == st.Label.Name {
+						cc.breaks = append(cc.breaks, c.emit(bytecode.OpJump, 0, 0, st.Pos()))
+						return
+					}
+				}
+			}
+			c.trap(st.Pos(), "break label %s is not defined", st.Label.Name)
+		case token.CONTINUE:
+			for i := len(c.ctrl) - 1; i >= 0; i-- {
+				cc := c.ctrl[i]
+				if !cc.isLoop {
+					continue
+				}
+				for _, name := range cc.labels {
+					if name == st.Label.Name {
+						if cc.continueIP >= 0 {
+							c.emit(bytecode.OpJump, cc.continueIP, 0, st.Pos())
+						} else {
+							cc.continues = append(cc.continues, c.emit(bytecode.OpJump, 0, 0, st.Pos()))
+						}
+						return
+					}
+				}
+			}
+			c.trap(st.Pos(), "continue label %s is not defined", st.Label.Name)
+		case token.GOTO:
+			if li, ok := c.labels[st.Label.Name]; ok {
+				c.emit(bytecode.OpJump, li.ip, 0, st.Pos())
+				return
+			}
+			c.pendingGotos = append(c.pendingGotos, pendingGoto{
+				ins:  c.emit(bytecode.OpJump, 0, 0, st.Pos()),
+				name: st.Label.Name,
+				pos:  st.Pos(),
+			})
+		case token.FALLTHROUGH:
+			c.trap(st.Pos(), "fallthrough cannot have a label")
+		}
 		return
 	}
 	switch st.Tok {
@@ -918,10 +1097,188 @@ func (c *compiler) branchStmt(st *ast.BranchStmt) {
 		}
 		c.trap(st.Pos(), "continue outside loop")
 	case token.FALLTHROUGH:
-		c.trap(st.Pos(), "fallthrough is not supported")
-	case token.GOTO:
-		c.trap(st.Pos(), "goto is not supported")
+		if c.falls != nil {
+			*c.falls = append(*c.falls, c.emit(bytecode.OpJump, 0, 0, st.Pos()))
+			return
+		}
+		c.trap(st.Pos(), "fallthrough outside switch case")
 	}
+}
+
+// labeledStmt registers a label and compiles its statement. A label
+// directly wrapping a control construct (for/range/switch/select/type
+// switch) is claimed by that construct so `break L`/`continue L` work.
+func (c *compiler) labeledStmt(st *ast.LabeledStmt) {
+	li := &labelInfo{name: st.Label.Name, ip: len(c.ch.Code)}
+	if _, dup := c.labels[st.Label.Name]; dup {
+		c.trap(st.Pos(), "label %s redeclared", st.Label.Name)
+	}
+	c.labels[st.Label.Name] = li
+	switch st.Stmt.(type) {
+	case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.SelectStmt, *ast.TypeSwitchStmt:
+		c.pendingLabels = append(c.pendingLabels, li)
+		c.stmt(st.Stmt)
+		c.pendingLabels = nil
+	default:
+		c.stmt(st.Stmt)
+	}
+}
+
+// takeLabels hands any pending labels to a newly created ctrlCtx and
+// returns their names.
+func (c *compiler) takeLabels() []string {
+	if len(c.pendingLabels) == 0 {
+		return nil
+	}
+	names := make([]string, len(c.pendingLabels))
+	for i, li := range c.pendingLabels {
+		names[i] = li.name
+	}
+	c.pendingLabels = nil
+	return names
+}
+
+// resolveGotos patches forward gotos to their labels; a goto with no
+// matching label in the function becomes a run-time trap.
+func (c *compiler) resolveGotos() {
+	for _, pg := range c.pendingGotos {
+		if li, ok := c.labels[pg.name]; ok {
+			c.patchA(pg.ins, li.ip)
+			continue
+		}
+		ti := c.trap(pg.pos, "goto %s: label not defined", pg.name)
+		c.patchA(pg.ins, ti)
+	}
+	c.pendingGotos = nil
+}
+
+// typeSwitchStmt compiles `switch v := x.(type) { case T: ... }`. The
+// subject is evaluated once into a hidden slot; each case emits OpAssertOK
+// keeping the asserted value on stack for the case body to bind (narrowed
+// v) or discard.
+func (c *compiler) typeSwitchStmt(st *ast.TypeSwitchStmt) {
+	c.fs.pushBlock()
+	if st.Init != nil {
+		c.stmt(st.Init)
+	}
+	var subj ast.Expr
+	varName := ""
+	switch a := st.Assign.(type) {
+	case *ast.ExprStmt:
+		if ta, ok := a.X.(*ast.TypeAssertExpr); ok {
+			subj = ta.X
+		}
+	case *ast.AssignStmt:
+		if len(a.Rhs) == 1 {
+			if ta, ok := a.Rhs[0].(*ast.TypeAssertExpr); ok {
+				subj = ta.X
+			}
+		}
+		if len(a.Lhs) > 0 {
+			if id, ok := a.Lhs[0].(*ast.Ident); ok {
+				varName = id.Name
+			}
+		}
+	}
+	if subj == nil {
+		c.trap(st.Pos(), "type switch without a type assertion")
+		c.fs.popBlock()
+		return
+	}
+	c.expr(subj)
+	tagSlot := c.fs.declare("$tsubj")
+	c.emit(bytecode.OpNewLocal, tagSlot, 0, subj.Pos())
+	cc := &ctrlCtx{labels: c.takeLabels()}
+	c.ctrl = append(c.ctrl, cc)
+
+	var defaultBody []ast.Stmt
+	var jumpOuts []int
+	var pendingFalls []int
+	for _, s := range st.Body.List {
+		clause := s.(*ast.CaseClause)
+		if clause.List == nil {
+			defaultBody = clause.Body
+			continue
+		}
+		bodyJumps := []int{}
+		// each test leaves one value on the stack for the body to bind
+		// (the assert result, or the subject itself for `case nil:`);
+		// JumpTrue pops the flag, the false path pops the leftover value.
+		for _, e := range clause.List {
+			if id, ok := e.(*ast.Ident); ok && id.Name == "nil" {
+				c.emit(bytecode.OpLocal, tagSlot, 0, e.Pos())
+				c.emit(bytecode.OpLocal, tagSlot, 0, e.Pos())
+				c.emit(bytecode.OpNil, 0, 0, e.Pos())
+				c.emit(bytecode.OpBinary, int(bytecode.BinEql), 0, e.Pos())
+			} else {
+				c.emit(bytecode.OpLocal, tagSlot, 0, e.Pos())
+				c.typeExpr(e)
+				c.emit(bytecode.OpAssertOK, 0, 0, e.Pos())
+				c.emit3(bytecode.OpUnpack, 2, 0, 0, e.Pos())
+			}
+			bodyJumps = append(bodyJumps, c.emit(bytecode.OpJumpTrue, 0, 0, e.Pos()))
+			c.emit(bytecode.OpPop, 0, 0, e.Pos())
+		}
+		jNext := c.emit(bytecode.OpJump, 0, 0, clause.Pos())
+		bodyStart := len(c.ch.Code)
+		for _, bj := range bodyJumps {
+			c.patchA(bj, bodyStart)
+		}
+		for _, fi := range pendingFalls {
+			c.patchA(fi, bodyStart)
+		}
+		pendingFalls = nil
+		c.fs.pushBlock()
+		if varName != "" && varName != "_" {
+			slot := c.fs.declare(varName)
+			c.emit(bytecode.OpNewLocal, slot, 0, clause.Pos())
+		} else {
+			c.emit(bytecode.OpPop, 0, 0, clause.Pos())
+		}
+		var falls []int
+		c.falls = &falls
+		for _, bs := range clause.Body {
+			c.stmt(bs)
+		}
+		c.falls = nil
+		c.fs.popBlock()
+		pendingFalls = falls
+		jumpOuts = append(jumpOuts, c.emit(bytecode.OpJump, 0, 0, clause.Pos()))
+		c.patchA(jNext, len(c.ch.Code))
+	}
+	if defaultBody != nil {
+		defStart := len(c.ch.Code)
+		for _, fi := range pendingFalls {
+			c.patchA(fi, defStart)
+		}
+		pendingFalls = nil
+		c.fs.pushBlock()
+		if varName != "" && varName != "_" {
+			// default binds the un-narrowed subject value
+			slot := c.fs.declare(varName)
+			c.emit(bytecode.OpLocal, tagSlot, 0, st.Pos())
+			c.emit(bytecode.OpNewLocal, slot, 0, st.Pos())
+		}
+		for _, bs := range defaultBody {
+			c.stmt(bs)
+		}
+		c.fs.popBlock()
+	}
+	if len(pendingFalls) > 0 {
+		ti := c.trap(st.Pos(), "fallthrough out of the final case clause")
+		for _, fi := range pendingFalls {
+			c.patchA(fi, ti)
+		}
+	}
+	end := len(c.ch.Code)
+	for _, j := range jumpOuts {
+		c.patchA(j, end)
+	}
+	for _, b := range cc.breaks {
+		c.patchA(b, end)
+	}
+	c.ctrl = c.ctrl[:len(c.ctrl)-1]
+	c.fs.popBlock()
 }
 
 // ---- expressions ----
@@ -950,9 +1307,13 @@ func (c *compiler) expr(e ast.Expr) {
 		c.expr(x.X)
 		c.emit(bytecode.OpSelect, c.nameIdx(x.Sel.Name), 0, x.Pos())
 	case *ast.IndexExpr:
+		// OpInstantiate doubles as indexing: non-generic bases fall back to
+		// an index lookup, so `a[i]` and `F[T]` share one encoding. The
+		// index stays a value expr (a generic base's ident args resolve the
+		// same way through getRef).
 		c.expr(x.X)
 		c.expr(x.Index)
-		c.emit(bytecode.OpIndex, 0, 0, x.Pos())
+		c.emit(bytecode.OpInstantiate, 1, 0, x.Pos())
 	case *ast.SliceExpr:
 		if x.Slice3 {
 			c.trap(x.Pos(), "3-index slice is not supported")
@@ -986,11 +1347,22 @@ func (c *compiler) expr(e ast.Expr) {
 	case *ast.FuncLit:
 		c.funcLit(x)
 	case *ast.TypeAssertExpr:
-		c.trap(x.Pos(), "type assertion is not supported yet")
+		c.expr(x.X)
+		if x.Type == nil {
+			c.trap(x.Pos(), ".(type) outside type switch")
+			return
+		}
+		c.typeExpr(x.Type)
+		c.emit(bytecode.OpAssert, 0, 0, x.Pos())
 	case *ast.IndexListExpr:
-		c.trap(x.Pos(), "generics are not supported yet")
+		// multi-index is only legal as generic instantiation F[T, U]
+		c.expr(x.X)
+		for _, i := range x.Indices {
+			c.typeExpr(i)
+		}
+		c.emit(bytecode.OpInstantiate, len(x.Indices), 0, x.Pos())
 	case *ast.Ellipsis:
-		c.trap(x.Pos(), "spread call is not supported")
+		c.trap(x.Pos(), "bare ellipsis is not supported")
 	case *ast.KeyValueExpr:
 		c.trap(x.Pos(), "key:value outside composite literal")
 	default:
@@ -1007,6 +1379,13 @@ func (c *compiler) unary(x *ast.UnaryExpr) {
 		case *ast.CompositeLit:
 			c.compositeLit(t)
 			c.emit(bytecode.OpBox, 0, 0, x.Pos())
+		case *ast.SelectorExpr:
+			c.expr(t.X)
+			c.emit(bytecode.OpFieldRef, c.nameIdx(t.Sel.Name), 0, t.Pos())
+		case *ast.IndexExpr:
+			c.expr(t.X)
+			c.expr(t.Index)
+			c.emit(bytecode.OpIndexRef, 0, 0, t.Pos())
 		default:
 			c.trap(x.Pos(), "address-of %T is not supported", x.X)
 		}
@@ -1123,9 +1502,7 @@ func binOpOf(tok token.Token) (bytecode.BinOp, bool) {
 }
 
 func (c *compiler) call(x *ast.CallExpr) {
-	// variadic spread f(xs...) is unsupported
-	if x.Ellipsis.IsValid() {
-		c.trap(x.Pos(), "spread calls are not supported")
+	if sel, ok := x.Fun.(*ast.SelectorExpr); ok && c.trySpecial(x, sel) {
 		return
 	}
 	c.calleeExpr(x.Fun)
@@ -1137,7 +1514,48 @@ func (c *compiler) call(x *ast.CallExpr) {
 		}
 		c.expr(a)
 	}
-	c.emit(bytecode.OpCall, len(x.Args), 0, x.Pos())
+	spread := 0
+	if x.Ellipsis.IsValid() {
+		spread = 1
+	}
+	c.emit(bytecode.OpCall, len(x.Args), spread, x.Pos())
+}
+
+// trySpecial emits OpSpecialCall when the call's callee resolves to a
+// registered special form (importIdent.Name matching a canonical symbol
+// in the engine's registry). The arguments stay quoted for the handler.
+func (c *compiler) trySpecial(x *ast.CallExpr, sel *ast.SelectorExpr) bool {
+	if c.pkg == nil || len(c.pkg.Specials) == 0 || c.file == nil {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	scope := c.pkg.Scopes[c.file]
+	if scope == nil {
+		return false
+	}
+	ref, ok := scope[id.Name]
+	if !ok {
+		return false
+	}
+	sym := runtime.SymbolID{PackagePath: ref.Path, Name: sel.Sel.Name}
+	if _, ok := c.pkg.Specials[sym]; !ok {
+		return false
+	}
+	q := &runtime.QuotedCall{Call: x, File: c.file, Locals: map[string]int{}, Upvals: map[string]int{}}
+	// snapshot every visible name: outer blocks first, inner shadows win
+	for _, block := range c.fs.blocks {
+		for name, slot := range block {
+			q.Locals[name] = slot
+		}
+	}
+	for name, i := range c.fs.upmap {
+		q.Upvals[name] = i
+	}
+	c.emit3(bytecode.OpSpecialCall, c.constIdx(sym), c.constIdx(q), 0, x.Pos())
+	return true
 }
 
 // calleeExpr compiles the called expression; a syntactic type form means a
@@ -1217,6 +1635,12 @@ func (c *compiler) typeExpr(e ast.Expr) {
 	case *ast.StructType:
 		td := &runtime.TypeDef{Kind: runtime.KindStruct}
 		for _, f := range t.Fields.List {
+			if len(f.Names) == 0 {
+				td.EmbedSpecs = append(td.EmbedSpecs, f.Type)
+				td.EmbedIdx = append(td.EmbedIdx, len(td.Fields))
+				td.Fields = append(td.Fields, embedFieldName(f.Type))
+				continue
+			}
 			for _, n := range f.Names {
 				td.Fields = append(td.Fields, n.Name)
 			}
@@ -1225,11 +1649,30 @@ func (c *compiler) typeExpr(e ast.Expr) {
 	case *ast.FuncType:
 		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindFunc}), 0, e.Pos())
 	case *ast.InterfaceType:
-		c.trap(e.Pos(), "interface types are not supported yet")
+		td := &runtime.TypeDef{Kind: runtime.KindInterface}
+		for _, m := range t.Methods.List {
+			if len(m.Names) == 0 {
+				td.IEmbeds = append(td.IEmbeds, m.Type)
+				continue
+			}
+			for _, n := range m.Names {
+				td.MReqs = append(td.MReqs, n.Name)
+			}
+		}
+		c.emit(bytecode.OpConst, c.constIdx(td), 0, e.Pos())
 	case *ast.ParenExpr:
 		c.typeExpr(t.X)
-	case *ast.IndexExpr, *ast.IndexListExpr:
-		c.trap(e.Pos(), "generic type instantiation is not supported")
+	case *ast.IndexExpr:
+		// generic instantiation T[Args]: args in type position
+		c.expr(t.X)
+		c.typeExpr(t.Index)
+		c.emit(bytecode.OpInstantiate, 1, 0, e.Pos())
+	case *ast.IndexListExpr:
+		c.expr(t.X)
+		for _, i := range t.Indices {
+			c.typeExpr(i)
+		}
+		c.emit(bytecode.OpInstantiate, len(t.Indices), 0, e.Pos())
 	case *ast.Ellipsis:
 		c.typeExpr(t.Elt)
 	case *ast.ChanType:
@@ -1243,7 +1686,7 @@ func (c *compiler) typeExpr(e ast.Expr) {
 // closure creation.
 func (c *compiler) funcLit(x *ast.FuncLit) {
 	inner := &runtime.Function{Pkg: c.pkg, File: c.file, Name: "<funclit>"}
-	ic := &compiler{pkg: c.pkg, file: c.file, fs: newFScope(c.fs), ch: &bytecode.Chunk{Name: "<funclit>"}}
+	ic := &compiler{pkg: c.pkg, file: c.file, fs: newFScope(c.fs), ch: &bytecode.Chunk{Name: "<funclit>"}, labels: map[string]*labelInfo{}, binds: c.binds}
 	ic.fs.pushBlock()
 	nparams := 0
 	if x.Type.Params != nil {
@@ -1274,12 +1717,31 @@ func (c *compiler) funcLit(x *ast.FuncLit) {
 		ic.ch.NResults = countResults(x.Type.Results)
 	}
 	ic.stmt(x.Body)
+	ic.resolveGotos()
 	ic.emit(bytecode.OpReturn, ic.ch.NResults, 0, x.End())
 	ic.ch.NLocals = ic.fs.nlocals
 	ic.ch.Upvals = ic.fs.upvals
 	inner.Chunk = ic.ch
 
 	c.emit(bytecode.OpMakeClosure, c.constIdx(inner), 0, x.Pos())
+}
+
+// embedFieldName derives the field name of an anonymous (embedded) struct
+// field: the base type name, ignoring pointers, packages and type args.
+func embedFieldName(x ast.Expr) string {
+	switch t := x.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return embedFieldName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.IndexExpr:
+		return embedFieldName(t.X)
+	case *ast.IndexListExpr:
+		return embedFieldName(t.X)
+	}
+	return ""
 }
 
 // literalValue converts a BasicLit to a runtime value.

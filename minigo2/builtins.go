@@ -123,6 +123,9 @@ func builtins() *runtime.Env {
 	} {
 		env.Set(n, &runtime.TypeDef{Name: n, Kind: runtime.KindNamedBasic})
 	}
+	// any / error: predeclared interface typedefs (assertion + decl targets)
+	env.Set("any", &runtime.TypeDef{Name: "any", Kind: runtime.KindInterface})
+	env.Set("error", &runtime.TypeDef{Name: "error", Kind: runtime.KindInterface, MReqs: []string{"Error"}})
 	return env
 }
 

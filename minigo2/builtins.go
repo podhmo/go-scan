@@ -136,12 +136,12 @@ func builtins(e *Engine) *runtime.Env {
 			for i := range el {
 				el[i] = runtime.NIL
 			}
-			return &runtime.Slice{Elems: el}, nil
+			return &runtime.Slice{Elems: el, Typ: td}, nil
 		case runtime.KindMap:
 			return &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}, Typ: td}, nil
 		case runtime.KindChan:
 			// buffer capacity is not modeled: sends never block
-			return &runtime.Chan{}, nil
+			return &runtime.Chan{Typ: td}, nil
 		default:
 			return nil, fmt.Errorf("make of kind %d", td.Kind)
 		}

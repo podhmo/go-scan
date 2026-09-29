@@ -489,6 +489,14 @@ func TestDeclTypes(t *testing.T) {
 		{"NamedPtrIface", int64(6)},
 		{"NamedUnary", int64(-4)},
 		{"AliasBindOK", int64(1)},
+		{"StructAliasOK", int64(3)},
+		{"AnonStructOK", int64(4)},
+		{"PtrElemOK", int64(7)},
+		{"BoxStoreOK", int64(5)},
+		{"MapAliasOK", int64(9)},
+		{"SliceElemTyped", int64(7)},
+		{"ChanElemTyped", int64(3)},
+		{"ConstTyped", int64(6)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/decltypes", c.fn)
@@ -517,6 +525,11 @@ func TestDeclAssignability(t *testing.T) {
 		{"NoInheritBad", "no field or method"},
 		{"IfaceNilBad", "cannot use"},
 		{"ChainHoleBad", "cannot use"},
+		{"StructNamedBad", "cannot use"},
+		{"PtrElemBad", "cannot use"},
+		{"BoxStoreBad", "cannot use"},
+		{"MapRebindBad", "cannot use"},
+		{"SliceRebindBad", "cannot use"},
 	}
 	for _, c := range bads {
 		if _, err := e.Run(context.Background(), "./testdata/decltypes", c.fn); err == nil ||

@@ -1214,4 +1214,38 @@ typed-nil holes instead of bare `NIL`.
   operand returned the bare underlying value; results re-tag like
   `binaryOp`.
 
+## 26. Round-7 notes: declared tags beyond basics
+
+The round-6 residuals turned out mostly tractable: every runtime value
+that *can* carry a declared type now does — `Struct.Def` (already did),
+`Map.Typ`, and new `Typ` fields on `Slice` and `Chan` (stamped by
+composite literals, `make`, and any declared-type bind via a generalized
+container-stamp in `coerceConcrete`).
+
+- `declaredTag(x)` reads the tag; `tagIsNamed(td)` defines "named" as
+  `Spec != nil || Name != ""` — anonymous structural typedefs carry a
+  `Pkg` for resolution but are NOT named (that distinction matters:
+  `var m M = map[string]int{...}` must bind, `var m M2 = m1` must not).
+- The named-to-named trap only fires when the TARGET is also named:
+  `var m map[string]int = om` stays a shape check (V named, T unnamed —
+  Go allows it), while `var a A = sq` traps.
+- Named pointers (`type P *T`) check the pointee's declared tag against
+  `ElemOf` — `var p P = &other` traps; `OpBox` propagates the pointee
+  tag into `Cell.Typ`, so `*p = v` through `&T{...}` coerces like a var
+  store. `s[i] = v` and `ch <- v` coerce via `ElemOf(container.Typ)`.
+- Typed consts coerce: package-level via `OpCoerceTop` before `bind`
+  (consts are plain globals, not cells — `OpCoerceGlobal` can't reach
+  them), locals via the existing slot coerce. Inherited const specs
+  (`const (a T = 1; b)`) stay bare — the inherited type isn't carried by
+  the index.
+- Unnamed struct literals bind named struct types on a field-name
+  match (`structFieldsEq`) — unnamed→named is assignable in Go when the
+  underlying matches; field tags and element types are not compared.
+- Still open: bare basic values remain "untyped constants" (`var y
+  MyInt = intVar` wraps — distinguishing `:=`-erased `int` vars from
+  literals would mean tagging every value, which is a much deeper
+  change); `type F func()` / `type I2 I` keep only their underlying
+  shape (no tag field on `Function`, asserts peel interfaces);
+  `&s.f`/`&s[i]` FieldRef/IndexRef stores are still unchecked.
+
 ## (end)

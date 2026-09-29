@@ -497,32 +497,43 @@ func (c *compiler) valueSpec(vs *ast.ValueSpec, d *index.Decl) {
 	}
 	// `var x T` at package level gets the same declared-type coerce as a
 	// local: zero values materialize (var s Sq -> Struct), typed nils too.
-	coerceG := func(name *ast.Ident) {
+	coerceVar := func(name *ast.Ident) {
 		if isConst || vs.Type == nil {
 			return
 		}
 		c.typeExpr(vs.Type)
 		c.emit(bytecode.OpCoerceGlobal, c.nameIdx(name.Name), 0, name.Pos())
 	}
+	// `const k T = v` coerces the value before binding — consts are stored
+	// as plain globals, not cells, so OpCoerceGlobal cannot reach them.
+	coerceConst := func() {
+		if !isConst || vs.Type == nil {
+			return
+		}
+		c.typeExpr(vs.Type)
+		c.emit(bytecode.OpCoerceTop, 0, 0, vs.Pos())
+	}
 	switch {
 	case len(vals) == 0:
 		for _, name := range vs.Names {
 			c.emit(bytecode.OpNil, 0, 0, name.Pos())
 			bind(name)
-			coerceG(name)
+			coerceVar(name)
 		}
 	case len(vals) == 1 && len(vs.Names) > 1:
 		c.expr(vals[0])
 		c.emit3(bytecode.OpUnpack, len(vs.Names), 0, 0, vs.Pos())
 		for i := len(vs.Names) - 1; i >= 0; i-- {
+			coerceConst()
 			bind(vs.Names[i])
-			coerceG(vs.Names[i])
+			coerceVar(vs.Names[i])
 		}
 	default:
 		for i, name := range vs.Names {
 			c.expr(vals[i])
+			coerceConst()
 			bind(name)
-			coerceG(name)
+			coerceVar(name)
 		}
 	}
 }
@@ -547,9 +558,10 @@ func (c *compiler) stmt(s ast.Stmt) {
 			case token.VAR, token.CONST:
 				vs := spec.(*ast.ValueSpec)
 				isConst := gd.Tok == token.CONST
-				// `var x T` binds a typed zero / typed nil via OpCoerce.
+				// `var x T` binds a typed zero / typed nil via OpCoerce; typed
+				// consts coerce the same way — locals are always cells.
 				coerce := func(name *ast.Ident, slot int) {
-					if isConst || vs.Type == nil || slot < 0 {
+					if vs.Type == nil || slot < 0 {
 						return
 					}
 					c.emitTypeCoerce(slot, vs.Type, name.Pos())

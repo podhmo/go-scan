@@ -29,10 +29,10 @@ type BuildConfig struct {
 	AllowedRoots []string
 }
 
-// checkDir verifies dir against AllowedRoots (no-op when unrestricted).
+// CheckDir verifies dir against AllowedRoots (no-op when unrestricted).
 // Both sides are resolved through EvalSymlinks so a symlink inside a root
 // pointing outside it cannot bypass the check.
-func (cfg BuildConfig) checkDir(dir string) error {
+func (cfg BuildConfig) CheckDir(dir string) error {
 	if len(cfg.AllowedRoots) == 0 {
 		return nil
 	}

@@ -26,6 +26,7 @@ type REPL struct {
 	imports []string // import specs, e.g. `"fmt"` or `f "fmt"`
 	decls   []string // accumulated func/type declarations
 	steps   []string // generated step function sources
+	pending []string // globals hoisted by the input being evaluated
 	n       int
 }
 
@@ -63,6 +64,7 @@ func (r *REPL) EvalLine(ctx context.Context, input string) (runtime.Value, error
 	if input == "" {
 		return runtime.NIL, nil
 	}
+	r.pending = nil
 
 	// Classify: does the input parse as top-level declarations?
 	fset := token.NewFileSet()
@@ -93,7 +95,7 @@ func (r *REPL) EvalLine(ctx context.Context, input string) (runtime.Value, error
 		if step == "" {
 			return runtime.NIL, nil
 		}
-		return r.engine.Call(ctx, r.pkg, step)
+		return r.runStep(ctx, step)
 	}
 
 	// Otherwise parse the input as function-body statements.
@@ -116,7 +118,21 @@ func (r *REPL) EvalLine(ctx context.Context, input string) (runtime.Value, error
 	if step == "" {
 		return runtime.NIL, nil
 	}
-	return r.engine.Call(ctx, r.pkg, step)
+	return r.runStep(ctx, step)
+}
+
+// runStep calls a generated step function. When it fails, globals hoisted
+// by this input are rolled back — a failed initializer must not leave a
+// nil cell that later lines read as defined.
+func (r *REPL) runStep(ctx context.Context, name string) (runtime.Value, error) {
+	v, err := r.engine.Call(ctx, r.pkg, name)
+	if err != nil {
+		for _, n := range r.pending {
+			r.pkg.Globals.Delete(n)
+		}
+		return nil, err
+	}
+	return v, nil
 }
 
 // acceptDecls folds top-level declarations into the REPL state and returns
@@ -223,7 +239,8 @@ func (r *REPL) acceptStmts(fset *token.FileSet, body []ast.Stmt) (string, error)
 }
 
 // hoist registers name as a persistent package-global cell, preserving an
-// existing entry's value.
+// existing entry's value. Newly created cells are recorded in r.pending so
+// a failing initializer can roll them back.
 func (r *REPL) hoist(name string) {
 	if name == "_" {
 		return
@@ -231,6 +248,7 @@ func (r *REPL) hoist(name string) {
 	if _, ok := r.pkg.Globals.Get(name); ok {
 		return
 	}
+	r.pending = append(r.pending, name)
 	r.pkg.Globals.Set(name, &runtime.Cell{Elem: runtime.NIL})
 }
 
@@ -287,6 +305,18 @@ func (r *REPL) reload() error {
 		return fmt.Errorf("repl: internal error: %w", err)
 	}
 	p := r.pkg
+	// evict values cached from materialized decls so redefinitions pick
+	// up the new bodies: resolution consults Globals before the index.
+	// Only decl names holding a bare decl value are evicted — hoisted
+	// cells and values assigned under non-decl names are untouched.
+	for _, d := range idx.Decls {
+		if gv, ok := p.Globals.Get(d.Name); ok {
+			switch gv.(type) {
+			case *runtime.Function, *runtime.TypeDef:
+				p.Globals.Delete(d.Name)
+			}
+		}
+	}
 	p.Files = []*syntax.File{sf}
 	p.FileByName = map[string]*syntax.File{sf.Name: sf}
 	p.Index = idx

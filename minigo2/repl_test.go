@@ -87,6 +87,44 @@ func TestREPL(t *testing.T) {
 	}
 }
 
+func TestREPLRedefinition(t *testing.T) {
+	ctx := context.Background()
+	r := NewEngine("testdata").NewREPL()
+	if _, err := r.EvalLine(ctx, "func f() int { return 1 }"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := r.EvalLine(ctx, "f()")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(int64(1), r.Display(v)); diff != "" {
+		t.Fatalf("f() (-want +got):\n%s", diff)
+	}
+	// redefining must evict the cached materialization
+	if _, err := r.EvalLine(ctx, "func f() int { return 2 }"); err != nil {
+		t.Fatal(err)
+	}
+	v, err = r.EvalLine(ctx, "f()")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(int64(2), r.Display(v)); diff != "" {
+		t.Fatalf("f() after redefinition (-want +got):\n%s", diff)
+	}
+}
+
+func TestREPLFailedHoistRollsBack(t *testing.T) {
+	ctx := context.Background()
+	r := NewEngine("testdata").NewREPL()
+	if _, err := r.EvalLine(ctx, "bad := missing"); err == nil {
+		t.Fatal("expected undefined-name error")
+	}
+	// the hoisted cell must be rolled back: `bad` is still undefined
+	if _, err := r.EvalLine(ctx, "bad"); err == nil {
+		t.Fatal("expected bad to stay undefined after failed initializer")
+	}
+}
+
 func TestREPLCrossLineDecl(t *testing.T) {
 	ctx := context.Background()
 	e := NewEngine("testdata")

@@ -39,6 +39,9 @@ func (e *Env) Get(name string) (Value, bool) {
 // Set binds name to v.
 func (e *Env) Set(name string, v Value) { e.m[name] = v }
 
+// Delete removes the binding for name, if present.
+func (e *Env) Delete(name string) { delete(e.m, name) }
+
 // Names lists bound names.
 func (e *Env) Names() []string {
 	out := make([]string, 0, len(e.m))

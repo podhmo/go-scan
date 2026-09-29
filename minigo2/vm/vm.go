@@ -2518,6 +2518,14 @@ func (s *specialCtx) ResolveSymbol(e ast.Expr) (runtime.SymbolID, error) {
 		if !ok {
 			return runtime.SymbolID{}, fmt.Errorf("cannot resolve %s to a symbol", s.Format(e))
 		}
+		// a local or captured variable may shadow an import name: selector
+		// expressions on it are member access, not package symbols
+		if _, ok := s.q.Locals[id.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x.X, "%s is a local variable, not an import alias", id.Name)
+		}
+		if _, ok := s.q.Upvals[id.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x.X, "%s is a captured variable, not an import alias", id.Name)
+		}
 		if pkg != nil {
 			if refs, ok := pkg.Scopes[s.q.File]; ok {
 				if ref, ok := refs[id.Name]; ok {

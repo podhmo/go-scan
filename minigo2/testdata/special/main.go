@@ -31,6 +31,15 @@ func Lazy() int {
 func SymPkg() string   { return dsl.SymOf(lazyboom.Get) }
 func SymGreet() string { return dsl.SymOf(greet.Hello) }
 func SymSelf() string  { return dsl.SymOf(TwiceIt) }
+
+// SymShadow: a local variable shadowing the import alias must not resolve
+// as the imported package's symbol.
+func SymShadow() string {
+	greet := 1
+	_ = greet
+	return dsl.SymOf(greet.Hello)
+}
+
 func SymLocal() string {
 	boom := func() int { panic("boom") }
 	return dsl.SymOf(boom) // local var: resolution must fail

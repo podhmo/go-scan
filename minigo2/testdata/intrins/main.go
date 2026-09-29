@@ -109,10 +109,21 @@ func RuntimeGOOS() bool { return goruntime.GOOS != "" }
 // RuntimeGoroutines is pinned to 1: the VM is single-threaded by design.
 func RuntimeGoroutines() int { return goruntime.NumGoroutine() }
 
+// RuntimeGOMAXPROCS honors the setter argument and returns the new value.
+func RuntimeGOMAXPROCS() int {
+	old := goruntime.GOMAXPROCS(2)
+	cur := goruntime.GOMAXPROCS(0)
+	goruntime.GOMAXPROCS(old) // restore
+	return cur                // 2
+}
+
 // UnsafeSizeofInt approximates unsafe.Sizeof over the boxed value.
 func UnsafeSizeofInt() int { return int(unsafe.Sizeof(int64(0))) } // 8
 
 // UnsafeSizeofSlice reports the 3-word slice header approximation.
 func UnsafeSizeofSlice() int { return int(unsafe.Sizeof([]int{})) } // 24
+
+// UnsafeAlignofEmpty: alignment is at least 1 even for the empty struct.
+func UnsafeAlignofEmpty() int { return int(unsafe.Alignof(struct{}{})) } // 1
 
 func main() {}

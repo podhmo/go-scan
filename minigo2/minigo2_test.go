@@ -231,8 +231,10 @@ func TestStdlibIntrinsics(t *testing.T) {
 		{"BinarySearchFunc", int64(3)},
 		{"RuntimeGOOS", true},
 		{"RuntimeGoroutines", int64(1)}, // single-threaded approximation
+		{"RuntimeGOMAXPROCS", int64(2)},
 		{"UnsafeSizeofInt", int64(8)},
 		{"UnsafeSizeofSlice", int64(24)},
+		{"UnsafeAlignofEmpty", int64(1)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/intrins", c.fn)
@@ -499,6 +501,11 @@ func TestSpecialForms(t *testing.T) {
 	_, err := e.Run(context.Background(), "./testdata/special", "SymLocal")
 	if err == nil || !strings.Contains(err.Error(), "local variable") {
 		t.Fatalf("SymLocal: expected local-variable error, got %v", err)
+	}
+	// a local variable shadowing an import alias is not a package symbol
+	_, err = e.Run(context.Background(), "./testdata/special", "SymShadow")
+	if err == nil || !strings.Contains(err.Error(), "local variable") {
+		t.Fatalf("SymShadow: expected local-variable error, got %v", err)
 	}
 }
 

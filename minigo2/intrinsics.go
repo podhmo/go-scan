@@ -459,10 +459,18 @@ func (e *Engine) installStdlib() {
 		"NumGoroutine": h.fn("runtime.NumGoroutine", func(a []any) (any, error) {
 			return int64(1), nil
 		}),
-		"NumCPU":     h.fn("runtime.NumCPU", func(a []any) (any, error) { return int64(goruntime.NumCPU()), nil }),
-		"GOMAXPROCS": h.fn("runtime.GOMAXPROCS", func(a []any) (any, error) { return int64(goruntime.GOMAXPROCS(0)), nil }),
-		"Version":    h.fn("runtime.Version", func(a []any) (any, error) { return goruntime.Version(), nil }),
-		"GC":         h.fn("runtime.GC", func(a []any) (any, error) { return nil, nil }),
+		"NumCPU": h.fn("runtime.NumCPU", func(a []any) (any, error) { return int64(goruntime.NumCPU()), nil }),
+		"GOMAXPROCS": &runtime.BuiltinFunc{Name: "runtime.GOMAXPROCS", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			// GOMAXPROCS(n) sets and returns the previous value;
+			// GOMAXPROCS() returns the current value
+			n := int64(0)
+			if len(args) > 0 {
+				n, _ = args[0].(int64)
+			}
+			return int64(goruntime.GOMAXPROCS(int(n))), nil
+		}},
+		"Version": h.fn("runtime.Version", func(a []any) (any, error) { return goruntime.Version(), nil }),
+		"GC":      h.fn("runtime.GC", func(a []any) (any, error) { return nil, nil }),
 	})
 	e.Bind("time", map[string]runtime.Value{
 		"Sleep": h.fn("time.Sleep", func(a []any) (any, error) { time.Sleep(durOf(a[0])); return nil, nil }),
@@ -741,6 +749,9 @@ func unsafeSizeOf(v runtime.Value) int64 {
 
 func unsafeAlignOf(v runtime.Value) int64 {
 	if n := unsafeSizeOf(v); n < 8 {
+		if n < 1 {
+			return 1 // alignment is always at least 1
+		}
 		return n
 	}
 	return 8

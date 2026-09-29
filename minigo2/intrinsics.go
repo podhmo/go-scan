@@ -446,17 +446,18 @@ func (h *hostHelpers) sortInPlace(name string) *runtime.BuiltinFunc {
 // sets sort.Ints, sort.Strings, and slices.Sort support.
 func sortScript(el []runtime.Value) {
 	sort.Slice(el, func(i, j int) bool {
-		switch a := el[i].(type) {
+		bv := runtime.Unwrap(el[j])
+		switch a := runtime.Unwrap(el[i]).(type) {
 		case int64:
-			if b, ok := el[j].(int64); ok {
+			if b, ok := bv.(int64); ok {
 				return a < b
 			}
 		case float64:
-			if b, ok := el[j].(float64); ok {
+			if b, ok := bv.(float64); ok {
 				return a < b
 			}
 		case string:
-			if b, ok := el[j].(string); ok {
+			if b, ok := bv.(string); ok {
 				return a < b
 			}
 		}
@@ -503,6 +504,8 @@ func lessScript(a, b runtime.Value) bool {
 
 func numOf(v runtime.Value) (float64, bool) {
 	switch n := v.(type) {
+	case *runtime.Named:
+		return numOf(n.V)
 	case int64:
 		return float64(n), true
 	case float64:
@@ -514,6 +517,8 @@ func numOf(v runtime.Value) (float64, bool) {
 // equalScript compares two script values by shape (identity-ish): used by
 // maps.Equal where a deep compare is the closest available semantics.
 func equalScript(a, b runtime.Value) bool {
+	a = runtime.Unwrap(a)
+	b = runtime.Unwrap(b)
 	if an, ok := numOf(a); ok {
 		bn, ok := numOf(b)
 		return ok && an == bn
@@ -617,7 +622,7 @@ func scriptVal(v any) runtime.Value {
 		*runtime.Map, *runtime.Struct, *runtime.Function, *runtime.Closure,
 		*runtime.BoundMethod, *runtime.BuiltinFunc, *runtime.GoValue,
 		*runtime.Chan, *runtime.TypeDef, *runtime.Iterator, *runtime.Package,
-		*runtime.ImportRef:
+		*runtime.ImportRef, *runtime.Named:
 		return x
 	default:
 		return &runtime.GoValue{V: x}
@@ -631,6 +636,8 @@ func goNative(v runtime.Value) any {
 	switch x := v.(type) {
 	case runtime.Nil:
 		return nil
+	case *runtime.Named:
+		return goNative(x.V)
 	case *runtime.Cell:
 		return goNative(x.Elem)
 	case *runtime.Slice:
@@ -669,6 +676,9 @@ func asErr(v any) error {
 }
 
 func str(v any) string {
+	if n, ok := v.(*runtime.Named); ok {
+		return str(n.V)
+	}
 	if s, ok := v.(string); ok {
 		return s
 	}
@@ -677,6 +687,8 @@ func str(v any) string {
 
 func intOf(v any) int {
 	switch x := v.(type) {
+	case *runtime.Named:
+		return intOf(x.V)
 	case int64:
 		return int(x)
 	case int:
@@ -692,6 +704,9 @@ func int64Of(v any) int64 { return int64(intOf(v)) }
 func durOf(v any) time.Duration { return time.Duration(int64Of(v)) }
 
 func strSlice(v any) []string {
+	if n, ok := v.(*runtime.Named); ok {
+		return strSlice(n.V)
+	}
 	if s, ok := v.(*runtime.Slice); ok {
 		out := make([]string, len(s.Elems))
 		for i, e := range s.Elems {
@@ -710,6 +725,9 @@ func strSlice(v any) []string {
 }
 
 func anySlice(v any) []any {
+	if n, ok := v.(*runtime.Named); ok {
+		return anySlice(n.V)
+	}
 	if s, ok := v.(*runtime.Slice); ok {
 		out := make([]any, len(s.Elems))
 		for i, e := range s.Elems {
@@ -732,6 +750,9 @@ func strsSlice(ss []string) *runtime.Slice {
 }
 
 func mapKeys(v any) *runtime.Slice {
+	if n, ok := v.(*runtime.Named); ok {
+		return mapKeys(n.V)
+	}
 	if m, ok := v.(*runtime.Map); ok {
 		return &runtime.Slice{Elems: append([]runtime.Value{}, m.Order...)}
 	}
@@ -742,6 +763,9 @@ func mapKeys(v any) *runtime.Slice {
 }
 
 func mapValues(v any) *runtime.Slice {
+	if n, ok := v.(*runtime.Named); ok {
+		return mapValues(n.V)
+	}
 	if m, ok := v.(*runtime.Map); ok {
 		el := make([]runtime.Value, len(m.Order))
 		for i, k := range m.Order {

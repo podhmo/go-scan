@@ -107,6 +107,10 @@ type Package struct {
 	// LazyInit answers type/signature queries (functions and type decls)
 	// without running initializers — set by the engine's InitMode.
 	LazyInit bool
+
+	// Specials is the engine's special-form registry (canonical symbol ->
+	// handler); the compiler consults it to emit OpSpecialCall.
+	Specials map[SymbolID]SpecialFunc
 }
 
 // EnsureReady advances the package through Initialize to Ready.

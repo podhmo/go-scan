@@ -48,9 +48,9 @@ const (
 	OpBox      // pop value -> push &Cell{value} (address-of composite literal)
 
 	// calls and literals
-	OpCall          // A: argc; pop args, pop callee -> call -> push result(s)
-	OpDefer         // A: argc; pop args, pop callee -> register on frame defer list
-	OpGo            // A: argc; pop args, pop callee -> run synchronously (single-threaded approximation)
+	OpCall          // A: argc; B: 1 = last arg is a spread slice (f(xs...)); pop args, pop callee -> call -> push result(s)
+	OpDefer         // A: argc; B: spread flag; pop args, pop callee -> register on frame defer list
+	OpGo            // A: argc; B: spread flag; pop args, pop callee -> run synchronously (single-threaded approximation)
 	OpPack          // pop A values -> push Tuple
 	OpUnpack        // pop Tuple -> push A values (multi-assign)
 	OpMakeComposite // A: nelems, B: flags(1=kv pairs); pop elems, pop *TypeDef -> push composite
@@ -79,6 +79,20 @@ const (
 	OpPanic  // pop value -> unwind with *Panic
 	OpTrap   // unwind with *Trap{reason Consts[A]} — never catchable
 	OpReturn // A: nresults — pop n -> tear down frame
+
+	// references (address-of on field/index expressions)
+	OpDup2     // duplicate top two slots: a,b -> a,b,a,b
+	OpFieldRef // A: name const; pop base -> push *FieldRef{base, name} (&s.f)
+	OpIndexRef // pop key, pop base -> push *IndexRef{base, key} (&s[i])
+
+	// types / interfaces / generics
+	OpAssert      // pop typedef, pop value -> push asserted value (script panic on mismatch)
+	OpAssertOK    // pop typedef, pop value -> push Tuple{value, ok} (comma-ok assert)
+	OpInstantiate // A: ntypeargs; pop type args, pop generic -> push specialized value
+	OpElemType    // pop typedef -> push element typedef ([]T->T, map[K]V->V, chan T->T, *T->T)
+
+	// special forms (quoted Go)
+	OpSpecialCall // A: const idx *SymbolID; B: const idx *QuotedCall — quoted args, handler fires at run time
 )
 
 // BinOp is an OpBinary sub-op.

@@ -853,4 +853,128 @@ left implicit.
   folded into the existing spec topo sort — `var x = f()` waits on every
   package-level name `f` transitively reads.
 
+## 23. Round-4 notes: references, interfaces, generics-lite, special forms
+
+What implementing the remaining TODO items revealed that the design text
+left implicit.
+
+### References generalize the cell model
+
+- **"Pointer" is a protocol, not a type.** `runtime.Deref`/`SetRef` work
+  over `*Cell`, `*FieldRef` (`&s.f`), and `*IndexRef` (`&s[i]`); every
+  member/index/deref path in the VM (`OpDeref`, `OpSetInd`,
+  `selectMember`, `setField`, `setIndex`, `slice`, `call`,
+  `invokeDeferred`) unwraps through them. `&s.f` therefore needs no new
+  storage — a `FieldRef` is a cell view resolved at access time, and
+  pointer receivers bind any Deref-able ref (else wrap in a fresh cell).
+- **Compound assign on non-idents is three stack shapes**, not a rewrite
+  to load+store temps: `s.f op= v` is Dup/Select/Binary/SetField, `x[i]
+  op= v` needs `OpDup2` (keep base+idx for the store), `*p op= v` is
+  Dup/Deref/Binary/SetInd. IncDec shares the same shapes with a const-1.
+
+### `OpInstantiate` doubles as indexing
+
+- `a[i]` and `F[T]` share one encoding: the compiler emits
+  `OpInstantiate(n)` for `IndexExpr`/`IndexListExpr`, and the VM falls
+  back to `v.index` when the base is not a generic `Function`/`TypeDef`.
+  Single-index expressions keep value semantics for the index; only the
+  type-level spelling (`typeExpr`) feeds typedefs. IndexListExpr is
+  always instantiation.
+
+### Interfaces are duck-typed; there is no static type identity
+
+- **Satisfaction = method-set containment.** `TypeDef` carries `MReqs`
+  (declared method names) + `IEmbeds`/`Embeds` for embedded interface
+  elements; the `IfaceReqs` hook unions them transitively and
+  `satisfiesIface` checks `reqs ⊆ MethodsOf(v)`. `any` and `error` are
+  builtin typedefs.
+- **Constraint elements (`~T`, unions, `comparable`) are collected but
+  treated as satisfied** — minigo2 has no static type algebra to check
+  them against.
+- **Asserted-type matching is by name/kind, not identity.** `x.(T)`
+  compares the typedef name + package (or kind for slices/maps/chans);
+  `int` asserts on the whole int family (`int64` is the storage). `x`
+  holding a `*Struct` asserting an interface typedef checks method-set
+  satisfaction — including interface-embedded struct fields, where
+  `FindMethod` returns `(nil, fieldValue, ok)` so the VM dispatches on
+  the stored concrete value.
+- **A failed single-form assert is a script `Panic`, not a `Trap`** —
+  `defer`/`recover` catches it. Comma-ok form pushes `Tuple{v, ok}`.
+
+### Generics are monomorphize-on-use, and erasure shows through
+
+- **`Function.TParams` + `Binds map[string]Value`** is the whole
+  mechanism: `F[int]` clones the function with the binding, and the
+  compiler consults `c.binds` after locals/upvals in `getRef`, so `T(x)`
+  inside a generic body resolves to the bound typedef and behaves like a
+  conversion. `TypeDef` specialization (`specializeType`) re-binds method
+  receivers the same way.
+- **The gaps are a consequence of erased types**: `var z T` stores `nil`
+  (declared types are never tracked — there is no type to materialize a
+  zero value from), and `Id(40)` cannot infer `T` because binding only
+  happens at `F[T]` sites. Both are documented TODO items rather than
+  bugs to fix now.
+
+### Special forms are caller-scoped quoted calls
+
+- **`OpSpecialCall` resolves statically, at compile time, through the
+  file's import scope**: `dsl.Twice(...)` compiles to the op only when
+  `dsl` resolves via `Scopes[file]` to an `ImportRef` whose
+  `SymbolID{PackagePath, Name}` has a registered `SpecialFunc`. Anything
+  else stays a normal call — specials never shadow real members.
+- **`QuotedCall` snapshots the caller's local/upval maps** (names → slot
+  indices); `SpecialContext.Eval` compiles the arg AST with
+  `compile.ExprScoped` overlaying those slots, then runs a frame sharing
+  the caller's cells — so `dsl.Twice(x+1)` sees the caller's `x` and a
+  handler that never Evals produces true laziness (`boom()` unrun).
+- **This is quoted-Go at the *expression* level**, not the whole-program
+  `QUOTE`/`UNQUOTE` sketched earlier: partial-argument evaluation falls
+  out of `Eval` being per-arg.
+
+### Control flow: labels, fallthrough
+
+- **Labels are claimed only by directly-wrapping control constructs**
+  (`for`/`range`/`switch`/`select`/`type switch`) via `pendingLabels`;
+  everything else just registers a jump target. `break L`/`continue L`
+  scan the ctrl stack for a ctx carrying the label — `break L` on a
+  switch exits the switch, not a loop.
+- **Forward `goto` resolves at function end** (`pendingGotos`); an
+  unresolved name patches to a run-time `OpTrap`. Go's scoping
+  restrictions (no jumping into a block, over declarations) are not
+  enforced.
+- **`fallthrough` patches to the next clause's body start** (or the
+  default body, or a trailing trap) — collected per body in `c.falls`,
+  so `fallthrough` mid-clause just jumps; `case` tests are never
+  re-entered.
+
+### Misc
+
+- **`WithHostPolicy(func(path, sym string) bool)`** filters `Bind`
+  symbols uniformly — stdlib intrinsics included — so a restricted engine
+  drops `os.Getenv` by dropping the symbol rather than by special-casing
+  `os`. Behavioral surfaces (output destination, future I/O) are still
+  unscoped.
+- **`errors.As` is approximated**: scripts cannot spell the target type
+  the way Go's `As(&target)` relies on, so it binds the first non-nil
+  cause through `SetRef`.
+- **`errors.Is`/`Unwrap`** chain through the `Unwrap` intrinsic method
+  convention and `*runtime.GoValue` boxing.
+
+### Post-review fixes (e2e differential run vs real Go)
+
+- **Nil is iterable**: `for range` over `runtime.Nil` yields zero
+  iterations (nil slice/map semantics; a nil channel that would block
+  forever folds into the same approximation). `f(nil...)` spreads to
+  zero args, `len(nil)` is 0, `append(nil, ...)` creates the slice.
+- **Failed comma-ok asserts bind the zero value** (`zeroOf`), not
+  `runtime.Nil` — `v, ok := x.(int)` leaves `v` usable as `0`.
+- **Elided literal element types compile to `OpElemType` chains**:
+  `{{1,2}}` inside `[][]int` emits `typeExpr(parent)` + depth×peel of
+  the enclosing typedef, resolved at run time through `TypeDef.Anon`
+  (or `Spec.Type`) by the `ElemOf` hook — so named containers
+  (`type Matrix [][]int`) work too, as long as the underlying AST
+  names a resolvable element type.
+- **`x.(any)` on a nil interface fails** (nil has no dynamic type);
+  `case nil` in a type switch is `BinEql`, never `OpAssertOK`.
+
 ## (end)

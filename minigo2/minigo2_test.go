@@ -231,9 +231,10 @@ func TestStdlibIntrinsics(t *testing.T) {
 		{"BinarySearchHit", int64(2)},
 		{"BinarySearchMiss", int64(2)},
 		{"BinarySearchFunc", int64(3)},
+		{"BinarySearchNamed", int64(1)}, // named-string elements
 		{"RuntimeGOOS", true},
 		{"RuntimeGoroutines", int64(1)}, // single-threaded approximation
-		{"RuntimeGOMAXPROCS", int64(2)},
+		{"RuntimeGOMAXPROCS", int64(1)}, // read-only: setter arg is ignored
 		{"UnsafeSizeofInt", int64(8)},
 		{"UnsafeSizeofSlice", int64(24)},
 		{"UnsafeAlignofEmpty", int64(1)},
@@ -243,6 +244,17 @@ func TestStdlibIntrinsics(t *testing.T) {
 		if diff := cmp.Diff(c.want, got); diff != "" {
 			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
 		}
+	}
+}
+
+func TestConstAssignTraps(t *testing.T) {
+	e := newEngine(t)
+	_, err := e.Run(context.Background(), "./testdata/constreassign", "AssignConst")
+	if err == nil {
+		t.Fatal("expected a cannot-assign-to-const trap")
+	}
+	if !strings.Contains(err.Error(), "cannot assign") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

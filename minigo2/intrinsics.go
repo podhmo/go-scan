@@ -461,13 +461,10 @@ func (e *Engine) installStdlib() {
 		}),
 		"NumCPU": h.fn("runtime.NumCPU", func(a []any) (any, error) { return int64(goruntime.NumCPU()), nil }),
 		"GOMAXPROCS": &runtime.BuiltinFunc{Name: "runtime.GOMAXPROCS", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
-			// GOMAXPROCS(n) sets and returns the previous value;
-			// GOMAXPROCS() returns the current value
-			n := int64(0)
-			if len(args) > 0 {
-				n, _ = args[0].(int64)
-			}
-			return int64(goruntime.GOMAXPROCS(int(n))), nil
+			// read-only on the script side: GOMAXPROCS(0) reports the
+			// current setting without mutating the host process's
+			// parallelism.
+			return int64(goruntime.GOMAXPROCS(0)), nil
 		}},
 		"Version": h.fn("runtime.Version", func(a []any) (any, error) { return goruntime.Version(), nil }),
 		"GC":      h.fn("runtime.GC", func(a []any) (any, error) { return nil, nil }),
@@ -609,6 +606,8 @@ func scriptElems(v any) []runtime.Value {
 // lessScript orders int64/float64/string (heterogeneous pairs rank by kind:
 // numbers < strings < others, comparing numerically across int64/float64).
 func lessScript(a, b runtime.Value) bool {
+	a = runtime.Unwrap(a)
+	b = runtime.Unwrap(b)
 	an, aok := numOf(a)
 	bn, bok := numOf(b)
 	if aok && bok {

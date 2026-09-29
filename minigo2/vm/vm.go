@@ -119,6 +119,9 @@ func (f *frame) trap(format string, args ...any) {
 // coerce. `x = v` then enforces the same assignability as `var x T = v`,
 // and a named basic type keeps its tag across plain assignment.
 func (v *VM) assignCell(f *frame, c *runtime.Cell, val runtime.Value) {
+	if c.ReadOnly {
+		f.trap("cannot assign to constant")
+	}
 	if c.Typ != nil {
 		val = v.coerce(f, val, c.Typ)
 	}
@@ -465,7 +468,7 @@ func (v *VM) loop(f *frame) {
 		case bytecode.OpPop:
 			f.pop()
 		case bytecode.OpNewLocal:
-			f.locals[ins.A] = &runtime.Cell{Elem: valueCopy(f.pop())}
+			f.locals[ins.A] = &runtime.Cell{Elem: valueCopy(f.pop()), ReadOnly: ins.B != 0}
 		case bytecode.OpRenewVar:
 			f.locals[ins.A] = &runtime.Cell{Elem: f.locals[ins.A].Elem}
 		case bytecode.OpLocal:
@@ -481,12 +484,16 @@ func (v *VM) loop(f *frame) {
 		case bytecode.OpGlobal:
 			f.push(v.resolveGlobal(f, consts[ins.A].(string)))
 		case bytecode.OpNewGlobal:
-			f.fn.Pkg.Globals.Set(consts[ins.A].(string), &runtime.Cell{Elem: valueCopy(f.pop())})
+			c := &runtime.Cell{Elem: valueCopy(f.pop()), ReadOnly: ins.B != 0}
+			f.fn.Pkg.Globals.Set(consts[ins.A].(string), c)
 		case bytecode.OpSetGlobal:
 			name := consts[ins.A].(string)
 			val := f.pop()
 			if old, ok := f.fn.Pkg.Globals.Get(name); ok {
 				if c, isCell := old.(*runtime.Cell); isCell {
+					if c.ReadOnly {
+						f.trap("cannot assign to %s", name)
+					}
 					v.assignCell(f, c, val)
 					break
 				}
@@ -545,8 +552,13 @@ func (v *VM) loop(f *frame) {
 			if tn, ok := asTypedNil(ref); ok && tn.Typ.Kind == runtime.KindPointer {
 				panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
 			}
-			if c, ok := ref.(*runtime.Cell); ok && c.Typ != nil {
-				val = v.coerce(f, val, c.Typ)
+			if c, ok := ref.(*runtime.Cell); ok {
+				if c.ReadOnly {
+					f.trap("cannot assign to constant")
+				}
+				if c.Typ != nil {
+					val = v.coerce(f, val, c.Typ)
+				}
 			}
 			if !runtime.SetRef(ref, val) {
 				f.trap("indirect store to non-pointer %T", ref)

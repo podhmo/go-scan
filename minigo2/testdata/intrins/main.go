@@ -93,6 +93,18 @@ func BinarySearchMiss() int {
 	return i // 2
 }
 
+type myString string
+
+// BinarySearchNamed finds elements in a slice of a named basic type:
+// elements arrive as *Named wrappers, which the comparator must unwrap.
+func BinarySearchNamed() int {
+	i, ok := slices.BinarySearch([]myString{"a", "bb", "ccc"}, myString("bb"))
+	if !ok {
+		return -1
+	}
+	return i // 1
+}
+
 // BinarySearchFunc uses a script comparator.
 func BinarySearchFunc() int {
 	i, ok := slices.BinarySearchFunc([]string{"a", "bb", "ccc"}, "zzzz",
@@ -109,12 +121,15 @@ func RuntimeGOOS() bool { return goruntime.GOOS != "" }
 // RuntimeGoroutines is pinned to 1: the VM is single-threaded by design.
 func RuntimeGoroutines() int { return goruntime.NumGoroutine() }
 
-// RuntimeGOMAXPROCS honors the setter argument and returns the new value.
+// RuntimeGOMAXPROCS is read-only on the script side: the argument is
+// ignored and the host's current setting is returned (a script must not
+// mutate the host process's parallelism).
 func RuntimeGOMAXPROCS() int {
-	old := goruntime.GOMAXPROCS(2)
-	cur := goruntime.GOMAXPROCS(0)
-	goruntime.GOMAXPROCS(old) // restore
-	return cur                // 2
+	before := goruntime.GOMAXPROCS(0)
+	if goruntime.GOMAXPROCS(999) != before {
+		return -1 // the "setter" changed something
+	}
+	return 1
 }
 
 // UnsafeSizeofInt approximates unsafe.Sizeof over the boxed value.

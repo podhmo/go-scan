@@ -27,7 +27,20 @@ type REPL struct {
 	decls   []string // accumulated func/type declarations
 	steps   []string // generated step function sources
 	pending []string // globals hoisted by the input being evaluated
-	n       int
+	// pendingTyped records `var x T` hoists (name -> declared type) so the
+	// cell can be stamped with T's typedef after reload; pendingConsts
+	// records const names to seal as read-only once their initializer step
+	// has run.
+	pendingTyped  []namedExpr
+	pendingConsts []string
+	n             int
+}
+
+// namedExpr pairs a hoisted name with an AST expression (a declared type
+// or a const initializer).
+type namedExpr struct {
+	name string
+	expr ast.Expr
 }
 
 // NewREPL creates a persistent REPL session on a fresh engine derived from
@@ -65,6 +78,12 @@ func (r *REPL) EvalLine(ctx context.Context, input string) (runtime.Value, error
 		return runtime.NIL, nil
 	}
 	r.pending = nil
+	r.pendingTyped = nil
+	r.pendingConsts = nil
+
+	// Snapshot the accumulated source so a post-accept failure can roll
+	// back exactly what this input appended.
+	il, dl, sl := len(r.imports), len(r.decls), len(r.steps)
 
 	// Classify: does the input parse as top-level declarations?
 	fset := token.NewFileSet()
@@ -73,26 +92,11 @@ func (r *REPL) EvalLine(ctx context.Context, input string) (runtime.Value, error
 		if err != nil {
 			return nil, err
 		}
-		if err := r.reload(); err != nil {
+		if err := r.applyInput(ctx, il, dl, sl); err != nil {
 			return nil, err
 		}
-		// Blank imports registered after package init need explicit
-		// initialization: the synthetic __init__ runs once, on the first
-		// reload, before this import existed.
-		file := r.pkg.Files[0]
-		for _, ref := range r.pkg.Imports[file] {
-			if ref.Alias != "_" {
-				continue
-			}
-			p, err := ref.Materialize()
-			if err != nil {
-				return nil, err
-			}
-			if err := p.EnsureReady(); err != nil {
-				return nil, err
-			}
-		}
 		if step == "" {
+			r.sealConsts()
 			return runtime.NIL, nil
 		}
 		return r.runStep(ctx, step)
@@ -112,13 +116,107 @@ func (r *REPL) EvalLine(ctx context.Context, input string) (runtime.Value, error
 	if err != nil {
 		return nil, err
 	}
-	if err := r.reload(); err != nil {
+	if err := r.applyInput(ctx, il, dl, sl); err != nil {
 		return nil, err
 	}
 	if step == "" {
+		r.sealConsts()
 		return runtime.NIL, nil
 	}
 	return r.runStep(ctx, step)
+}
+
+// applyInput commits the accepted input to the accumulated source and
+// finishes bindings that need the fresh index: reload, `var x T` type
+// stamps, and blank-import materialization. A failure rolls back the
+// source entries and hoisted globals this input added, so a bad line
+// (e.g. a blank import of a missing package) does not poison later ones.
+func (r *REPL) applyInput(ctx context.Context, il, dl, sl int) error {
+	if err := r.reload(); err != nil {
+		r.rollbackSource(il, dl, sl)
+		return err
+	}
+	if err := r.stampTyped(ctx); err != nil {
+		r.rollbackSource(il, dl, sl)
+		return err
+	}
+	// Blank imports registered after package init need explicit
+	// initialization: the synthetic __init__ runs once, on the first
+	// reload, before this import existed.
+	file := r.pkg.Files[0]
+	for _, ref := range r.pkg.Imports[file] {
+		if ref.Alias != "_" {
+			continue
+		}
+		p, err := ref.Materialize()
+		if err != nil {
+			r.rollbackSource(il, dl, sl)
+			return err
+		}
+		if err := p.EnsureReady(); err != nil {
+			r.rollbackSource(il, dl, sl)
+			return err
+		}
+	}
+	return nil
+}
+
+// rollbackSource undoes a failed input: trims the source slices appended
+// since (il, dl, sl), drops the globals it hoisted, and re-reloads so the
+// package is left consistent.
+func (r *REPL) rollbackSource(il, dl, sl int) {
+	r.imports = r.imports[:il]
+	r.decls = r.decls[:dl]
+	r.steps = r.steps[:sl]
+	for _, n := range r.pending {
+		r.pkg.Globals.Delete(n)
+	}
+	r.pending = nil
+	r.pendingTyped = nil
+	r.pendingConsts = nil
+	_ = r.reload() // best effort; the original error is the one that matters
+}
+
+// stampTyped stamps each hoisted `var x T` cell with T's typedef by
+// evaluating `new(T)` against the fresh index — later `x = v` stores
+// coerce like Go's declared-type assignment.
+func (r *REPL) stampTyped(ctx context.Context) error {
+	if len(r.pendingTyped) == 0 {
+		return nil
+	}
+	file := r.pkg.Files[0]
+	for _, nt := range r.pendingTyped {
+		box, err := r.engine.EvalExpr(ctx, r.pkg, file, &ast.CallExpr{
+			Fun:  ast.NewIdent("new"),
+			Args: []ast.Expr{nt.expr},
+		})
+		if err != nil {
+			return err
+		}
+		bc, ok := box.(*runtime.Cell)
+		if !ok {
+			return fmt.Errorf("repl: unexpected new() result %T", box)
+		}
+		if gv, ok := r.pkg.Globals.Get(nt.name); ok {
+			if c, ok := gv.(*runtime.Cell); ok {
+				c.Typ = bc.Typ
+			}
+		}
+	}
+	return nil
+}
+
+// sealConsts marks the cells of this input's const bindings read-only —
+// after their initializer step has run — so `k = v` traps like Go.
+func (r *REPL) sealConsts() {
+	for _, name := range r.pendingConsts {
+		if gv, ok := r.pkg.Globals.Get(name); ok {
+			if c, ok := gv.(*runtime.Cell); ok {
+				c.ReadOnly = true
+			}
+		}
+	}
+	r.pendingConsts = nil
 }
 
 // runStep calls a generated step function. When it fails, globals hoisted
@@ -132,6 +230,7 @@ func (r *REPL) runStep(ctx context.Context, name string) (runtime.Value, error) 
 		}
 		return nil, err
 	}
+	r.sealConsts()
 	return v, nil
 }
 
@@ -167,9 +266,12 @@ func (r *REPL) acceptDecls(fset *token.FileSet, f *ast.File) (string, error) {
 }
 
 // hoistSpecs promotes each declared name to a package-global cell and lowers
-// the spec to assignments executed as a step.
+// the spec to assignments executed as a step. Const names are recorded in
+// pendingConsts (sealed read-only after the step) and names with an explicit
+// type in pendingTyped (the cell is stamped with T's typedef after reload).
 func (r *REPL) hoistSpecs(d *ast.GenDecl) []ast.Stmt {
 	var out []ast.Stmt
+	isConst := d.Tok == token.CONST
 	for _, spec := range d.Specs {
 		vs, ok := spec.(*ast.ValueSpec)
 		if !ok {
@@ -177,6 +279,12 @@ func (r *REPL) hoistSpecs(d *ast.GenDecl) []ast.Stmt {
 		}
 		for _, name := range vs.Names {
 			r.hoist(name.Name)
+			if isConst {
+				r.pendingConsts = append(r.pendingConsts, name.Name)
+			}
+			if vs.Type != nil {
+				r.pendingTyped = append(r.pendingTyped, namedExpr{name: name.Name, expr: vs.Type})
+			}
 		}
 		if len(vs.Values) > 0 {
 			lhs := make([]ast.Expr, len(vs.Names))
@@ -186,8 +294,9 @@ func (r *REPL) hoistSpecs(d *ast.GenDecl) []ast.Stmt {
 			out = append(out, &ast.AssignStmt{Lhs: lhs, Tok: token.ASSIGN, Rhs: vs.Values})
 			continue
 		}
-		// `var x T` without a value initializes to a zero value.
-		if vs.Type != nil {
+		// `var x T` without a value initializes to a zero value. A value-less
+		// const keeps its nil cell and is only sealed read-only.
+		if !isConst && vs.Type != nil {
 			for _, n := range vs.Names {
 				out = append(out, &ast.AssignStmt{
 					Lhs: []ast.Expr{n},

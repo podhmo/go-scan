@@ -142,6 +142,51 @@ func TestREPLCrossLineDecl(t *testing.T) {
 	}
 }
 
+func TestREPLConstAndTypedVar(t *testing.T) {
+	ctx := context.Background()
+	r := NewEngine("testdata").NewREPL()
+
+	evalErr := func(line string) error {
+		t.Helper()
+		_, err := r.EvalLine(ctx, line)
+		return err
+	}
+
+	// const bindings are read-only after their initializer runs
+	if err := evalErr("const k = 42"); err != nil {
+		t.Fatal(err)
+	}
+	if err := evalErr("k = 5"); err == nil {
+		t.Fatal("expected error assigning to const")
+	}
+
+	// a typed var keeps its declared constraint on later assignments
+	if err := evalErr("var n int"); err != nil {
+		t.Fatal(err)
+	}
+	if err := evalErr(`n = "s"`); err == nil {
+		t.Fatal("expected error assigning string to int-typed cell")
+	}
+	if err := evalErr("n = 7"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := r.EvalLine(ctx, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(int64(7), r.Display(v)); diff != "" {
+		t.Fatalf("n (-want +got):\n%s", diff)
+	}
+
+	// a failed blank import must not poison later lines
+	if err := evalErr(`import _ "missing/pkg"`); err == nil {
+		t.Fatal("expected error for missing blank import")
+	}
+	if err := evalErr("after := 1"); err != nil {
+		t.Fatalf("line after failed blank import: %v", err)
+	}
+}
+
 func TestREPLSpecialsAndBoundPkgs(t *testing.T) {
 	ctx := context.Background()
 	e := NewEngine("testdata")

@@ -137,6 +137,8 @@ type Cell struct {
 	// coerce incoming values to it, so `x = v` gets the same assignability
 	// check as `var x T = v`.
 	Typ *TypeDef
+	// ReadOnly marks a constant binding: stores through the cell trap.
+	ReadOnly bool
 }
 
 // FieldRef is the address-of a struct field (`&s.f`) — a cell-view over

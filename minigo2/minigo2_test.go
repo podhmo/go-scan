@@ -446,3 +446,126 @@ func TestHostPolicy(t *testing.T) {
 		t.Fatalf("os.Getenv must be denied by policy, got %v", err)
 	}
 }
+
+func TestDeclTypes(t *testing.T) {
+	e := newEngine(t)
+	cases := []struct {
+		fn   string
+		want runtime.Value
+	}{
+		{"ZeroStruct", int64(0)},
+		{"PkgLevelTypedZero", int64(1)},
+		{"TypedNils", int64(304)},
+		{"NilOps", int64(1)},
+		{"PtrNil", int64(1)},
+		{"IfaceNilBoxes", int64(1)},
+		{"FuncNil", int64(1)},
+		{"LocalType", int64(5)},
+		{"LocalTypeAssert", int64(3)},
+		{"PtrElems", int64(16)},
+		{"NamedPtrVar", int64(1)},
+		{"MapKeyIdent", int64(10)},
+		{"ArrKeyIdent", int64(16)},
+		{"NamedReturnNil", int64(1)},
+		{"ReturnNilTyped", int64(1)},
+		{"ParamIfaceBox", int64(1)},
+		{"InferCalls", int64(42)},
+		{"GenericZero", int64(1)},
+		{"ConstraintOK", int64(42)},
+		{"SliceElemBox", int64(1)},
+		{"SliceAlias", int64(1)},
+		{"VarargZero", int64(8)}, // 0+1 from empty rest; 3+4 from 3 elems
+		{"MapMissZero", int64(1)},
+		{"NamedZero", int64(1)},
+		{"MultiReturnBox", int64(1)},
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/decltypes", c.fn)
+		if diff := cmp.Diff(c.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+}
+
+func TestConstraintRejects(t *testing.T) {
+	e := newEngine(t)
+	// TakesNum[bool]: bool does not satisfy ~int|~string — the type
+	// instantiation itself traps, like the Go type checker.
+	_, err := e.Run(context.Background(), "./testdata/decltypes", "ConstraintBad")
+	if err == nil || !strings.Contains(err.Error(), "constraint") {
+		t.Fatalf("ConstraintBad: expected constraint trap, got %v", err)
+	}
+}
+
+func TestGotoViolations(t *testing.T) {
+	e := newEngine(t)
+	if got := run(t, e, "./testdata/gotoviol", "Good"); got != int64(7) {
+		t.Fatalf("Good: got %v", got)
+	}
+	if got := run(t, e, "./testdata/gotoviol", "Fine"); got != int64(3) {
+		t.Fatalf("Fine: got %v", got)
+	}
+	_, err := e.Run(context.Background(), "./testdata/gotoviol", "IntoBlock")
+	if err == nil || !strings.Contains(err.Error(), "jumps into a block") {
+		t.Fatalf("IntoBlock: expected into-block trap, got %v", err)
+	}
+	_, err = e.Run(context.Background(), "./testdata/gotoviol", "OverDecl")
+	if err == nil || !strings.Contains(err.Error(), "jumps over declaration") {
+		t.Fatalf("OverDecl: expected over-decl trap, got %v", err)
+	}
+	_, err = e.Run(context.Background(), "./testdata/gotoviol", "Shadow")
+	if err == nil || !strings.Contains(err.Error(), "jumps over declaration of x") {
+		t.Fatalf("Shadow: expected over-decl trap, got %v", err)
+	}
+}
+
+// TestSessionInheritsBinds: user-bound host packages must resolve in a
+// NewSession the same as on the parent engine.
+func TestSessionInheritsBinds(t *testing.T) {
+	e := newEngine(t)
+	e.Bind("myhost/lib", map[string]runtime.Value{
+		"Magic": &runtime.BuiltinFunc{
+			Name: "Magic",
+			Fn: func(_ runtime.VMCaller, _ []runtime.Value) (runtime.Value, error) {
+				return int64(42), nil
+			},
+		},
+	})
+	got := run(t, e.NewSession(), "./testdata/sessbind", "Main")
+	if diff := cmp.Diff(int64(42), got); diff != "" {
+		t.Fatalf("Main mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestImportByDeclaredName(t *testing.T) {
+	e := newEngine(t)
+	// the package clause wins over the import path's last element
+	got := run(t, e, "./testdata/pkgname", "Use")
+	if diff := cmp.Diff(int64(7), got); diff != "" {
+		t.Fatalf("Use mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestWithOutput(t *testing.T) {
+	var buf strings.Builder
+	e := minigo2.NewEngine("..", minigo2.WithOutput(&buf))
+	run(t, e, "./testdata/intrins", "Prints")
+	if got := buf.String(); got != "hello 42\n" {
+		t.Fatalf("output: got %q", got)
+	}
+}
+
+func TestResultAs(t *testing.T) {
+	e := newEngine(t)
+	r, err := e.RunResult(context.Background(), "./testdata/decltypes", "TypedNils")
+	if err != nil {
+		t.Fatalf("RunResult: %v", err)
+	}
+	var n int64
+	if err := r.As(&n); err != nil {
+		t.Fatalf("As: %v", err)
+	}
+	if n != 304 {
+		t.Fatalf("As: got %d", n)
+	}
+}

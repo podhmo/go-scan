@@ -1587,13 +1587,31 @@ func isTypeForm(e ast.Expr) bool {
 }
 
 func (c *compiler) compositeLit(x *ast.CompositeLit) {
-	c.typeExpr(x.Type)
+	c.compileLit(x, x.Type, 0)
+}
+
+// compileLit emits a composite literal. baseType is the AST the literal's
+// typedef is derived from; depth counts OpElemType peels applied to it —
+// element literals may omit their type (`{{1,2}}` inside `[][]int`),
+// inheriting the enclosing literal's element type via run-time resolution.
+func (c *compiler) compileLit(x *ast.CompositeLit, baseType ast.Expr, depth int) {
+	c.typeExpr(baseType)
+	for i := 0; i < depth; i++ {
+		c.emit(bytecode.OpElemType, 0, 0, x.Pos())
+	}
 	kv := false
 	for _, el := range x.Elts {
 		if _, ok := el.(*ast.KeyValueExpr); ok {
 			kv = true
 			break
 		}
+	}
+	emitVal := func(val ast.Expr) {
+		if lit, ok := val.(*ast.CompositeLit); ok && lit.Type == nil {
+			c.compileLit(lit, baseType, depth+1)
+			return
+		}
+		c.expr(val)
 	}
 	for _, el := range x.Elts {
 		if kv {
@@ -1608,9 +1626,9 @@ func (c *compiler) compositeLit(x *ast.CompositeLit) {
 			} else {
 				c.expr(kvel.Key)
 			}
-			c.expr(kvel.Value)
+			emitVal(kvel.Value)
 		} else {
-			c.expr(el)
+			emitVal(el)
 		}
 	}
 	b := 0
@@ -1627,9 +1645,10 @@ func (c *compiler) typeExpr(e ast.Expr) {
 		// named type: resolves through globals/imports at run time
 		c.expr(t)
 	case *ast.ArrayType:
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindSlice}), 0, e.Pos())
+		// Anon/Pkg/File let OpElemType resolve the element typedef later.
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
 	case *ast.MapType:
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindMap}), 0, e.Pos())
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
 	case *ast.StarExpr:
 		c.typeExpr(t.X) // pointer types collapse to their element typedef for MVP
 	case *ast.StructType:
@@ -1676,7 +1695,7 @@ func (c *compiler) typeExpr(e ast.Expr) {
 	case *ast.Ellipsis:
 		c.typeExpr(t.Elt)
 	case *ast.ChanType:
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindChan}), 0, e.Pos())
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
 	default:
 		c.trap(e.Pos(), "unsupported type expression %T", e)
 	}

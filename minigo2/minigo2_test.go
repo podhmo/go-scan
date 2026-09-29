@@ -366,6 +366,12 @@ func TestFeatures(t *testing.T) {
 		{"TypeSwitchBind", "hey!"},
 		{"AssertPanic", int64(99)},
 		{"NilAssert", int64(1)},
+		// nil-slice semantics + comma-ok zero + elided literal types
+		{"NilRange", int64(0)},
+		{"AppendNil", int64(4)},
+		{"CommaOkZero", int64(5)},
+		{"ElidedLits", int64(19)},
+		{"NamedElided", int64(5)},
 		// generics
 		{"GenericFns", int64(42)},
 		{"GenericConvert", int64(42)},

@@ -163,6 +163,12 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 		return e.resolveTypeRef(from, t.X)
 	case *ast.IndexListExpr:
 		return e.resolveTypeRef(from, t.X)
+	case *ast.ArrayType:
+		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: from.Pkg, File: from.File}, nil
+	case *ast.MapType:
+		return &runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: from.Pkg, File: from.File}, nil
+	case *ast.ChanType:
+		return &runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: from.Pkg, File: from.File}, nil
 	case *ast.Ident:
 		if from.Pkg != nil && from.Pkg.Index != nil {
 			if info, ok := from.Pkg.Index.Types[t.Name]; ok && info.Decl != nil {
@@ -210,6 +216,36 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 		return td, nil
 	}
 	return nil, fmt.Errorf("unsupported embedded type expression %T", x)
+}
+
+// elemOf implements the Hooks.ElemOf hook: the element typedef of a
+// container typedef, resolved from its underlying type AST (Anon or
+// Spec.Type). Used by elided composite literal elements.
+func (e *Engine) elemOf(td *runtime.TypeDef) (*runtime.TypeDef, error) {
+	x := td.Anon
+	if x == nil && td.Spec != nil {
+		x = td.Spec.Type
+	}
+	for {
+		switch t := x.(type) {
+		case *ast.ParenExpr:
+			x = t.X
+			continue
+		case *ast.StarExpr:
+			x = t.X
+			continue
+		case *ast.Ellipsis:
+			x = t.Elt
+			continue
+		case *ast.ArrayType:
+			return e.resolveTypeRef(td, t.Elt)
+		case *ast.MapType:
+			return e.resolveTypeRef(td, t.Value)
+		case *ast.ChanType:
+			return e.resolveTypeRef(td, t.Value)
+		}
+		return nil, fmt.Errorf("cannot infer element type of %s", td.Name)
+	}
 }
 
 // ---- shared helpers ----

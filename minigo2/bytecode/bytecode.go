@@ -89,6 +89,7 @@ const (
 	OpAssert      // pop typedef, pop value -> push asserted value (script panic on mismatch)
 	OpAssertOK    // pop typedef, pop value -> push Tuple{value, ok} (comma-ok assert)
 	OpInstantiate // A: ntypeargs; pop type args, pop generic -> push specialized value
+	OpElemType    // pop typedef -> push element typedef ([]T->T, map[K]V->V, chan T->T, *T->T)
 
 	// special forms (quoted Go)
 	OpSpecialCall // A: const idx *SymbolID; B: const idx *QuotedCall — quoted args, handler fires at run time

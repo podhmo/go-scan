@@ -960,4 +960,21 @@ left implicit.
 - **`errors.Is`/`Unwrap`** chain through the `Unwrap` intrinsic method
   convention and `*runtime.GoValue` boxing.
 
+### Post-review fixes (e2e differential run vs real Go)
+
+- **Nil is iterable**: `for range` over `runtime.Nil` yields zero
+  iterations (nil slice/map semantics; a nil channel that would block
+  forever folds into the same approximation). `f(nil...)` spreads to
+  zero args, `len(nil)` is 0, `append(nil, ...)` creates the slice.
+- **Failed comma-ok asserts bind the zero value** (`zeroOf`), not
+  `runtime.Nil` — `v, ok := x.(int)` leaves `v` usable as `0`.
+- **Elided literal element types compile to `OpElemType` chains**:
+  `{{1,2}}` inside `[][]int` emits `typeExpr(parent)` + depth×peel of
+  the enclosing typedef, resolved at run time through `TypeDef.Anon`
+  (or `Spec.Type`) by the `ElemOf` hook — so named containers
+  (`type Matrix [][]int`) work too, as long as the underlying AST
+  names a resolvable element type.
+- **`x.(any)` on a nil interface fails** (nil has no dynamic type);
+  `case nil` in a type switch is `BinEql`, never `OpAssertOK`.
+
 ## (end)

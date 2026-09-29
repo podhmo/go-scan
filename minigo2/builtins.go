@@ -29,7 +29,11 @@ func builtins() *runtime.Env {
 	bf("append", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		s, ok := args[0].(*runtime.Slice)
 		if !ok {
-			return nil, fmt.Errorf("append on %T", args[0])
+			if args[0] == runtime.NIL {
+				s = &runtime.Slice{}
+			} else {
+				return nil, fmt.Errorf("append on %T", args[0])
+			}
 		}
 		return &runtime.Slice{Elems: append(append([]runtime.Value{}, s.Elems...), args[1:]...)}, nil
 	})
@@ -139,6 +143,8 @@ func lenOf(v runtime.Value) (runtime.Value, error) {
 		return int64(len(x.Elems)), nil
 	case string:
 		return int64(len(x)), nil
+	case runtime.Nil:
+		return int64(0), nil // len(nil slice/map/chan) == 0
 	default:
 		return nil, fmt.Errorf("len of %T", v)
 	}

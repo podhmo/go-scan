@@ -221,6 +221,54 @@ func AssertPanic() int {
 	return n // 99
 }
 
+// ---- nil-slice semantics ----
+
+func NilRange() int {
+	var xs []int
+	n := 0
+	for range xs {
+		n++ // zero iterations
+	}
+	for _, x := range xs {
+		n += x
+	}
+	return n + sum(xs...) + sum() + len(xs) // 0
+}
+
+func AppendNil() int {
+	var xs []int
+	xs = append(xs, 1, 2)
+	return len(xs) + xs[1] // 4
+}
+
+// ---- comma-ok zero values ----
+
+func CommaOkZero() int {
+	var x any = "s"
+	v, ok := x.(int)
+	if ok {
+		return -1
+	}
+	return v + 5 // v binds the zero value -> 5
+}
+
+// ---- elided composite literal element types ----
+
+type P2 struct{ X, Y int }
+type Matrix [][]int
+
+func ElidedLits() int {
+	xs := [][]int{{1, 2}, {3, 4}}
+	m := map[string][]int{"a": {9}}
+	ps := []P2{{X: 1, Y: 2}, {3, 4}}
+	return xs[0][0] + xs[1][1] + m["a"][0] + ps[0].X + ps[1].Y // 1+4+9+1+4
+}
+
+func NamedElided() int {
+	m := Matrix{{1, 2}, {3}}
+	return m[0][1] + m[1][0] // 2+3
+}
+
 // ---- generics ----
 
 func Id[T any](v T) T { return v }

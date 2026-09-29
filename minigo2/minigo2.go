@@ -115,6 +115,7 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 		MethodsOf:         e.methodsOfValue,
 		IfaceReqs:         e.ifaceReqs,
 		FindMethod:        e.findMethod,
+		ElemOf:            e.elemOf,
 	}}
 	e.installStdlib()
 	return e

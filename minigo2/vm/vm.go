@@ -44,6 +44,10 @@ type Hooks struct {
 	// the embedded field is interface-typed and the VM should select the
 	// member on the stored concrete value.
 	FindMethod func(s *runtime.Struct, name string) (*runtime.Function, runtime.Value, bool)
+	// ElemOf returns the element typedef of a container typedef ([]T->T,
+	// map[K]V->V, chan T->T, *T->T) — used by elided composite literal
+	// elements (`{{1,2}}` inside `[][]int`).
+	ElemOf func(td *runtime.TypeDef) (*runtime.TypeDef, error)
 }
 
 // VM is a stack machine. It is safe for sequential use from one goroutine.
@@ -494,6 +498,19 @@ func (v *VM) loop(f *frame) {
 			}
 			base := f.pop()
 			f.push(v.instantiate(f, base, targs, ins.Pos))
+		case bytecode.OpElemType:
+			td := typedefOf(f.pop())
+			if td == nil {
+				f.trap("element-type source is not a type")
+			}
+			if v.H.ElemOf == nil {
+				f.trap("element types require engine hooks")
+			}
+			et, err := v.H.ElemOf(td)
+			if err != nil {
+				f.trap("%s", err)
+			}
+			f.push(et)
 		case bytecode.OpSpecialCall:
 			sym := consts[ins.A].(runtime.SymbolID)
 			q := consts[ins.B].(*runtime.QuotedCall)
@@ -1232,6 +1249,10 @@ func newIterator(f *frame, coll runtime.Value) *runtime.Iterator {
 		return &runtime.Iterator{Kind: 'i', Limit: int(c)}
 	case string:
 		return &runtime.Iterator{Kind: 'x', String: c}
+	case nil, runtime.Nil:
+		// range over a nil slice/map iterates zero times; nil channels
+		// blocking forever collapse into the same approximation.
+		return &runtime.Iterator{Kind: 's'}
 	default:
 		f.trap("range over %T", coll)
 		return nil
@@ -1550,6 +1571,11 @@ func (v *VM) popArgs(f *frame, argc int, spread bool, pos token.Pos) []runtime.V
 		if dv, ok := runtime.Deref(last); ok {
 			last = dv
 		}
+		if last == nil || last == runtime.NIL {
+			// f(nil...) on a nil slice expands to zero arguments
+			args = args[:argc-1]
+			return args
+		}
 		s, ok := last.(*runtime.Slice)
 		if !ok {
 			f.trap("cannot use %T as spread argument", last)
@@ -1595,7 +1621,41 @@ func (v *VM) typeAssertOK(f *frame, x, tdv runtime.Value) runtime.Value {
 	if v.typeMatches(f, td, x) {
 		return &runtime.Tuple{Elems: []runtime.Value{x, true}}
 	}
-	return &runtime.Tuple{Elems: []runtime.Value{runtime.NIL, false}}
+	// Go binds the asserted type's zero value on failure.
+	return &runtime.Tuple{Elems: []runtime.Value{zeroOf(td), false}}
+}
+
+// zeroOf approximates the zero value of a typedef for comma-ok binds.
+func zeroOf(td *runtime.TypeDef) runtime.Value {
+	switch td.Kind {
+	case runtime.KindSlice:
+		return &runtime.Slice{}
+	case runtime.KindMap:
+		return &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}}
+	case runtime.KindChan:
+		return &runtime.Chan{}
+	case runtime.KindStruct:
+		s := &runtime.Struct{Def: td, Fields: make([]runtime.Value, len(td.Fields))}
+		for i := range s.Fields {
+			s.Fields[i] = runtime.NIL
+		}
+		return s
+	}
+	switch td.Name {
+	case "string":
+		return ""
+	case "bool":
+		return false
+	case "float32", "float64":
+		return float64(0)
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune":
+		return int64(0)
+	}
+	if td.Kind == runtime.KindNamedBasic {
+		return int64(0) // named basic approximates via int64 storage
+	}
+	return runtime.NIL
 }
 
 // typeMatches implements duck-typing: interfaces check the method set via

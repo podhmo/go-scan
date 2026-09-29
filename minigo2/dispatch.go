@@ -30,6 +30,10 @@ func (e *Engine) methodsOfValue(v runtime.Value) (map[string]bool, error) {
 	switch x := v.(type) {
 	case *runtime.Struct:
 		return e.methodSetOf(x.Def, map[*runtime.TypeDef]bool{}), nil
+	case *runtime.TypedNil:
+		return e.typeMethods(x.Typ)
+	case *runtime.IfaceNil:
+		return e.typeMethods(x.Typ)
 	case *runtime.GoValue:
 		t := reflect.TypeOf(x.V)
 		set := map[string]bool{}
@@ -40,6 +44,39 @@ func (e *Engine) methodsOfValue(v runtime.Value) (map[string]bool, error) {
 	default:
 		return nil, nil
 	}
+}
+
+// typeMethods implements the Hooks.TypeMethods hook: the method set of a
+// typedef (a typed nil still dispatches its declared methods, like Go).
+func (e *Engine) typeMethods(td *runtime.TypeDef) (map[string]bool, error) {
+	if td == nil {
+		return nil, nil
+	}
+	if td.Kind == runtime.KindPointer {
+		if et, err := e.elemOf(td); err == nil && et != nil {
+			td = et
+		}
+	}
+	if td.Kind == runtime.KindInterface {
+		return e.ifaceReqsRec(td, map[*runtime.TypeDef]bool{}), nil
+	}
+	return e.methodSetOf(td, map[*runtime.TypeDef]bool{}), nil
+}
+
+// underlying implements the Hooks.Underlying hook: a KindAlias typedef
+// resolves through its aliased expression to the real typedef.
+func (e *Engine) underlying(td *runtime.TypeDef) (*runtime.TypeDef, error) {
+	// aliases and named basics both peel to their underlying typedef —
+	// `type S string` bottoms out at the builtin "string" typedef so a
+	// zero value picks the right literal kind.
+	for td != nil && (td.Kind == runtime.KindAlias || td.Kind == runtime.KindNamedBasic) && td.Anon != nil {
+		next, err := e.resolveTypeRef(td, td.Anon)
+		if err != nil || next == nil || next == td {
+			return nil, err
+		}
+		td = next
+	}
+	return td, nil
 }
 
 // methodSetOf collects declared + promoted method names of a typedef.
@@ -98,6 +135,55 @@ func (e *Engine) ifaceReqsRec(td *runtime.TypeDef, seen map[*runtime.TypeDef]boo
 		}
 	}
 	return set
+}
+
+// fieldTypes implements the Hooks.FieldTypes hook: the declared type of
+// each field, parallel to td.Fields, resolved from the struct's field
+// ASTs (embedded fields count once, like td.Fields itself). Unresolvable
+// types yield nil entries; generic binds resolve `T`-style names first.
+func (e *Engine) fieldTypes(td *runtime.TypeDef) ([]*runtime.TypeDef, error) {
+	var st *ast.StructType
+	for _, x := range []ast.Expr{td.Anon, specType(td)} {
+		if s, ok := x.(*ast.StructType); ok {
+			st = s
+			break
+		}
+	}
+	if st == nil {
+		return nil, nil
+	}
+	out := make([]*runtime.TypeDef, len(td.Fields))
+	i := 0
+	for _, fld := range st.Fields.List {
+		n := len(fld.Names)
+		if n == 0 {
+			n = 1 // embedded field occupies one slot
+		}
+		for k := 0; k < n && i < len(out); k++ {
+			if id, ok := fld.Type.(*ast.Ident); ok && td.Binds != nil {
+				if bv, ok := td.Binds[id.Name]; ok {
+					if btd, ok := bv.(*runtime.TypeDef); ok {
+						out[i] = btd
+						i++
+						continue
+					}
+				}
+			}
+			ft, err := e.elemTypeRef(td, fld.Type)
+			if err == nil {
+				out[i] = ft
+			}
+			i++
+		}
+	}
+	return out, nil
+}
+
+func specType(td *runtime.TypeDef) ast.Expr {
+	if td.Spec != nil {
+		return td.Spec.Type
+	}
+	return nil
 }
 
 // findMethod resolves a promoted method on a struct through its embedded
@@ -169,6 +255,34 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 		return &runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: from.Pkg, File: from.File}, nil
 	case *ast.ChanType:
 		return &runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: from.Pkg, File: from.File}, nil
+	case *ast.StructType:
+		td := &runtime.TypeDef{Kind: runtime.KindStruct, Anon: t, Pkg: from.Pkg, File: from.File}
+		for _, f := range t.Fields.List {
+			if len(f.Names) == 0 {
+				td.EmbedSpecs = append(td.EmbedSpecs, f.Type)
+				td.EmbedIdx = append(td.EmbedIdx, len(td.Fields))
+				td.Fields = append(td.Fields, embedBaseName(f.Type))
+				continue
+			}
+			for _, n := range f.Names {
+				td.Fields = append(td.Fields, n.Name)
+			}
+		}
+		return td, nil
+	case *ast.InterfaceType:
+		td := &runtime.TypeDef{Kind: runtime.KindInterface, Anon: t, Pkg: from.Pkg, File: from.File}
+		for _, m := range t.Methods.List {
+			if len(m.Names) == 0 {
+				td.IEmbeds = append(td.IEmbeds, m.Type)
+				continue
+			}
+			for _, n := range m.Names {
+				td.MReqs = append(td.MReqs, n.Name)
+			}
+		}
+		return td, nil
+	case *ast.FuncType:
+		return &runtime.TypeDef{Kind: runtime.KindFunc, Anon: t, Pkg: from.Pkg, File: from.File}, nil
 	case *ast.Ident:
 		if from.Pkg != nil && from.Pkg.Index != nil {
 			if info, ok := from.Pkg.Index.Types[t.Name]; ok && info.Decl != nil {
@@ -219,8 +333,9 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 }
 
 // elemOf implements the Hooks.ElemOf hook: the element typedef of a
-// container typedef, resolved from its underlying type AST (Anon or
-// Spec.Type). Used by elided composite literal elements.
+// container typedef — or the pointee typedef of a pointer typedef —
+// resolved from its underlying type AST (Anon or Spec.Type). Used by
+// elided composite literal elements and pointer member dispatch.
 func (e *Engine) elemOf(td *runtime.TypeDef) (*runtime.TypeDef, error) {
 	x := td.Anon
 	if x == nil && td.Spec != nil {
@@ -231,21 +346,33 @@ func (e *Engine) elemOf(td *runtime.TypeDef) (*runtime.TypeDef, error) {
 		case *ast.ParenExpr:
 			x = t.X
 			continue
-		case *ast.StarExpr:
-			x = t.X
-			continue
 		case *ast.Ellipsis:
 			x = t.Elt
 			continue
+		case *ast.StarExpr:
+			// pointer typedef: element is the pointee typedef
+			return e.resolveTypeRef(td, t.X)
 		case *ast.ArrayType:
-			return e.resolveTypeRef(td, t.Elt)
+			return e.elemTypeRef(td, t.Elt)
 		case *ast.MapType:
-			return e.resolveTypeRef(td, t.Value)
+			return e.elemTypeRef(td, t.Value)
 		case *ast.ChanType:
-			return e.resolveTypeRef(td, t.Value)
+			return e.elemTypeRef(td, t.Value)
 		}
-		return nil, fmt.Errorf("cannot infer element type of %s", td.Name)
+		// bare underlying (e.g. `type T MyStruct`): the elem is that type
+		return e.resolveTypeRef(td, x)
 	}
+}
+
+// elemTypeRef resolves a container's element type expression: `*T`
+// elements stay pointers (KindPointer), everything else resolves to its
+// typedef. Named pointer types (`*P` where P is `type P *Sq`) resolve
+// through resolveTypeRef to P's own typedef, which memberOfType peels.
+func (e *Engine) elemTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.TypeDef, error) {
+	if st, ok := x.(*ast.StarExpr); ok {
+		return &runtime.TypeDef{Kind: runtime.KindPointer, Anon: st, Pkg: from.Pkg, File: from.File}, nil
+	}
+	return e.resolveTypeRef(from, x)
 }
 
 // ---- shared helpers ----
@@ -259,6 +386,21 @@ func typeParamNames(fl *ast.FieldList) []string {
 	for _, f := range fl.List {
 		for _, n := range f.Names {
 			out = append(out, n.Name)
+		}
+	}
+	return out
+}
+
+// typeParamConstraints extracts the constraint expression per type
+// parameter name, parallel to typeParamNames.
+func typeParamConstraints(fl *ast.FieldList) []ast.Expr {
+	if fl == nil {
+		return nil
+	}
+	var out []ast.Expr
+	for _, f := range fl.List {
+		for range f.Names {
+			out = append(out, f.Type)
 		}
 	}
 	return out

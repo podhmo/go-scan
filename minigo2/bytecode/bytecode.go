@@ -91,6 +91,15 @@ const (
 	OpInstantiate // A: ntypeargs; pop type args, pop generic -> push specialized value
 	OpElemType    // pop typedef -> push element typedef ([]T->T, map[K]V->V, chan T->T, *T->T)
 
+	// declared-type coercion: emitted wherever the language attaches a
+	// declared type to a binding (var x T, parameters, named results,
+	// return values). Pops a typedef and applies Go's zero-value /
+	// interface-boxing rules to the bound value.
+	OpCoerce       // A: local slot; pop typedef -> coerce cell(slot).Elem
+	OpCoerceTop    // pop typedef -> coerce stack top in place (return values)
+	OpCoerceN      // A: count; pop A typedefs + value -> element-wise coerce for *Tuple
+	OpCoerceGlobal // A: const idx of name; pop typedef -> coerce package-global cell
+
 	// special forms (quoted Go)
 	OpSpecialCall // A: const idx *SymbolID; B: const idx *QuotedCall — quoted args, handler fires at run time
 )

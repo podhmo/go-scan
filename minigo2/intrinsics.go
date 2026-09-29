@@ -11,6 +11,7 @@ package minigo2
 import (
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"slices"
@@ -25,12 +26,12 @@ import (
 // installStdlib binds the intrinsic packages onto the engine's import-path
 // table; Bound packages win over source resolution (loadPath checks pkgs).
 func (e *Engine) installStdlib() {
-	h := &hostHelpers{v: e.vmm}
+	h := &hostHelpers{v: e.vmm, e: e}
 	e.Bind("fmt", map[string]runtime.Value{
-		"Print":   h.fn("fmt.Print", func(a []any) (any, error) { return retErr(fmt.Print(a...)) }),
-		"Println": h.fn("fmt.Println", func(a []any) (any, error) { return retErr(fmt.Println(a...)) }),
+		"Print":   h.fn("fmt.Print", func(a []any) (any, error) { return retErr(fmt.Fprint(h.out(), a...)) }),
+		"Println": h.fn("fmt.Println", func(a []any) (any, error) { return retErr(fmt.Fprintln(h.out(), a...)) }),
 		"Printf": h.fn2("fmt.Printf", func(a []any) (any, error) {
-			return retErr(fmt.Printf(str(a[0]), a[1:]...))
+			return retErr(fmt.Fprintf(h.out(), str(a[0]), a[1:]...))
 		}),
 		"Sprint":   h.fn("fmt.Sprint", func(a []any) (any, error) { return fmt.Sprint(a...), nil }),
 		"Sprintln": h.fn("fmt.Sprintln", func(a []any) (any, error) { return fmt.Sprintln(a...), nil }),
@@ -43,6 +44,15 @@ func (e *Engine) installStdlib() {
 	})
 	e.Bind("errors", map[string]runtime.Value{
 		"New": h.fn("errors.New", func(a []any) (any, error) { return errors.New(str(a[0])), nil }),
+		"Join": h.fn("errors.Join", func(a []any) (any, error) {
+			var errs []error
+			for _, v := range a {
+				if err := asErr(v); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			return errVal(errors.Join(errs...)), nil
+		}),
 		"Is": h.fn2("errors.Is", func(a []any) (any, error) {
 			return errors.Is(asErr(a[0]), asErr(a[1])), nil
 		}),
@@ -66,6 +76,21 @@ func (e *Engine) installStdlib() {
 	})
 	e.Bind("strings", map[string]runtime.Value{
 		"Contains":    h.fn2("strings.Contains", func(a []any) (any, error) { return strings.Contains(str(a[0]), str(a[1])), nil }),
+		"ContainsAny": h.fn2("strings.ContainsAny", func(a []any) (any, error) { return strings.ContainsAny(str(a[0]), str(a[1])), nil }),
+		"Compare":     h.fn2("strings.Compare", func(a []any) (any, error) { return int64(strings.Compare(str(a[0]), str(a[1]))), nil }),
+		"Replace":     h.fn3("strings.Replace", func(a []any) (any, error) { return strings.Replace(str(a[0]), str(a[1]), str(a[2]), intOf(a[3])), nil }),
+		"Cut": h.fn2("strings.Cut", func(a []any) (any, error) {
+			b, af, ok := strings.Cut(str(a[0]), str(a[1]))
+			return &runtime.Tuple{Elems: []runtime.Value{b, af, ok}}, nil
+		}),
+		"CutPrefix": h.fn2("strings.CutPrefix", func(a []any) (any, error) {
+			af, ok := strings.CutPrefix(str(a[0]), str(a[1]))
+			return &runtime.Tuple{Elems: []runtime.Value{af, ok}}, nil
+		}),
+		"CutSuffix": h.fn2("strings.CutSuffix", func(a []any) (any, error) {
+			bf, ok := strings.CutSuffix(str(a[0]), str(a[1]))
+			return &runtime.Tuple{Elems: []runtime.Value{bf, ok}}, nil
+		}),
 		"HasPrefix":   h.fn2("strings.HasPrefix", func(a []any) (any, error) { return strings.HasPrefix(str(a[0]), str(a[1])), nil }),
 		"HasSuffix":   h.fn2("strings.HasSuffix", func(a []any) (any, error) { return strings.HasSuffix(str(a[0]), str(a[1])), nil }),
 		"Index":       h.fn2("strings.Index", func(a []any) (any, error) { return int64(strings.Index(str(a[0]), str(a[1]))), nil }),
@@ -83,8 +108,21 @@ func (e *Engine) installStdlib() {
 		"Count":       h.fn2("strings.Count", func(a []any) (any, error) { return int64(strings.Count(str(a[0]), str(a[1]))), nil }),
 	})
 	e.Bind("strconv", map[string]runtime.Value{
-		"Atoi":     h.fn("strconv.Atoi", func(a []any) (any, error) { return retErr2(strconv.Atoi(str(a[0]))) }),
-		"Itoa":     h.fn("strconv.Itoa", func(a []any) (any, error) { return strconv.Itoa(intOf(a[0])), nil }),
+		"Atoi":    h.fn("strconv.Atoi", func(a []any) (any, error) { return retErr2(strconv.Atoi(str(a[0]))) }),
+		"Itoa":    h.fn("strconv.Itoa", func(a []any) (any, error) { return strconv.Itoa(intOf(a[0])), nil }),
+		"Quote":   h.fn("strconv.Quote", func(a []any) (any, error) { return strconv.Quote(str(a[0])), nil }),
+		"Unquote": h.fn("strconv.Unquote", func(a []any) (any, error) { return retErr2(strconv.Unquote(str(a[0]))) }),
+		"ParseUint": h.fn3("strconv.ParseUint", func(a []any) (any, error) {
+			return retErr2(strconv.ParseUint(str(a[0]), intOf(a[1]), intOf(a[2])))
+		}),
+		"FormatFloat": h.fn3("strconv.FormatFloat", func(a []any) (any, error) {
+			f, _ := a[0].(float64)
+			return strconv.FormatFloat(f, byte(intOf(a[1])), intOf(a[2]), 64), nil
+		}),
+		"FormatBool": h.fn("strconv.FormatBool", func(a []any) (any, error) {
+			b, _ := a[0].(bool)
+			return strconv.FormatBool(b), nil
+		}),
 		"ParseInt": h.fn3("strconv.ParseInt", func(a []any) (any, error) { return retErr2(strconv.ParseInt(str(a[0]), intOf(a[1]), intOf(a[2]))) }),
 		"ParseFloat": h.fn2("strconv.ParseFloat", func(a []any) (any, error) {
 			return retErr2(strconv.ParseFloat(str(a[0]), intOf(a[1])))
@@ -93,9 +131,27 @@ func (e *Engine) installStdlib() {
 		"FormatInt": h.fn2("strconv.FormatInt", func(a []any) (any, error) { return strconv.FormatInt(int64Of(a[0]), intOf(a[1])), nil }),
 	})
 	e.Bind("sort", map[string]runtime.Value{
-		"Ints":    h.sortInPlace("sort.Ints"),
-		"Strings": h.sortInPlace("sort.Strings"),
-		"Slice":   h.sortSlice,
+		"Ints":     h.sortInPlace("sort.Ints"),
+		"Float64s": h.sortInPlace("sort.Float64s"),
+		"Strings":  h.sortInPlace("sort.Strings"),
+		"Slice":    h.sortSlice,
+		"SliceIsSorted": &runtime.BuiltinFunc{Name: "sort.SliceIsSorted", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok {
+				return nil, fmt.Errorf("sort.SliceIsSorted: first arg must be a slice")
+			}
+			less := args[1]
+			for i := len(s.Elems) - 1; i > 0; i-- {
+				r, err := h.v.Call(less, []runtime.Value{int64(i), int64(i - 1)})
+				if err != nil {
+					return nil, err
+				}
+				if b, _ := r.(bool); b {
+					return false, nil
+				}
+			}
+			return true, nil
+		}},
 	})
 	e.Bind("slices", map[string]runtime.Value{
 		"Sort": h.sortInPlace("slices.Sort"),
@@ -118,6 +174,124 @@ func (e *Engine) installStdlib() {
 		"Equal": h.fn2("slices.Equal", func(a []any) (any, error) {
 			return slices.Equal(anySlice(a[0]), anySlice(a[1])), nil
 		}),
+		"IsSorted": h.fn("slices.IsSorted", func(a []any) (any, error) {
+			el := scriptElems(a[0])
+			return sort.SliceIsSorted(el, func(i, j int) bool { return lessScript(el[i], el[j]) }), nil
+		}),
+		"SortFunc": &runtime.BuiltinFunc{Name: "slices.SortFunc", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok {
+				return nil, fmt.Errorf("slices.SortFunc: first arg must be a slice")
+			}
+			cmp := args[1]
+			var cerr error
+			sort.SliceStable(s.Elems, func(i, j int) bool {
+				if cerr != nil {
+					return false
+				}
+				r, err := h.v.Call(cmp, []runtime.Value{s.Elems[i], s.Elems[j]})
+				if err != nil {
+					cerr = err
+					return false
+				}
+				n, _ := r.(int64)
+				return n < 0
+			})
+			if cerr != nil {
+				return nil, cerr
+			}
+			return runtime.NIL, nil
+		}},
+		"EqualFunc": &runtime.BuiltinFunc{Name: "slices.EqualFunc", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			a, _ := args[0].(*runtime.Slice)
+			b, _ := args[1].(*runtime.Slice)
+			eq := args[2]
+			if a == nil || b == nil {
+				return nil, fmt.Errorf("slices.EqualFunc: first two args must be slices")
+			}
+			if len(a.Elems) != len(b.Elems) {
+				return false, nil
+			}
+			for i := range a.Elems {
+				r, err := h.v.Call(eq, []runtime.Value{a.Elems[i], b.Elems[i]})
+				if err != nil {
+					return nil, err
+				}
+				if ok, _ := r.(bool); !ok {
+					return false, nil
+				}
+			}
+			return true, nil
+		}},
+		"IndexFunc": &runtime.BuiltinFunc{Name: "slices.IndexFunc", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok {
+				return nil, fmt.Errorf("slices.IndexFunc: first arg must be a slice")
+			}
+			for i, el := range s.Elems {
+				r, err := h.v.Call(args[1], []runtime.Value{el})
+				if err != nil {
+					return nil, err
+				}
+				if ok, _ := r.(bool); ok {
+					return int64(i), nil
+				}
+			}
+			return int64(-1), nil
+		}},
+		"Max": h.fn("slices.Max", func(a []any) (any, error) {
+			el := scriptElems(a[0])
+			if len(el) == 0 {
+				return nil, fmt.Errorf("slices.Max: empty slice")
+			}
+			best := el[0]
+			for _, x := range el[1:] {
+				if lessScript(best, x) {
+					best = x
+				}
+			}
+			return best, nil
+		}),
+		"Min": h.fn("slices.Min", func(a []any) (any, error) {
+			el := scriptElems(a[0])
+			if len(el) == 0 {
+				return nil, fmt.Errorf("slices.Min: empty slice")
+			}
+			best := el[0]
+			for _, x := range el[1:] {
+				if lessScript(x, best) {
+					best = x
+				}
+			}
+			return best, nil
+		}),
+		"Reverse": &runtime.BuiltinFunc{Name: "slices.Reverse", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok {
+				return nil, fmt.Errorf("slices.Reverse: arg must be a slice")
+			}
+			slices.Reverse(s.Elems)
+			return runtime.NIL, nil
+		}},
+		"Insert": &runtime.BuiltinFunc{Name: "slices.Insert", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok || len(args) < 2 {
+				return nil, fmt.Errorf("slices.Insert(slice, i, elems...)")
+			}
+			i, _ := args[1].(int64)
+			el := slices.Insert(s.Elems, int(i), args[2:]...)
+			return &runtime.Slice{Elems: el}, nil
+		}},
+		"Delete": &runtime.BuiltinFunc{Name: "slices.Delete", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok || len(args) != 3 {
+				return nil, fmt.Errorf("slices.Delete(slice, i, j)")
+			}
+			i, _ := args[1].(int64)
+			j, _ := args[2].(int64)
+			el := slices.Delete(s.Elems, int(i), int(j))
+			return &runtime.Slice{Elems: el}, nil
+		}},
 	})
 	e.Bind("maps", map[string]runtime.Value{
 		"Keys":   h.fn("maps.Keys", func(a []any) (any, error) { return mapKeys(a[0]), nil }),
@@ -128,6 +302,38 @@ func (e *Engine) installStdlib() {
 			}
 			return nil, fmt.Errorf("maps.Clone: arg must be a map")
 		}),
+		"Copy": &runtime.BuiltinFunc{Name: "maps.Copy", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			dst, _ := args[0].(*runtime.Map)
+			src, _ := args[1].(*runtime.Map)
+			if dst == nil || src == nil {
+				return nil, fmt.Errorf("maps.Copy: args must be maps")
+			}
+			for _, k := range src.Order {
+				v := src.Pairs[k]
+				if _, ok := dst.Pairs[k]; !ok {
+					dst.Order = append(dst.Order, k)
+				}
+				dst.Pairs[k] = v
+			}
+			return runtime.NIL, nil
+		}},
+		"Equal": &runtime.BuiltinFunc{Name: "maps.Equal", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			a, _ := args[0].(*runtime.Map)
+			b, _ := args[1].(*runtime.Map)
+			if a == nil || b == nil {
+				return args[0] == args[1], nil // nil == nil
+			}
+			if len(a.Pairs) != len(b.Pairs) {
+				return false, nil
+			}
+			for k, av := range a.Pairs {
+				bv, ok := b.Pairs[k]
+				if !ok || !equalScript(av, bv) {
+					return false, nil
+				}
+			}
+			return true, nil
+		}},
 	})
 	// os: an interpreted program must never observe or terminate the host
 	// process — Exit is always a trap; the environment/argv surface is only
@@ -151,6 +357,13 @@ func (e *Engine) installStdlib() {
 			}
 			return nil, fmt.Errorf("time.Since: not a Time")
 		}),
+		"Parse": h.fn2("time.Parse", func(a []any) (any, error) {
+			t, err := time.Parse(str(a[0]), str(a[1]))
+			return &runtime.Tuple{Elems: []runtime.Value{scriptVal(t), errVal(err)}}, nil
+		}),
+		"Unix": h.fn2("time.Unix", func(a []any) (any, error) {
+			return &runtime.GoValue{V: time.Unix(int64Of(a[0]), int64Of(a[1]))}, nil
+		}),
 		"Second":      time.Second,
 		"Millisecond": time.Millisecond,
 	})
@@ -160,7 +373,18 @@ func (e *Engine) installStdlib() {
 
 // hostHelpers builds BuiltinFuncs whose Fn marshals arguments to Go natives
 // and results back to runtime values.
-type hostHelpers struct{ v runtime.VMCaller }
+type hostHelpers struct {
+	v runtime.VMCaller
+	e *Engine // for the configured output writer
+}
+
+// out returns the engine's output writer (io.Discard when unset).
+func (h *hostHelpers) out() io.Writer {
+	if h.e == nil || h.e.out == nil {
+		return io.Discard
+	}
+	return h.e.out
+}
 
 func (h *hostHelpers) fn(name string, f func([]any) (any, error)) *runtime.BuiltinFunc {
 	return &runtime.BuiltinFunc{Name: name, Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
@@ -241,6 +465,89 @@ func sortScript(el []runtime.Value) {
 }
 
 // sortSlice implements sort.Slice: the less function is a script callable.
+// scriptElems exposes a slice argument's raw elements to Go-side helpers
+// (the argument may arrive as a []any via goNative).
+func scriptElems(v any) []runtime.Value {
+	switch s := v.(type) {
+	case *runtime.Slice:
+		return s.Elems
+	case []any:
+		el := make([]runtime.Value, len(s))
+		for i, x := range s {
+			el[i] = scriptVal(x)
+		}
+		return el
+	}
+	return nil
+}
+
+// lessScript orders int64/float64/string (heterogeneous pairs rank by kind:
+// numbers < strings < others, comparing numerically across int64/float64).
+func lessScript(a, b runtime.Value) bool {
+	an, aok := numOf(a)
+	bn, bok := numOf(b)
+	if aok && bok {
+		return an < bn
+	}
+	if as, ok := a.(string); ok {
+		if bs, ok := b.(string); ok {
+			return as < bs
+		}
+		return false // strings rank above numbers
+	}
+	if aok {
+		return true
+	}
+	return false
+}
+
+func numOf(v runtime.Value) (float64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
+}
+
+// equalScript compares two script values by shape (identity-ish): used by
+// maps.Equal where a deep compare is the closest available semantics.
+func equalScript(a, b runtime.Value) bool {
+	if an, ok := numOf(a); ok {
+		bn, ok := numOf(b)
+		return ok && an == bn
+	}
+	switch x := a.(type) {
+	case string, bool:
+		return x == b
+	case *runtime.Slice:
+		y, ok := b.(*runtime.Slice)
+		if !ok || len(x.Elems) != len(y.Elems) {
+			return false
+		}
+		for i := range x.Elems {
+			if !equalScript(x.Elems[i], y.Elems[i]) {
+				return false
+			}
+		}
+		return true
+	case *runtime.Map:
+		y, ok := b.(*runtime.Map)
+		if !ok || len(x.Pairs) != len(y.Pairs) {
+			return false
+		}
+		for k, xv := range x.Pairs {
+			yv, ok := y.Pairs[k]
+			if !ok || !equalScript(xv, yv) {
+				return false
+			}
+		}
+		return true
+	}
+	return a == b
+}
+
 func (h *hostHelpers) sortSlice(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 	s, ok := args[0].(*runtime.Slice)
 	if !ok {

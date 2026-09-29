@@ -137,6 +137,8 @@ type Cell struct {
 	// coerce incoming values to it, so `x = v` gets the same assignability
 	// check as `var x T = v`.
 	Typ *TypeDef
+	// ReadOnly marks a constant binding: stores through the cell trap.
+	ReadOnly bool
 }
 
 // FieldRef is the address-of a struct field (`&s.f`) — a cell-view over
@@ -465,6 +467,14 @@ type SpecialContext interface {
 	Eval(expr ast.Expr) (Value, error)
 	// Call invokes a callable runtime value.
 	Call(fn Value, args []Value) (Value, error)
+	// ResolveSymbol resolves expr to a canonical symbol identity without
+	// evaluating or initializing anything: pkg.Sym maps through the caller
+	// file's import table to SymbolID{package path, name}; a bare
+	// identifier maps to a member of the caller's package. Local/upvalue
+	// names and non-symbol expressions are an error. This is the index-
+	// level laziness special forms exploit: quoting huge.ConvertFoo
+	// yields its SymbolID without initializing huge.
+	ResolveSymbol(expr ast.Expr) (SymbolID, error)
 	// Format renders an AST node back to source text.
 	Format(n ast.Node) string
 	// Errorf reports a failure attributed to an AST node.

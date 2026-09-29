@@ -13,6 +13,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/minigo2"
+	"github.com/podhmo/go-scan/minigo2/resolve"
 	"github.com/podhmo/go-scan/minigo2/runtime"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -26,7 +27,12 @@ const definePkgPath = "github.com/podhmo/go-scan/examples/convert-define/define"
 type Runner struct {
 	scanner *goscan.Scanner
 	pkg     *runtime.Package // the loaded define file's package
-	Info    *model.ParsedInfo
+
+	// resolver, when non-nil, is installed on the minigo2 engine — a test
+	// hook for observing (or stubbing) package resolution.
+	resolver resolve.Resolver
+
+	Info *model.ParsedInfo
 }
 
 // NewRunner creates a new interpreter runner.
@@ -75,6 +81,9 @@ func (r *Runner) Run(ctx context.Context, filename string) error {
 	// LoadFile takes the named file as the whole package — DSL files guarded
 	// by //go:build codegen do not need their tag mirrored anywhere.
 	engine := minigo2.NewEngine(filepath.Dir(abs), minigo2.WithOutput(os.Stdout))
+	if r.resolver != nil {
+		engine.WithResolver(r.resolver)
+	}
 	engine.RegisterSpecial(runtime.SymbolID{PackagePath: definePkgPath, Name: "Convert"}, r.handleConvert)
 	engine.RegisterSpecial(runtime.SymbolID{PackagePath: definePkgPath, Name: "Rule"}, r.handleRule)
 
@@ -87,17 +96,6 @@ func (r *Runner) Run(ctx context.Context, filename string) error {
 		return fmt.Errorf("evaluating define file: %w", err)
 	}
 	return nil
-}
-
-// importPath resolves a file-local import name to its import path without
-// materializing the imported package (the import table is built at parse
-// time).
-func (r *Runner) importPath(ctx runtime.SpecialContext, ident *ast.Ident) (string, error) {
-	ref, ok := ctx.Package().Scopes[ctx.File()][ident.Name]
-	if !ok {
-		return "", ctx.Errorf(ident, "package alias %q not found in imports", ident.Name)
-	}
-	return ref.Path, nil
 }
 
 func (r *Runner) handleConvert(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
@@ -204,15 +202,11 @@ func (r *Runner) resolveTypeFromExpr(ctx runtime.SpecialContext, expr ast.Expr) 
 	if !ok {
 		return nil, fmt.Errorf("expected a selector expression (pkg.Type), but got %T", expr)
 	}
-	pkgIdent, ok := selector.X.(*ast.Ident)
-	if !ok {
-		return nil, fmt.Errorf("selector must be on a package identifier")
-	}
-	typeName := selector.Sel.Name
-	pkgPath, err := r.importPath(ctx, pkgIdent)
+	sym, err := ctx.ResolveSymbol(selector)
 	if err != nil {
 		return nil, err
 	}
+	pkgPath, typeName := sym.PackagePath, sym.Name
 
 	pkgInfo, err := r.scanner.ScanPackageFromImportPath(context.Background(), pkgPath)
 	if err != nil {
@@ -240,11 +234,11 @@ func (r *Runner) handleRule(ctx runtime.SpecialContext, call *runtime.QuotedCall
 	if !ok {
 		return nil, ctx.Errorf(call.Call, "receiver of function selector must be a package identifier")
 	}
-	funcName := funcExpr.Sel.Name
-	pkgPath, err := r.importPath(ctx, pkgIdent)
+	sym, err := ctx.ResolveSymbol(funcExpr)
 	if err != nil {
 		return nil, err
 	}
+	pkgPath, funcName := sym.PackagePath, sym.Name
 
 	gctx := context.Background()
 	pkgInfo, err := r.scanner.ScanPackageFromImportPath(gctx, pkgPath)

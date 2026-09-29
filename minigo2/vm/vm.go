@@ -656,7 +656,10 @@ func (v *VM) loop(f *frame) {
 			}
 			f.push(res)
 		case bytecode.OpBox:
-			f.push(&runtime.Cell{Elem: f.pop()})
+			x := f.pop()
+			// the box cell takes the pointee's declared tag so `*p = v`
+			// coerces like a store into `var p T`.
+			f.push(&runtime.Cell{Elem: x, Typ: declaredTag(x)})
 		case bytecode.OpCall:
 			args := v.popArgs(f, int(ins.A), ins.B == 1, ins.Pos)
 			fn := f.pop()
@@ -761,6 +764,9 @@ func (v *VM) loop(f *frame) {
 			if ch.Closed {
 				f.trap("send on closed channel")
 			}
+			if et := v.elemTypedef(f, ch.Typ); et != nil {
+				val = v.coerce(f, val, et)
+			}
 			ch.Elems = append(ch.Elems, val)
 		case bytecode.OpRecv:
 			f.push(recvChan(f, f.pop()))
@@ -770,6 +776,9 @@ func (v *VM) loop(f *frame) {
 			val := f.pop()
 			chv := runtime.Unwrap(f.pop())
 			if ch, ok := chv.(*runtime.Chan); ok && !ch.Closed {
+				if et := v.elemTypedef(f, ch.Typ); et != nil {
+					val = v.coerce(f, val, et)
+				}
 				ch.Elems = append(ch.Elems, val)
 				f.push(true)
 			} else {
@@ -1340,6 +1349,10 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 		if !ok {
 			f.trap("slice index is %T", idx)
 		}
+		// the slice's declared element type constrains the write.
+		if et := v.elemTypedef(f, b.Typ); et != nil {
+			val = v.coerce(f, val, et)
+		}
 		b.Elems[i] = val
 	case *runtime.Map:
 		if idx != nil && !reflect.TypeOf(idx).Comparable() {
@@ -1429,7 +1442,7 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 	}
 	switch td.Kind {
 	case runtime.KindSlice:
-		s := &runtime.Slice{}
+		s := &runtime.Slice{Typ: td}
 		if kv {
 			// indexed literal: size is max index + 1, gaps are zero
 			max := int64(-1)
@@ -2551,6 +2564,75 @@ func declaredType(td *runtime.TypeDef) bool {
 	return td.Spec != nil || td.Pkg != nil
 }
 
+// tagIsNamed reports whether td names a defined type — a `type` spec
+// (Spec) or a predeclared name like int (Name). Anonymous structural
+// typedefs carry a Pkg for name resolution but name nothing.
+func tagIsNamed(td *runtime.TypeDef) bool {
+	return td != nil && (td.Spec != nil || td.Name != "")
+}
+
+// declaredTag returns the declared type a value carries: a Named wrap's
+// Typ, a named struct's Def, or a stamped container Typ. Bare values and
+// values of unnamed (anonymous) types report nil.
+func declaredTag(x runtime.Value) *runtime.TypeDef {
+	var td *runtime.TypeDef
+	switch t := x.(type) {
+	case *runtime.Named:
+		td = t.Typ
+	case *runtime.Struct:
+		td = t.Def
+	case *runtime.Map:
+		td = t.Typ
+	case *runtime.Slice:
+		td = t.Typ
+	case *runtime.Chan:
+		td = t.Typ
+	}
+	if tagIsNamed(td) {
+		return td
+	}
+	return nil
+}
+
+// pointeeTag returns the declared type of a pointer value's pointee: the
+// cell's stamped type first, else the stored value's own tag. Nil when
+// the pointee is untyped (basic vars, anonymous literals).
+func (v *VM) pointeeTag(x runtime.Value) *runtime.TypeDef {
+	if c, ok := x.(*runtime.Cell); ok && tagIsNamed(c.Typ) {
+		return c.Typ
+	}
+	dv, ok := runtime.Deref(x)
+	if !ok {
+		return nil
+	}
+	return declaredTag(dv)
+}
+
+// containerTyp reads the declared-type tag stamped on a container value.
+func containerTyp(x runtime.Value) *runtime.TypeDef {
+	switch t := x.(type) {
+	case *runtime.Map:
+		return t.Typ
+	case *runtime.Slice:
+		return t.Typ
+	case *runtime.Chan:
+		return t.Typ
+	}
+	return nil
+}
+
+// setContainerTyp stamps a container value's declared-type tag.
+func setContainerTyp(x runtime.Value, td *runtime.TypeDef) {
+	switch t := x.(type) {
+	case *runtime.Map:
+		t.Typ = td
+	case *runtime.Slice:
+		t.Typ = td
+	case *runtime.Chan:
+		t.Typ = td
+	}
+}
+
 // coerceConcrete applies td to a non-nil x under a non-interface target.
 // A Named value keeps its identity only for the identical declared type
 // (Go: named-to-named needs a conversion); GoValues pass unchecked at the
@@ -2577,7 +2659,32 @@ func (v *VM) coerceConcrete(f *frame, x runtime.Value, td *runtime.TypeDef) runt
 	if _, ok := x.(*runtime.IfaceNil); ok {
 		f.trap("cannot use interface value as %s", tdName(td))
 	}
+	// values carrying a declared tag (a named struct's Def, a stamped
+	// container Typ) follow the named-to-named rule like *Named —
+	// `var a A = sq` traps even though A shares Sq's storage. The trap
+	// fires only when the target is named too: an unnamed target
+	// (`var m map[string]int = om`) stays a shape check, and anonymous
+	// values carry no tag at all.
+	if tag := declaredTag(x); tag != nil {
+		if sameTypeDef(tag, td) || sameTypeDef(tag, v.peelAlias(td)) {
+			return x
+		}
+		if tagIsNamed(td) {
+			f.trap("cannot use %s as %s", tdName(tag), tdName(td))
+		}
+	}
 	utd := v.peelNamed(td)
+	if utd.Kind == runtime.KindPointer && v.H.ElemOf != nil {
+		// `var p P = &v` — the pointee's declared type must match the
+		// pointer's element type (a named pointer binds only its own
+		// pointee type); untyped pointees defer to the shape check.
+		if ptag := v.pointeeTag(x); ptag != nil {
+			if et, err := v.H.ElemOf(utd); err == nil && et != nil &&
+				!sameTypeDef(ptag, et) && !sameTypeDef(ptag, v.peelAlias(et)) {
+				f.trap("cannot use %s as %s", "&"+tdName(ptag), tdName(td))
+			}
+		}
+	}
 	if utd.Kind == runtime.KindInterface {
 		// `type I2 I` — the declared name's method set is the underlying
 		// interface's; check and store unboxed, like a direct I slot.
@@ -2589,22 +2696,22 @@ func (v *VM) coerceConcrete(f *frame, x runtime.Value, td *runtime.TypeDef) runt
 	if !v.shapeOK(f, x, utd) {
 		f.trap("cannot use %s as %s", typeNameOf(x), tdName(td))
 	}
-	if utd.Kind == runtime.KindMap {
-		if m, ok := x.(*runtime.Map); ok {
-			if m.Typ == nil {
-				// a declared map type stamps the map value so missing-key
-				// reads yield the declared element zero instead of NIL.
-				m.Typ = td
-			} else if !sameTypeDef(m.Typ, td) {
-				// two named map types do not re-bind (Go: named-to-named
-				// needs a conversion); anonymous/underlying shapes may
-				// re-bind only when the shapes match element-for-element.
-				if m.Typ.Name != "" && td.Name != "" {
-					f.trap("cannot use %s as %s", tdName(m.Typ), tdName(td))
-				}
-				if !v.tdShapeEq(m.Typ, td) {
-					f.trap("cannot use %s as %s", tdName(m.Typ), tdName(td))
-				}
+	switch utd.Kind {
+	case runtime.KindMap, runtime.KindSlice, runtime.KindChan:
+		if ct := containerTyp(x); ct == nil {
+			// a declared container type stamps the value so element
+			// reads/writes coerce and missing-key reads yield the
+			// declared element zero instead of NIL.
+			setContainerTyp(x, td)
+		} else if !sameTypeDef(ct, td) {
+			// two named container types do not re-bind (Go: named-to-named
+			// needs a conversion); anonymous/underlying shapes may
+			// re-bind only when the shapes match element-for-element.
+			if ct.Name != "" && td.Name != "" {
+				f.trap("cannot use %s as %s", tdName(ct), tdName(td))
+			}
+			if !v.tdShapeEq(ct, td) {
+				f.trap("cannot use %s as %s", tdName(ct), tdName(td))
 			}
 		}
 	}
@@ -2666,6 +2773,22 @@ func (v *VM) tdShapeEq(a, b *runtime.TypeDef) bool {
 	return pa.Anon == nil && pb.Anon == nil
 }
 
+// structFieldsEq compares two struct typedefs by field name lists —
+// the approximate "identical underlying" for an unnamed struct literal
+// binding a named type (Go also requires matching tags and element
+// types; neither is modeled here).
+func structFieldsEq(a, b *runtime.TypeDef) bool {
+	if len(a.Fields) != len(b.Fields) {
+		return false
+	}
+	for i := range a.Fields {
+		if a.Fields[i] != b.Fields[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // shapeOK checks a bare value against a fully-peeled (non-named) typedef:
 // basic families match by kind, structs by typedef identity, containers by
 // kind. Unverifiable cases pass — the check is assignability, not typing.
@@ -2707,7 +2830,18 @@ func (v *VM) shapeOK(f *frame, x runtime.Value, td *runtime.TypeDef) bool {
 		if s.Def == nil || td.Name == "" {
 			return true // anonymous shape — approximated ok
 		}
-		return sameTypeDef(s.Def, td)
+		if sameTypeDef(s.Def, td) {
+			return true
+		}
+		// an unnamed struct value binds a named struct type when the
+		// field sets match (Go: identical underlying, V unnamed ->
+		// assignable); a NAMED Def never reaches here — the declared-tag
+		// check in coerceConcrete decides those binds. Field tags are
+		// not tracked, so the comparison is names only.
+		if !tagIsNamed(s.Def) {
+			return structFieldsEq(s.Def, td)
+		}
+		return false
 	case runtime.KindSlice:
 		_, ok := x.(*runtime.Slice)
 		return ok

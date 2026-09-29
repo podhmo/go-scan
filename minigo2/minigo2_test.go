@@ -554,11 +554,50 @@ func TestDeclTypes(t *testing.T) {
 		{"MapMissZero", int64(1)},
 		{"NamedZero", int64(1)},
 		{"MultiReturnBox", int64(1)},
+		{"NamedIdent", 36.5*9/5 + 32}, // Celsius keeps its declared type
+		{"NamedOps", "a!"},
+		{"NamedStore", int64(42)},
+		{"NamedAssert", int64(4)},
+		{"MapBindZero", int64(1)},
+		{"FieldHoleZero", int64(1)},
+		{"AssignOK", int64(42)},
+		{"IfaceNilOK", int64(1)},
+		{"NamedPtrIface", int64(6)},
+		{"NamedUnary", int64(-4)},
+		{"AliasBindOK", int64(1)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/decltypes", c.fn)
 		if diff := cmp.Diff(c.want, got); diff != "" {
 			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+}
+
+func TestDeclAssignability(t *testing.T) {
+	e := newEngine(t)
+	// `var x T = v` and `x = v` enforce assignability at bind/store time —
+	// named types, basic families, interface method sets and typed-nil
+	// shapes all check like the Go type checker, but only when the
+	// statement actually runs (the compiler stays total).
+	bads := []struct {
+		fn  string
+		sub string
+	}{
+		{"AssignBadInt", "cannot use"},
+		{"AssignBadNamed", "cannot use"},
+		{"AssignMix", "mismatched types"},
+		{"IfaceBad", "cannot use"},
+		{"NilBadShape", "cannot use"},
+		{"MapBindTrap", "cannot use"},
+		{"NoInheritBad", "no field or method"},
+		{"IfaceNilBad", "cannot use"},
+		{"ChainHoleBad", "cannot use"},
+	}
+	for _, c := range bads {
+		if _, err := e.Run(context.Background(), "./testdata/decltypes", c.fn); err == nil ||
+			!strings.Contains(err.Error(), c.sub) {
+			t.Fatalf("%s: expected %q trap, got %v", c.fn, c.sub, err)
 		}
 	}
 }

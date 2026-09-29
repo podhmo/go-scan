@@ -19,7 +19,7 @@ import (
 //	int64, float64, string, bool, Nil,
 //	*Cell, *Slice, *Map, *Struct, *TypeDef,
 //	*Function, *Closure, *BoundMethod, *BuiltinFunc, *Tuple,
-//	*Package, *Iterator, *GoValue, *TypedNil, *IfaceNil
+//	*Package, *Iterator, *GoValue, *TypedNil, *IfaceNil, *Named
 type Value = any
 
 // Nil is the nil value.
@@ -44,10 +44,32 @@ type TypedNil struct{ Typ *TypeDef }
 // recorded dynamic type.
 type IfaceNil struct{ Typ *TypeDef }
 
+// Named is a value of a declared named basic type (`type MyInt int`,
+// `type A B`): the underlying value plus the typedef it was declared
+// under. Zeros, coercion sites and conversions tag the value so its
+// declared identity survives reads — method dispatch, type asserts and
+// generic inference see MyInt, not the bare int64 it stores. Everywhere
+// else treats it as V (use Unwrap).
+type Named struct {
+	Typ *TypeDef // the declared typedef (a defined type, never a builtin)
+	V   Value    // the underlying value
+}
+
+// Unwrap peels a Named to its underlying value; any other value passes
+// through unchanged. Consumption sites (index, arithmetic, marshaling)
+// unwrap so a named value behaves like its underlying value.
+func Unwrap(v Value) Value {
+	if n, ok := v.(*Named); ok {
+		return n.V
+	}
+	return v
+}
+
 // Zero returns the zero value of a typedef: a Struct with nil fields,
 // a TypedNil for nilable kinds (pointer, slice, map, chan, func), NIL for
 // interface types, and the matching literal zero for basic types. Named
-// basic types approximate through int64 storage.
+// basics whose underlying type fails to resolve yield a TypedNil hole
+// rather than a fake scalar.
 func Zero(td *TypeDef) Value {
 	if td == nil {
 		return NIL
@@ -83,7 +105,10 @@ func Zero(td *TypeDef) Value {
 				return z
 			}
 		}
-		return int64(0) // unresolvable underlying approximates via int64
+		// the underlying type did not resolve (missing import, unbound
+		// type parameter): keep a typed nil hole rather than faking a
+		// scalar zero.
+		return &TypedNil{Typ: td}
 	}
 	return NIL
 }
@@ -105,7 +130,14 @@ func basicZero(name string) (Value, bool) {
 
 // Cell is a mutable slot. Every declared variable is a cell, which makes
 // closures, pointers and addressable receivers uniform: a pointer IS a cell.
-type Cell struct{ Elem Value }
+type Cell struct {
+	Elem Value
+	// Typ is the declared type of the slot when one is known (`var x T`,
+	// a typed parameter, a named result, new(T)): stores into the cell
+	// coerce incoming values to it, so `x = v` gets the same assignability
+	// check as `var x T = v`.
+	Typ *TypeDef
+}
 
 // FieldRef is the address-of a struct field (`&s.f`) — a cell-view over
 // base.name. The base resolves at access time (struct value or pointer).
@@ -120,6 +152,10 @@ func (r *FieldRef) structOf() *Struct {
 	for {
 		if s, ok := v.(*Struct); ok {
 			return s
+		}
+		if n, ok := v.(*Named); ok {
+			v = n.V
+			continue
 		}
 		dv, ok := Deref(v)
 		if !ok {
@@ -172,6 +208,10 @@ func (r *IndexRef) sliceOf() *Slice {
 		if s, ok := v.(*Slice); ok {
 			return s
 		}
+		if n, ok := v.(*Named); ok {
+			v = n.V
+			continue
+		}
 		dv, ok := Deref(v)
 		if !ok {
 			return nil
@@ -202,7 +242,9 @@ func (r *IndexRef) Set(v Value) bool {
 }
 
 // Deref unwraps any pointer-like value one level: Cell, FieldRef or
-// IndexRef. It reports false for non-references.
+// IndexRef. It reports false for non-references. A Named value is
+// transparent: its underlying value decides (a named pointer type
+// dereferences through its cell, a named scalar does not).
 func Deref(v Value) (Value, bool) {
 	switch r := v.(type) {
 	case *Cell:
@@ -211,6 +253,8 @@ func Deref(v Value) (Value, bool) {
 		return r.Get()
 	case *IndexRef:
 		return r.Get()
+	case *Named:
+		return Deref(r.V)
 	}
 	return nil, false
 }
@@ -225,6 +269,8 @@ func SetRef(v, val Value) bool {
 		return r.Set(val)
 	case *IndexRef:
 		return r.Set(val)
+	case *Named:
+		return SetRef(r.V, val)
 	}
 	return false
 }

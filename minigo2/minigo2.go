@@ -530,14 +530,20 @@ func (e *Engine) LoadFile(ctx context.Context, filename string) (*runtime.Packag
 	}
 
 	p := e.newPackage("<file>"+abs, sf.AST.Name.Name, filepath.Dir(abs))
-	e.mu.Lock()
-	e.files[abs] = p
-	e.mu.Unlock()
-
 	if err := e.indexFiles(p, []*syntax.File{sf}); err != nil {
-		p.State = runtime.Failed
 		return nil, err
 	}
+
+	// Publish only once the package is fully indexed: file packages cannot
+	// be imported back, so nothing needs the early visibility that
+	// buildPackage's import cycles do.
+	e.mu.Lock()
+	if q, ok := e.files[abs]; ok {
+		e.mu.Unlock()
+		return q, nil
+	}
+	e.files[abs] = p
+	e.mu.Unlock()
 	return p, nil
 }
 

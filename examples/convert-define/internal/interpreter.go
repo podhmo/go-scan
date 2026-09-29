@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/ast"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -73,7 +74,7 @@ func (r *Runner) Run(ctx context.Context, filename string) error {
 	// context (go.mod/replace/workspaces) governs lazy import resolution.
 	// LoadFile takes the named file as the whole package — DSL files guarded
 	// by //go:build codegen do not need their tag mirrored anywhere.
-	engine := minigo2.NewEngine(filepath.Dir(abs))
+	engine := minigo2.NewEngine(filepath.Dir(abs), minigo2.WithOutput(os.Stdout))
 	engine.RegisterSpecial(runtime.SymbolID{PackagePath: definePkgPath, Name: "Convert"}, r.handleConvert)
 	engine.RegisterSpecial(runtime.SymbolID{PackagePath: definePkgPath, Name: "Rule"}, r.handleRule)
 

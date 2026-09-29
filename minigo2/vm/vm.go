@@ -2941,6 +2941,50 @@ func (s *specialCtx) Call(fn runtime.Value, args []runtime.Value) (runtime.Value
 	return s.v.Call(fn, args)
 }
 
+// ResolveSymbol maps an expression to its canonical SymbolID through the
+// caller file's import scope — no package is materialized, matching the
+// plan's index-level laziness for special forms.
+func (s *specialCtx) ResolveSymbol(e ast.Expr) (runtime.SymbolID, error) {
+	pkg := s.f.fn.Pkg
+	switch x := e.(type) {
+	case *ast.SelectorExpr:
+		id, ok := x.X.(*ast.Ident)
+		if !ok {
+			return runtime.SymbolID{}, fmt.Errorf("cannot resolve %s to a symbol", s.Format(e))
+		}
+		// a local or captured variable may shadow an import name: selector
+		// expressions on it are member access, not package symbols
+		if _, ok := s.q.Locals[id.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x.X, "%s is a local variable, not an import alias", id.Name)
+		}
+		if _, ok := s.q.Upvals[id.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x.X, "%s is a captured variable, not an import alias", id.Name)
+		}
+		if pkg != nil {
+			if refs, ok := pkg.Scopes[s.q.File]; ok {
+				if ref, ok := refs[id.Name]; ok {
+					return runtime.SymbolID{PackagePath: ref.Path, Name: x.Sel.Name}, nil
+				}
+			}
+		}
+		return runtime.SymbolID{}, s.Errorf(x, "%s is not an import alias in this file", id.Name)
+	case *ast.Ident:
+		if _, ok := s.q.Locals[x.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x, "%s is a local variable, not a package symbol", x.Name)
+		}
+		if _, ok := s.q.Upvals[x.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x, "%s is a captured variable, not a package symbol", x.Name)
+		}
+		path := ""
+		if pkg != nil {
+			path = pkg.Path
+		}
+		return runtime.SymbolID{PackagePath: path, Name: x.Name}, nil
+	default:
+		return runtime.SymbolID{}, s.Errorf(e, "cannot resolve %T to a symbol", e)
+	}
+}
+
 // Eval compiles expr against the caller's live scope (locals/upvals snap-
 // shotted at the special call site) and runs it in a fresh frame sharing
 // the caller's cells — writes by the quoted expr are visible to the caller.

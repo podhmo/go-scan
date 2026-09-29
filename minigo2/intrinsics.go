@@ -14,6 +14,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	goruntime "runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -152,6 +153,45 @@ func (e *Engine) installStdlib() {
 			}
 			return true, nil
 		}},
+		"Search": &runtime.BuiltinFunc{Name: "sort.Search", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			n, _ := args[0].(int64)
+			f := args[1]
+			i, j := int64(0), n
+			for i < j {
+				m := int64(uint64(i+j) >> 1)
+				r, err := h.v.Call(f, []runtime.Value{m})
+				if err != nil {
+					return nil, err
+				}
+				if b, _ := r.(bool); b {
+					j = m
+				} else {
+					i = m + 1
+				}
+			}
+			return i, nil
+		}},
+		"SliceStable": &runtime.BuiltinFunc{Name: "sort.SliceStable", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok {
+				return nil, fmt.Errorf("sort.SliceStable: first arg must be a slice")
+			}
+			less := args[1]
+			var cerr error
+			sort.SliceStable(s.Elems, func(i, j int) bool {
+				if cerr != nil {
+					return false
+				}
+				r, err := h.v.Call(less, []runtime.Value{int64(i), int64(j)})
+				if err != nil {
+					cerr = err
+					return false
+				}
+				b, _ := r.(bool)
+				return b
+			})
+			return runtime.NIL, cerr
+		}},
 	})
 	e.Bind("slices", map[string]runtime.Value{
 		"Sort": h.sortInPlace("slices.Sort"),
@@ -178,29 +218,55 @@ func (e *Engine) installStdlib() {
 			el := scriptElems(a[0])
 			return sort.SliceIsSorted(el, func(i, j int) bool { return lessScript(el[i], el[j]) }), nil
 		}),
-		"SortFunc": &runtime.BuiltinFunc{Name: "slices.SortFunc", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+		"SortFunc":       h.sortByCmpFunc("slices.SortFunc"),
+		"SortStableFunc": h.sortByCmpFunc("slices.SortStableFunc"),
+		"BinarySearch": &runtime.BuiltinFunc{Name: "slices.BinarySearch", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 			s, ok := args[0].(*runtime.Slice)
 			if !ok {
-				return nil, fmt.Errorf("slices.SortFunc: first arg must be a slice")
+				return nil, fmt.Errorf("slices.BinarySearch: first arg must be a slice")
 			}
-			cmp := args[1]
-			var cerr error
-			sort.SliceStable(s.Elems, func(i, j int) bool {
-				if cerr != nil {
-					return false
-				}
-				r, err := h.v.Call(cmp, []runtime.Value{s.Elems[i], s.Elems[j]})
+			target := args[1]
+			i := sort.Search(len(s.Elems), func(i int) bool { return !lessScript(s.Elems[i], target) })
+			found := i < len(s.Elems) && equalScript(s.Elems[i], target)
+			return &runtime.Tuple{Elems: []runtime.Value{int64(i), found}}, nil
+		}},
+		"BinarySearchFunc": &runtime.BuiltinFunc{Name: "slices.BinarySearchFunc", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			s, ok := args[0].(*runtime.Slice)
+			if !ok {
+				return nil, fmt.Errorf("slices.BinarySearchFunc: first arg must be a slice")
+			}
+			target := args[1]
+			cf := args[2]
+			cmpAt := func(i int) (int64, error) {
+				r, err := h.v.Call(cf, []runtime.Value{s.Elems[i], target})
 				if err != nil {
-					cerr = err
-					return false
+					return 0, err
 				}
 				n, _ := r.(int64)
-				return n < 0
-			})
-			if cerr != nil {
-				return nil, cerr
+				return n, nil
 			}
-			return runtime.NIL, nil
+			i, j := 0, len(s.Elems)
+			for i < j {
+				m := int(uint(i+j) >> 1)
+				n, err := cmpAt(m)
+				if err != nil {
+					return nil, err
+				}
+				if n < 0 {
+					i = m + 1
+				} else {
+					j = m
+				}
+			}
+			found := false
+			if i < len(s.Elems) {
+				n, err := cmpAt(i)
+				if err != nil {
+					return nil, err
+				}
+				found = n == 0
+			}
+			return &runtime.Tuple{Elems: []runtime.Value{int64(i), found}}, nil
 		}},
 		"EqualFunc": &runtime.BuiltinFunc{Name: "slices.EqualFunc", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 			a, _ := args[0].(*runtime.Slice)
@@ -348,6 +414,64 @@ func (e *Engine) installStdlib() {
 		ospkg["Args"] = h.fn("os.Args", func(a []any) (any, error) { return strsSlice(os.Args), nil })
 	}
 	e.Bind("os", ospkg)
+	// host: the gopls-friendly stub-package surface (plan §11). Scripts may
+	// spell the import either canonically ("minigo.dev/host") or via the
+	// in-repo stub package ("github.com/podhmo/go-scan/minigo2/host",
+	// which ships panic("minigo intrinsic") bodies) — both paths resolve
+	// to this intrinsic table, so stub bodies never execute.
+	hostpkg := map[string]runtime.Value{
+		"Exit": h.fn("host.Exit", func(a []any) (any, error) {
+			return nil, errors.New("host.Exit is not supported: an interpreted program cannot terminate the host process")
+		}),
+	}
+	if len(e.cfg.AllowedRoots) == 0 {
+		hostpkg["Getenv"] = h.fn("host.Getenv", func(a []any) (any, error) { return os.Getenv(str(a[0])), nil })
+		hostpkg["Environ"] = h.fn("host.Environ", func(a []any) (any, error) { return strsSlice(os.Environ()), nil })
+		hostpkg["Args"] = h.fn("host.Args", func(a []any) (any, error) { return strsSlice(os.Args), nil })
+		hostpkg["Hostname"] = h.fn("host.Hostname", func(a []any) (any, error) {
+			return retErr2(os.Hostname())
+		})
+		hostpkg["Getwd"] = h.fn("host.Getwd", func(a []any) (any, error) {
+			return retErr2(os.Getwd())
+		})
+	}
+	for _, path := range []string{"minigo.dev/host", "github.com/podhmo/go-scan/minigo2/host"} {
+		e.Bind(path, hostpkg)
+	}
+	// unsafe/runtime: the fixed runtime primitives source cannot reach
+	// (plan §11). Sizes are 64-bit host approximations over the boxed
+	// representation; NumGoroutine is pinned to 1 — the VM is
+	// single-threaded by design.
+	e.Bind("unsafe", map[string]runtime.Value{
+		"Sizeof": &runtime.BuiltinFunc{Name: "unsafe.Sizeof", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			return unsafeSizeOf(args[0]), nil
+		}},
+		"Alignof": &runtime.BuiltinFunc{Name: "unsafe.Alignof", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			return unsafeAlignOf(args[0]), nil
+		}},
+		"Offsetof": h.fn("unsafe.Offsetof", func(a []any) (any, error) {
+			return nil, errors.New("unsafe.Offsetof is not supported: selector results are not values")
+		}),
+	})
+	e.Bind("runtime", map[string]runtime.Value{
+		"GOOS":   goruntime.GOOS,
+		"GOARCH": goruntime.GOARCH,
+		"NumGoroutine": h.fn("runtime.NumGoroutine", func(a []any) (any, error) {
+			return int64(1), nil
+		}),
+		"NumCPU": h.fn("runtime.NumCPU", func(a []any) (any, error) { return int64(goruntime.NumCPU()), nil }),
+		"GOMAXPROCS": &runtime.BuiltinFunc{Name: "runtime.GOMAXPROCS", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			// GOMAXPROCS(n) sets and returns the previous value;
+			// GOMAXPROCS() returns the current value
+			n := int64(0)
+			if len(args) > 0 {
+				n, _ = args[0].(int64)
+			}
+			return int64(goruntime.GOMAXPROCS(int(n))), nil
+		}},
+		"Version": h.fn("runtime.Version", func(a []any) (any, error) { return goruntime.Version(), nil }),
+		"GC":      h.fn("runtime.GC", func(a []any) (any, error) { return nil, nil }),
+	})
 	e.Bind("time", map[string]runtime.Value{
 		"Sleep": h.fn("time.Sleep", func(a []any) (any, error) { time.Sleep(durOf(a[0])); return nil, nil }),
 		"Now":   h.fn("time.Now", func(a []any) (any, error) { return time.Now(), nil }),
@@ -568,6 +692,74 @@ func (h *hostHelpers) sortSlice(_ runtime.VMCaller, args []runtime.Value) (runti
 		return b
 	})
 	return runtime.NIL, nil
+}
+
+// sortByCmpFunc implements slices.SortFunc and slices.SortStableFunc: cmp is
+// a script callable returning negative/zero/positive. The sort is stable,
+// like Go's implementation.
+func (h *hostHelpers) sortByCmpFunc(name string) *runtime.BuiltinFunc {
+	return &runtime.BuiltinFunc{Name: name, Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+		s, ok := args[0].(*runtime.Slice)
+		if !ok {
+			return nil, fmt.Errorf("%s: first arg must be a slice", name)
+		}
+		cmp := args[1]
+		var cerr error
+		sort.SliceStable(s.Elems, func(i, j int) bool {
+			if cerr != nil {
+				return false
+			}
+			r, err := h.v.Call(cmp, []runtime.Value{s.Elems[i], s.Elems[j]})
+			if err != nil {
+				cerr = err
+				return false
+			}
+			n, _ := r.(int64)
+			return n < 0
+		})
+		if cerr != nil {
+			return nil, cerr
+		}
+		return runtime.NIL, nil
+	}}
+}
+
+// unsafeSizeOf approximates unsafe.Sizeof on a 64-bit host: script values
+// carry erased types, so the answer reflects the boxed representation.
+func unsafeSizeOf(v runtime.Value) int64 {
+	switch x := v.(type) {
+	case bool:
+		return 1
+	case int64, float64:
+		return 8
+	case string:
+		return 16
+	case *runtime.Slice:
+		return 24
+	case *runtime.Map, *runtime.Chan, *runtime.Cell:
+		return 8
+	case *runtime.Struct:
+		// field sizes without padding — a documented approximation
+		var n int64
+		for _, f := range x.Fields {
+			n += unsafeSizeOf(f)
+		}
+		return n
+	case runtime.Nil, *runtime.TypedNil, *runtime.IfaceNil:
+		return 16 // interface pair
+	default:
+		return 8 // pointer-sized boxes
+	}
+}
+
+func unsafeAlignOf(v runtime.Value) int64 {
+	if n := unsafeSizeOf(v); n < 8 {
+		if n < 1 {
+			return 1 // alignment is always at least 1
+		}
+		return n
+	}
+	return 8
 }
 
 // retErr wraps a (n int, err error) or single-value+error result into the

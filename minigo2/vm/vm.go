@@ -119,6 +119,9 @@ func (f *frame) trap(format string, args ...any) {
 // coerce. `x = v` then enforces the same assignability as `var x T = v`,
 // and a named basic type keeps its tag across plain assignment.
 func (v *VM) assignCell(f *frame, c *runtime.Cell, val runtime.Value) {
+	if c.ReadOnly {
+		f.trap("cannot assign to constant")
+	}
 	if c.Typ != nil {
 		val = v.coerce(f, val, c.Typ)
 	}
@@ -465,7 +468,7 @@ func (v *VM) loop(f *frame) {
 		case bytecode.OpPop:
 			f.pop()
 		case bytecode.OpNewLocal:
-			f.locals[ins.A] = &runtime.Cell{Elem: valueCopy(f.pop())}
+			f.locals[ins.A] = &runtime.Cell{Elem: valueCopy(f.pop()), ReadOnly: ins.B != 0}
 		case bytecode.OpRenewVar:
 			f.locals[ins.A] = &runtime.Cell{Elem: f.locals[ins.A].Elem}
 		case bytecode.OpLocal:
@@ -481,12 +484,16 @@ func (v *VM) loop(f *frame) {
 		case bytecode.OpGlobal:
 			f.push(v.resolveGlobal(f, consts[ins.A].(string)))
 		case bytecode.OpNewGlobal:
-			f.fn.Pkg.Globals.Set(consts[ins.A].(string), &runtime.Cell{Elem: valueCopy(f.pop())})
+			c := &runtime.Cell{Elem: valueCopy(f.pop()), ReadOnly: ins.B != 0}
+			f.fn.Pkg.Globals.Set(consts[ins.A].(string), c)
 		case bytecode.OpSetGlobal:
 			name := consts[ins.A].(string)
 			val := f.pop()
 			if old, ok := f.fn.Pkg.Globals.Get(name); ok {
 				if c, isCell := old.(*runtime.Cell); isCell {
+					if c.ReadOnly {
+						f.trap("cannot assign to %s", name)
+					}
 					v.assignCell(f, c, val)
 					break
 				}
@@ -545,8 +552,13 @@ func (v *VM) loop(f *frame) {
 			if tn, ok := asTypedNil(ref); ok && tn.Typ.Kind == runtime.KindPointer {
 				panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
 			}
-			if c, ok := ref.(*runtime.Cell); ok && c.Typ != nil {
-				val = v.coerce(f, val, c.Typ)
+			if c, ok := ref.(*runtime.Cell); ok {
+				if c.ReadOnly {
+					f.trap("cannot assign to constant")
+				}
+				if c.Typ != nil {
+					val = v.coerce(f, val, c.Typ)
+				}
 			}
 			if !runtime.SetRef(ref, val) {
 				f.trap("indirect store to non-pointer %T", ref)
@@ -2939,6 +2951,50 @@ func (s *specialCtx) Format(n ast.Node) string {
 
 func (s *specialCtx) Call(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
 	return s.v.Call(fn, args)
+}
+
+// ResolveSymbol maps an expression to its canonical SymbolID through the
+// caller file's import scope — no package is materialized, matching the
+// plan's index-level laziness for special forms.
+func (s *specialCtx) ResolveSymbol(e ast.Expr) (runtime.SymbolID, error) {
+	pkg := s.f.fn.Pkg
+	switch x := e.(type) {
+	case *ast.SelectorExpr:
+		id, ok := x.X.(*ast.Ident)
+		if !ok {
+			return runtime.SymbolID{}, fmt.Errorf("cannot resolve %s to a symbol", s.Format(e))
+		}
+		// a local or captured variable may shadow an import name: selector
+		// expressions on it are member access, not package symbols
+		if _, ok := s.q.Locals[id.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x.X, "%s is a local variable, not an import alias", id.Name)
+		}
+		if _, ok := s.q.Upvals[id.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x.X, "%s is a captured variable, not an import alias", id.Name)
+		}
+		if pkg != nil {
+			if refs, ok := pkg.Scopes[s.q.File]; ok {
+				if ref, ok := refs[id.Name]; ok {
+					return runtime.SymbolID{PackagePath: ref.Path, Name: x.Sel.Name}, nil
+				}
+			}
+		}
+		return runtime.SymbolID{}, s.Errorf(x, "%s is not an import alias in this file", id.Name)
+	case *ast.Ident:
+		if _, ok := s.q.Locals[x.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x, "%s is a local variable, not a package symbol", x.Name)
+		}
+		if _, ok := s.q.Upvals[x.Name]; ok {
+			return runtime.SymbolID{}, s.Errorf(x, "%s is a captured variable, not a package symbol", x.Name)
+		}
+		path := ""
+		if pkg != nil {
+			path = pkg.Path
+		}
+		return runtime.SymbolID{PackagePath: path, Name: x.Name}, nil
+	default:
+		return runtime.SymbolID{}, s.Errorf(e, "cannot resolve %T to a symbol", e)
+	}
 }
 
 // Eval compiles expr against the caller's live scope (locals/upvals snap-

@@ -481,15 +481,16 @@ func InitFunc(pkg *runtime.Package) (*bytecode.Chunk, error) {
 }
 
 // valueSpec emits a whole var/const spec: all of its names are bound.
-// Vars become package cells (OpNewGlobal); consts plain values (OpSetGlobal).
+// Vars become package cells (OpNewGlobal); consts read-only cells
+// (OpNewGlobal with B=1) so a later `k = v` store traps like Go.
 func (c *compiler) valueSpec(vs *ast.ValueSpec, d *index.Decl) {
 	isConst := d.Kind == index.ConstDecl
 	bind := func(name *ast.Ident) {
-		op := bytecode.OpNewGlobal
+		readonly := int32(0)
 		if isConst {
-			op = bytecode.OpSetGlobal
+			readonly = 1
 		}
-		c.emit(op, c.nameIdx(name.Name), 0, name.Pos())
+		c.emit(bytecode.OpNewGlobal, c.nameIdx(name.Name), int(readonly), name.Pos())
 	}
 	vals := vs.Values
 	if isConst && len(vals) == 0 {
@@ -659,13 +660,17 @@ func (c *compiler) stmt(s ast.Stmt) {
 	}
 }
 
-func (c *compiler) bindLocal(name string, pos token.Pos, _ bool) int {
+func (c *compiler) bindLocal(name string, pos token.Pos, isConst bool) int {
 	if name == "_" {
 		c.emit(bytecode.OpPop, 0, 0, pos)
 		return -1
 	}
 	slot := c.fs.declare(name, pos)
-	c.emit(bytecode.OpNewLocal, slot, 0, pos)
+	readonly := 0
+	if isConst {
+		readonly = 1
+	}
+	c.emit(bytecode.OpNewLocal, slot, readonly, pos)
 	return slot
 }
 

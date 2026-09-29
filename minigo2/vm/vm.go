@@ -55,6 +55,9 @@ type Hooks struct {
 	TypeMethods func(td *runtime.TypeDef) (map[string]bool, error)
 	// Underlying resolves a KindAlias typedef to its underlying typedef.
 	Underlying func(td *runtime.TypeDef) (*runtime.TypeDef, error)
+	// AliasOf resolves a KindAlias typedef to its direct target typedef
+	// (one hop — `type A = B` gives B itself, not B's underlying shape).
+	AliasOf func(td *runtime.TypeDef) (*runtime.TypeDef, error)
 	// FieldTypes returns the declared type of each struct field, parallel
 	// to td.Fields (nil entries leave the field zero NIL) — used by
 	// zeroValue so `var s T` materializes typed field zeros like Go.
@@ -1909,23 +1912,37 @@ func stringBinOp(f *frame, op bytecode.BinOp, a string, b runtime.Value) runtime
 }
 
 func unaryOp(f *frame, op bytecode.UnOp, a runtime.Value) runtime.Value {
-	a = runtime.Unwrap(a)
+	var tag *runtime.TypeDef
+	if n, ok := a.(*runtime.Named); ok {
+		tag, a = n.Typ, n.V
+	}
+	// unary results keep the operand's declared type (-x, +x, ^x, !x are
+	// all typed T when x is T); a bare result stays bare.
+	retag := func(r runtime.Value) runtime.Value {
+		if tag != nil {
+			switch r.(type) {
+			case int64, float64, string, bool:
+				return &runtime.Named{Typ: tag, V: r}
+			}
+		}
+		return r
+	}
 	switch op {
 	case bytecode.UnNot:
-		return !truthy(a)
+		return retag(!truthy(a))
 	case bytecode.UnPos:
-		return a
+		return retag(a)
 	case bytecode.UnNeg:
 		switch x := a.(type) {
 		case int64:
-			return -x
+			return retag(-x)
 		case float64:
-			return -x
+			return retag(-x)
 		}
 		f.trap("unary - on %T", a)
 	case bytecode.UnXor:
 		if x, ok := a.(int64); ok {
-			return ^x
+			return retag(^x)
 		}
 		f.trap("unary ^ on %T", a)
 	}
@@ -2487,8 +2504,11 @@ func (v *VM) coerce(f *frame, x runtime.Value, td *runtime.TypeDef) runtime.Valu
 	if td == nil {
 		return x
 	}
-	if td.Kind == runtime.KindAlias && v.H.Underlying != nil {
-		if u, err := v.H.Underlying(td); err == nil && u != nil && u != td {
+	if td.Kind == runtime.KindAlias {
+		// aliases peel one hop at a time so each intermediate named type
+		// keeps its own coerce (a Named value must land on its declared
+		// type — `type A = Str` binds a Str-tagged value).
+		if u := v.peelAlias(td); u != td {
 			return v.coerce(f, x, u)
 		}
 	}
@@ -2497,6 +2517,11 @@ func (v *VM) coerce(f *frame, x runtime.Value, td *runtime.TypeDef) runtime.Valu
 	}
 	if td.Kind == runtime.KindInterface {
 		if tn, ok := x.(*runtime.TypedNil); ok {
+			// boxing a typed nil still checks the method set: (*int)(nil)
+			// cannot bind an interface that requires methods.
+			if !v.satisfiesIface(f, td, x) {
+				f.trap("cannot use %s as %s", typeNameOf(x), tdName(td))
+			}
 			return &runtime.IfaceNil{Typ: tn.Typ}
 		}
 		if !v.satisfiesIface(f, td, x) {
@@ -2520,7 +2545,10 @@ func declaredType(td *runtime.TypeDef) bool {
 // host boundary; a TypedNil re-tags when the underlying shape matches.
 func (v *VM) coerceConcrete(f *frame, x runtime.Value, td *runtime.TypeDef) runtime.Value {
 	if n, ok := x.(*runtime.Named); ok {
-		if sameTypeDef(n.Typ, td) || sameTypeDef(n.Typ, v.peelNamed(td)) {
+		// a Named value keeps its identity only for the identical declared
+		// type — aliases count (they ARE the type), `type A B` chains do
+		// not (Go: named-to-named needs a conversion).
+		if sameTypeDef(n.Typ, td) || sameTypeDef(n.Typ, v.peelAlias(td)) {
 			return x
 		}
 		f.trap("cannot use %s as %s", tdName(n.Typ), tdName(td))
@@ -2572,6 +2600,25 @@ func (v *VM) coerceConcrete(f *frame, x runtime.Value, td *runtime.TypeDef) runt
 		return &runtime.Named{Typ: td, V: x}
 	}
 	return x
+}
+
+// peelAlias follows only Alias links, one hop at a time: `type A = B`
+// is the same type as B, while `type A B` defines a distinct named type
+// — peeling past it would let a B-tagged value bind an A slot and keep
+// the wrong tag. Underlying is transitive (it crosses `type A B` too),
+// so this needs the dedicated hook; without it only sameTypeDef runs.
+func (v *VM) peelAlias(td *runtime.TypeDef) *runtime.TypeDef {
+	if v.H.AliasOf == nil {
+		return td
+	}
+	for i := 0; td != nil && td.Kind == runtime.KindAlias && i < 32; i++ {
+		u, err := v.H.AliasOf(td)
+		if err != nil || u == nil || u == td {
+			break
+		}
+		td = u
+	}
+	return td
 }
 
 // peelNamed follows a typedef through Alias and `type A B` (NamedBasic)

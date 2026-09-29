@@ -20,13 +20,14 @@ import (
 // Structs offer declared + promoted methods; host GoValues expose their
 // reflect method set. Other values have no methods.
 func (e *Engine) methodsOfValue(v runtime.Value) (map[string]bool, error) {
-	// a Named value exposes its own declared method set — `type A B` does
-	// not inherit B's methods (Go). Checked before the deref loop since a
-	// Named with a pointer underlying must not be peeled past its tag.
-	if n, ok := v.(*runtime.Named); ok {
-		return e.typeMethods(n.Typ)
-	}
 	for {
+		// a Named value exposes its own declared method set — `type A B`
+		// does not inherit B's methods (Go). Checked inside the deref
+		// loop: a pointer like &c lands on a *Cell{Named} and must stop
+		// on the tag rather than deref past it.
+		if n, ok := v.(*runtime.Named); ok {
+			return e.typeMethods(n.Typ)
+		}
 		dv, ok := runtime.Deref(v)
 		if !ok {
 			break
@@ -67,6 +68,16 @@ func (e *Engine) typeMethods(td *runtime.TypeDef) (map[string]bool, error) {
 		return e.ifaceReqsRec(td, map[*runtime.TypeDef]bool{}), nil
 	}
 	return e.methodSetOf(td, map[*runtime.TypeDef]bool{}), nil
+}
+
+// aliasOf implements the Hooks.AliasOf hook: a KindAlias typedef resolves
+// its target expression — one hop only, so `type A = B` gives B's own
+// typedef even when B is itself a declared type (unlike underlying).
+func (e *Engine) aliasOf(td *runtime.TypeDef) (*runtime.TypeDef, error) {
+	if td == nil || td.Kind != runtime.KindAlias || td.Anon == nil {
+		return td, nil
+	}
+	return e.resolveTypeRef(td, td.Anon)
 }
 
 // underlying implements the Hooks.Underlying hook: a KindAlias typedef

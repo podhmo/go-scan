@@ -1192,4 +1192,26 @@ typed-nil holes instead of bare `NIL`.
 - Only int64/float64/string results re-tag in `binaryOp` — bool
   results stay bare (correct: they re-coerce on the next bind).
 
+### Review fixes (post-PR pass)
+
+- **Alias vs defined peeling.** The Named-bind check originally compared
+  `n.Typ` against `peelNamed(td)` — a `type A B` chain whose peel stalls
+  on B (unresolvable underlying) let a `Named{B}` bind an `A` slot and
+  keep the wrong tag. A Named value may bind only its identical declared
+  type or an *alias* of it, so the check now peels through the new
+  one-hop `Hooks.AliasOf` hook (`peelAlias`) — `Underlying` is
+  transitive across `type A B` by design and could not be reused.
+  `coerce`'s alias branch peels one hop at a time for the same reason
+  (`type A = Str` must hit the `Str` typedef, not jump to `string`).
+- **Typed nils check interface satisfaction too** — `(*int)(nil)` boxed
+  into a method-requiring interface without consulting the method set;
+  the boxing path now runs `satisfiesIface` first.
+- **Method sets see Named through a pointer deref** — `methodsOfValue`
+  checked `*Named` only before its deref loop, so `&c` on a named value
+  derefed past the tag and reported no methods; the check now lives
+  inside the loop.
+- **Unary ops keep the declared tag** — `-x`/`+x`/`^x`/`!x` on a Named
+  operand returned the bare underlying value; results re-tag like
+  `binaryOp`.
+
 ## (end)

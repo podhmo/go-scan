@@ -486,4 +486,77 @@ func NilBadShape() int {
 	return 0
 }
 
+// --- review fixes (round 6, Devin Review) ---
+
+// IfaceNilOK: a typed nil whose type satisfies the interface still boxes.
+func IfaceNilOK() int {
+	var e IArea = (*Sq)(nil)
+	_ = e
+	return 1
+}
+
+// IfaceNilBad: a typed nil whose type lacks the method set cannot bind a
+// method-requiring interface — (*int)(nil) is not an IArea.
+func IfaceNilBad() int {
+	var e IArea = (*int)(nil)
+	_ = e
+	return 0
+}
+
+// NamedPtrIface: &t of a named basic satisfies an interface through the
+// named type's method set — the pointer must not deref past the tag.
+type TempC float64
+
+func (t *TempC) Bump() { *t = *t + 1 }
+
+type Bumper interface{ Bump() }
+
+func NamedPtrIface() int {
+	var t TempC = 5
+	var w Bumper = &t // *TempC's method set includes Bump
+	w.Bump()
+	return int(t) // 6
+}
+
+// NamedUnary: -x, +x, ^x, !x keep the operand's declared type.
+func NamedUnary() int {
+	var c Celsius = 40
+	var n any = -c // still Celsius
+	if _, ok := n.(Celsius); !ok {
+		return -1
+	}
+	var b Boo = true
+	var n2 any = !b // still Boo
+	if _, ok := n2.(Boo); !ok {
+		return -2
+	}
+	return int(-c / 10) // -4
+}
+
+// ChainHoleBad: `type A B` does not accept a B value — both are named
+// types (Go needs a conversion) even when B's own underlying cannot be
+// resolved further.
+type BHole io.Reader // unresolvable: io is deliberately not imported
+type AHole BHole
+
+func ChainHoleBad() int {
+	var b BHole = "x" // loose: unresolvable underlying passes unchecked
+	var a AHole = b   // cannot use BHole as AHole
+	_ = a
+	return 0
+}
+
+// AliasBindOK: `type A = B` is the same type — a B value binds an A slot
+// and keeps its (shared) declared identity.
+type AEq = Str
+
+func AliasBindOK() int {
+	var b Str = "x"
+	var a AEq = b
+	if a != "x" {
+		return -1
+	}
+	return 1
+}
+
 func main() {}

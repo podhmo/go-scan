@@ -485,6 +485,10 @@ func TestDeclTypes(t *testing.T) {
 		{"MapBindZero", int64(1)},
 		{"FieldHoleZero", int64(1)},
 		{"AssignOK", int64(42)},
+		{"IfaceNilOK", int64(1)},
+		{"NamedPtrIface", int64(6)},
+		{"NamedUnary", int64(-4)},
+		{"AliasBindOK", int64(1)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/decltypes", c.fn)
@@ -511,6 +515,8 @@ func TestDeclAssignability(t *testing.T) {
 		{"NilBadShape", "cannot use"},
 		{"MapBindTrap", "cannot use"},
 		{"NoInheritBad", "no field or method"},
+		{"IfaceNilBad", "cannot use"},
+		{"ChainHoleBad", "cannot use"},
 	}
 	for _, c := range bads {
 		if _, err := e.Run(context.Background(), "./testdata/decltypes", c.fn); err == nil ||

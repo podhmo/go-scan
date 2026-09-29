@@ -137,6 +137,7 @@ func (e *Engine) newVM() *vm.VM {
 		ElemOf:            e.elemOf,
 		TypeMethods:       e.typeMethods,
 		Underlying:        e.underlying,
+		AliasOf:           e.aliasOf,
 		FieldTypes:        e.fieldTypes,
 	}}
 }

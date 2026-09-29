@@ -187,6 +187,44 @@ func TestREPLConstAndTypedVar(t *testing.T) {
 	}
 }
 
+func TestIncompleteInput(t *testing.T) {
+	cases := []struct {
+		src  string
+		want bool
+	}{
+		{"1 + 2", false},
+		{"x := 1", false},
+		{"x := f(1)", false},
+		{"func f() int { return 1 }", false},
+		{"func f() int {", true},
+		{"func f() int {\nreturn 1\n}", false},
+		{"x := []int{", true},
+		{"x := []int{1,\n2,\n}", false},
+		{"x := []int{1,\n2,", true},
+		{"if x {", true},
+		{"if x {\n}\nelse {", true}, // `} else {` only binds inside one buffer
+		{"x := (1", true},
+		{"x := 1 +", true}, // operator at EOL: no semicolon inserted
+		{"x :=", true},
+		{"x.", true},
+		{"}", false},  // negative depth: an error, not a continuation
+		{"x +", true}, // also a parse error, but waits for the operand
+		{"// note", false},
+		{"", false},
+		{"x := `abc", true}, // raw strings legitimately span lines
+		{"x := `abc\ndef`", false},
+		{"/* note", true}, // so do block comments
+		{"/* note\nmore */", false},
+		{"x := \"abc", false}, // '"' strings cannot span lines: error now
+		{"x := 'a", false},    // rune literals likewise
+	}
+	for _, c := range cases {
+		if got := IncompleteInput(c.src); got != c.want {
+			t.Errorf("IncompleteInput(%q) = %v, want %v", c.src, got, c.want)
+		}
+	}
+}
+
 func TestREPLSpecialsAndBoundPkgs(t *testing.T) {
 	ctx := context.Background()
 	e := NewEngine("testdata")

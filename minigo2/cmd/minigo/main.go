@@ -99,7 +99,9 @@ const replHelp = `commands:
   :exit   quit (also :quit, :q, Ctrl-D)
 input is a top-level declaration or statements; a trailing
 expression is printed. new names introduced by := / var / const
-persist as globals across lines.`
+persist as globals across lines. a line ending inside an open
+() [] {} group (or after an operator) continues with a ".. "
+prompt until it closes.`
 
 func runREPL(ctx context.Context, in io.Reader, out io.Writer) error {
 	cwd, err := os.Getwd()
@@ -110,31 +112,55 @@ func runREPL(ctx context.Context, in io.Reader, out io.Writer) error {
 	r := e.NewREPL()
 	fmt.Fprintln(out, "minigo2 repl (:help for commands)")
 	sc := bufio.NewScanner(in)
+	var frag strings.Builder
 	for {
-		fmt.Fprint(out, ">> ")
+		if frag.Len() == 0 {
+			fmt.Fprint(out, ">> ")
+		} else {
+			fmt.Fprint(out, ".. ")
+		}
 		if !sc.Scan() {
+			if frag.Len() > 0 {
+				// EOF mid-fragment: surface the parse error rather
+				// than dropping the input silently.
+				if _, err := r.EvalLine(ctx, frag.String()); err != nil {
+					fmt.Fprintf(out, "error: %s\n", err)
+				}
+			}
 			fmt.Fprintln(out)
 			return sc.Err()
 		}
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, ":") {
-			switch line {
-			case ":exit", ":quit", ":q":
-				return nil
-			case ":reset":
-				r.Reset()
-				fmt.Fprintln(out, "state cleared")
-			case ":help":
-				fmt.Fprintln(out, replHelp)
-			default:
-				fmt.Fprintf(out, "unknown command %q (see :help)\n", line)
+		text := sc.Text()
+		if frag.Len() == 0 {
+			line := strings.TrimSpace(text)
+			if line == "" {
+				continue
 			}
+			if strings.HasPrefix(line, ":") {
+				switch line {
+				case ":exit", ":quit", ":q":
+					return nil
+				case ":reset":
+					r.Reset()
+					fmt.Fprintln(out, "state cleared")
+				case ":help":
+					fmt.Fprintln(out, replHelp)
+				default:
+					fmt.Fprintf(out, "unknown command %q (see :help)\n", line)
+				}
+				continue
+			}
+		}
+		if frag.Len() > 0 {
+			frag.WriteByte('\n')
+		}
+		frag.WriteString(text)
+		src := frag.String()
+		if minigo2.IncompleteInput(src) {
 			continue
 		}
-		v, err := r.EvalLine(ctx, line)
+		frag.Reset()
+		v, err := r.EvalLine(ctx, src)
 		if err != nil {
 			fmt.Fprintf(out, "error: %s\n", err)
 			continue

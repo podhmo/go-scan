@@ -1383,7 +1383,10 @@ that now pass:
   or captured variable shadowing an import name — silent
   misresolution the direct `Scopes[file][name]` read could not see.
 
-## 27. Round-7b notes: declared tags beyond basics
+## 29. Round-10 notes: declared tags beyond basics
+
+(Originally drafted as "round-7b" — it branched after round-7 but landed
+after rounds 8–9, so it is renumbered to keep section order monotonic.)
 
 The round-6 residuals turned out mostly tractable: every runtime value
 that *can* carry a declared type now does — `Struct.Def` (already did),
@@ -1416,5 +1419,41 @@ container-stamp in `coerceConcrete`).
   change); `type F func()` / `type I2 I` keep only their underlying
   shape (no tag field on `Function`, asserts peel interfaces);
   `&s.f`/`&s[i]` FieldRef/IndexRef stores are still unchecked.
+
+## 30. Round-11 notes: REPL continuation and reconciling round-10
+
+Things learned outside the plan while reconciling the round-10 merge and
+adding multi-line input to the REPL:
+
+- **Fragment completeness is a token property, not a parse result.**
+  `EvalLine` already accepted embedded newlines; the only real gap was
+  the interactive loop. `IncompleteInput` runs `go/scanner` over the
+  pending buffer: an open `()`/`[]`/`{}` group (depth > 0) or a final
+  token where Go would not insert a semicolon (trailing operator,
+  comma, dot, `:=`) means "keep reading"; a final inserted `;` means
+  "evaluate". No speculative re-parsing, and the rule matches what
+  users know from `gofmt`-formatted code.
+- **`} else {` must share a line**, exactly as in Go source — `}` at
+  end-of-fragment inserts a semicolon, so an `else` typed on the next
+  line can never re-attach. The REPL inherits this rule for free by
+  evaluating the buffer as soon as it reads complete.
+- **Two "scan errors" are continuations, not errors**: an unterminated
+  raw string (`` ` ``) and an unterminated `/*` comment are the only
+  constructs Go legitimately continues across lines, so
+  `IncompleteInput` reads them as incomplete; every other degenerate
+  fragment (comment-only input, unterminated `"` or rune literals,
+  negative depth) reads as complete so its error surfaces through
+  `EvalLine` instead of waiting forever. The cost is that a genuinely
+  mistyped line like `x +` also waits for continuation — there is no
+  abort-fragment escape yet (noted in TODO.md).
+- **EOF mid-fragment surfaces the parse error** rather than silently
+  dropping the buffer — piped input can't keep the REPL waiting on a
+  half-typed decl.
+- **Range-over-func is a real gap, and a v1 regression**: `newIterator`
+  covers slice/map/chan/int/string but traps `range over %T` on function
+  values, so `for x := range f` (Go 1.23 `iter.Seq`) is unsupported —
+  v1 minigo passes `minigo_range_func_test.go`. Recorded in TODO.md —
+  needs a yield-callback bridge plus early-`break` plumbing (`yield`
+  must return false).
 
 ## (end)

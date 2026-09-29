@@ -782,4 +782,75 @@ parts the design text had left implicit.
   `AllowedRoots []string` checked in `LocateDir`. Left to the maintainer
   (tracked in TODO.md).
 
+## 22. Round-3 notes: defer/recover, the concurrency approximation, and the second review pass
+
+What implementing this phase's TODO items revealed that the design text
+left implicit.
+
+### Panic/defer model
+
+- **The recoverable channel is `v.inflight`, not a frame field.** Unwind
+  sets it for the duration of a frame's defer drain and restores the outer
+  value afterwards, so a nested call's recover() cannot see an outer
+  frame's panic — matching Go's "innermost deferred function" rule.
+- **Named results are gathered after defers whenever the function declares
+  them** — including on panic unwind, where no `OpReturn` ever ran: a
+  recovering defer can still assign them. Unnamed results remain the
+  snapshot taken at return-expression evaluation.
+- **Deferred callees are not limited to compiled functions.** `defer
+  close(ch)` and `defer recover()` are legal Go: a callee without a
+  bytecode frame (BuiltinFunc, TypeDef conversion, Cell-wrapped) runs
+  directly at teardown under a sentinel frame marked `deferred`, pushed
+  purely so `recover()` still sees the call as deferred.
+- **Script panics inside a deferred call supersede the panic being
+  unwound but do not skip the remaining defers**; a Trap or host panic
+  aborts the drain. `Panic`/`Trap` accumulate `Frames` (`name at
+  file:line`) during unwind — a best-effort stack trace, added after the
+  design text and deliberately not spec-level fidelity.
+
+### Concurrency approximation (documented, single-threaded)
+
+- **Channels are unbounded queues.** `go f()` runs f synchronously and
+  propagates its panic immediately. Ops that would block forever trap
+  instead of deadlocking: `recv` on an empty open channel, `select` with
+  no ready case and no default.
+- **`case <-ch` still consumes.** A non-binding receive pops the value —
+  the review caught it leaving the value queued.
+- **Select operand evaluation is spec order, which forces a two-pass
+  compile.** Every case's channel operand (and a send case's value) is
+  evaluated exactly once in source order on entry — stash into `$selN`
+  temp slots first, then dispatch first-ready-wins. Compiling operands
+  inline under the readiness jump lets a winning earlier case skip later
+  operands' side effects.
+
+### FFI / intrinsics
+
+- **`Value` is `any` — `case runtime.Value` in a type switch matches
+  everything.** Marshalling helpers must enumerate the concrete runtime
+  types first; anything else (errors, host structs, `time.Time`) boxes as
+  `*runtime.GoValue`, and `selectMember` dispatches methods on it
+  reflectively so `err.Error()` works.
+- **`goNative` marshals by copy — mutating intrinsics cannot use it.**
+  `sort.Ints`/`slices.Sort` must sort `*runtime.Slice.Elems` in place; the
+  `h.fn` boundary is read-only by construction.
+- **`bindCompiles` must skip eagerly-compiled protos.** Literal
+  `*Function` consts arrive with `Chunk` set and `Decl` nil; attaching
+  `Compile` hooks them into `compile.Func`'s nil-Decl deref on first
+  call. Hook only where `Decl != nil && Chunk == nil`.
+
+### Lifecycle & embedding
+
+- **A failed initializer must not be masked by partial globals.** `Member`
+  short-circuits on `State == Failed` before serving `Globals` — earlier
+  versions returned the half-populated value.
+- **`AllowedRoots` implies a smaller host surface.** With roots set, the
+  resolver rejects dirs outside (symlink-resolved both ways — a root
+  containing a link to the outside otherwise bypasses the check) and the
+  `os` intrinsic drops `Getenv`/`Args`; `os.Exit` always traps in every
+  mode, since an interpreted program must never terminate the host.
+- **Init-order analysis through function bodies** is a memoized
+  transitive closure over `Index.Funcs` + method decls (depth-capped),
+  folded into the existing spec topo sort — `var x = f()` waits on every
+  package-level name `f` transitively reads.
+
 ## (end)

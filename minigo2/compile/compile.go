@@ -242,6 +242,21 @@ func Func(fn *runtime.Function) error {
 	return nil
 }
 
+// Expr compiles a bare AST expression into a chunk that pushes the
+// expression's value and returns. It backs the OpEvalAST migration bridge:
+// interpreter-visible fragments (e.g. future special-form bodies) are kept
+// as AST and compiled on first execution. The expression resolves names
+// like a function body does — locals don't exist, so free identifiers fall
+// through to package globals, imports, and builtins at run time.
+func Expr(pkg *runtime.Package, file *syntax.File, e ast.Expr) (*bytecode.Chunk, error) {
+	c := &compiler{pkg: pkg, file: file, fs: newFScope(nil), ch: &bytecode.Chunk{Name: "<eval>"}}
+	c.fs.pushBlock()
+	c.expr(e)
+	c.emit(bytecode.OpReturn, 1, 0, e.End())
+	c.ch.NLocals = c.fs.nlocals
+	return c.ch, nil
+}
+
 func countResults(fl *ast.FieldList) int {
 	n := 0
 	for _, f := range fl.List {
@@ -415,13 +430,15 @@ func (c *compiler) stmt(s ast.Stmt) {
 		c.branchStmt(st)
 	case *ast.EmptyStmt:
 	case *ast.DeferStmt:
-		c.trap(st.Pos(), "defer is not supported yet")
+		c.callStmt(st.Call, bytecode.OpDefer, st.Pos())
 	case *ast.GoStmt:
-		c.trap(st.Pos(), "go statement is not supported")
+		c.callStmt(st.Call, bytecode.OpGo, st.Pos())
 	case *ast.SendStmt:
-		c.trap(st.Pos(), "channel send is not supported")
+		c.expr(st.Chan)
+		c.expr(st.Value)
+		c.emit(bytecode.OpSend, 0, 0, st.Pos())
 	case *ast.SelectStmt:
-		c.trap(st.Pos(), "select is not supported")
+		c.selectStmt(st)
 	case *ast.LabeledStmt:
 		c.trap(st.Pos(), "labels/goto are not supported")
 	case *ast.TypeSwitchStmt:
@@ -440,6 +457,20 @@ func (c *compiler) bindLocal(name string, pos token.Pos, _ bool) {
 	}
 	slot := c.fs.declare(name)
 	c.emit(bytecode.OpNewLocal, slot, 0, pos)
+}
+
+// callStmt compiles `defer f(x)` / `go f(x)`: callee and args are
+// evaluated immediately; op (OpDefer/OpGo) decides when the call runs.
+func (c *compiler) callStmt(call *ast.CallExpr, op bytecode.Op, pos token.Pos) {
+	if call.Ellipsis.IsValid() {
+		c.trap(pos, "spread calls are not supported")
+		return
+	}
+	c.calleeExpr(call.Fun)
+	for _, a := range call.Args {
+		c.expr(a)
+	}
+	c.emit(op, len(call.Args), 0, pos)
 }
 
 // assign handles =, :=, and compound ops.
@@ -472,6 +503,31 @@ func (c *compiler) assign(st *ast.AssignStmt) {
 
 	n := len(st.Lhs)
 	if len(st.Rhs) == 1 && n > 1 {
+		if n == 2 {
+			switch x := st.Rhs[0].(type) {
+			case *ast.UnaryExpr:
+				// comma-ok receive: v, ok := <-ch
+				if x.Op == token.ARROW {
+					c.expr(x.X)
+					c.emit(bytecode.OpRecvOK, 0, 0, x.Pos())
+					c.emit3(bytecode.OpUnpack, 2, 0, 0, st.Pos())
+					for i := n - 1; i >= 0; i-- {
+						c.storeTarget(st.Lhs[i], isDefine)
+					}
+					return
+				}
+			case *ast.IndexExpr:
+				// comma-ok map access: v, ok := m[k]
+				c.expr(x.X)
+				c.expr(x.Index)
+				c.emit(bytecode.OpIndexOK, 0, 0, x.Pos())
+				c.emit3(bytecode.OpUnpack, 2, 0, 0, st.Pos())
+				for i := n - 1; i >= 0; i-- {
+					c.storeTarget(st.Lhs[i], isDefine)
+				}
+				return
+			}
+		}
 		c.expr(st.Rhs[0])
 		c.emit3(bytecode.OpUnpack, n, 0, 0, st.Pos())
 	} else {
@@ -680,6 +736,149 @@ func (c *compiler) switchStmt(st *ast.SwitchStmt) {
 	c.fs.popBlock()
 }
 
+// selectStmt compiles select using the single-threaded approximation. The
+// Go spec evaluates every case's channel operand (and a send case's value)
+// exactly once, in source order, on entry — so operands are evaluated into
+// temp slots first, then the first ready case runs. Send cases are ready on
+// an open channel (sends never block); receive cases are ready on a
+// non-empty or closed channel. With no ready case, `default` runs; without
+// a default the select would block forever, so it traps.
+func (c *compiler) selectStmt(st *ast.SelectStmt) {
+	c.fs.pushBlock()
+	cc := &ctrlCtx{}
+	c.ctrl = append(c.ctrl, cc)
+
+	type selCase struct {
+		body     []ast.Stmt
+		pos      token.Pos
+		chanSlot int
+		valSlot  int // send cases only
+		nrecv    int // receive arity: 0, 1, or 2
+		lhs      []ast.Expr
+		define   bool
+		send     bool
+	}
+	var cases []selCase
+	var defaultBody []ast.Stmt
+	tmp := 0
+	for _, s := range st.Body.List {
+		clause := s.(*ast.CommClause)
+		if clause.Comm == nil {
+			defaultBody = clause.Body
+			continue
+		}
+		sc := selCase{body: clause.Body, pos: clause.Pos(), chanSlot: -1, valSlot: -1}
+		switch comm := clause.Comm.(type) {
+		case *ast.SendStmt:
+			sc.send = true
+			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			tmp++
+			sc.valSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			tmp++
+			c.expr(comm.Chan)
+			c.emit(bytecode.OpSetLocal, sc.chanSlot, 0, comm.Chan.Pos())
+			c.expr(comm.Value)
+			c.emit(bytecode.OpSetLocal, sc.valSlot, 0, comm.Value.Pos())
+		default:
+			recv, lhs, define := selectRecv(clause.Comm)
+			if recv == nil {
+				c.trap(clause.Comm.Pos(), "unsupported select case %T", clause.Comm)
+				continue
+			}
+			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			tmp++
+			c.expr(recv.X)
+			c.emit(bytecode.OpSetLocal, sc.chanSlot, 0, recv.X.Pos())
+			sc.nrecv = len(lhs)
+			sc.lhs = lhs
+			sc.define = define
+		}
+		cases = append(cases, sc)
+	}
+
+	var exits []int
+	for _, sc := range cases {
+		if sc.send {
+			c.emit(bytecode.OpLocal, sc.chanSlot, 0, sc.pos)
+			c.emit(bytecode.OpLocal, sc.valSlot, 0, sc.pos)
+			c.emit(bytecode.OpSelSend, 0, 0, sc.pos)
+		} else {
+			c.emit(bytecode.OpLocal, sc.chanSlot, 0, sc.pos)
+			c.emit(bytecode.OpSelRecv, sc.nrecv, 0, sc.pos)
+		}
+		jReady := c.emit(bytecode.OpJumpTrue, 0, 0, sc.pos)
+		jNext := c.emit(bytecode.OpJump, 0, 0, sc.pos)
+		bodyStart := len(c.ch.Code)
+		c.patchA(jReady, bodyStart)
+		c.fs.pushBlock()
+		if !sc.send {
+			c.bindRecv(sc.lhs, sc.define)
+		}
+		for _, bs := range sc.body {
+			c.stmt(bs)
+		}
+		c.fs.popBlock()
+		exits = append(exits, c.emit(bytecode.OpJump, 0, 0, sc.pos))
+		c.patchA(jNext, len(c.ch.Code))
+	}
+	if defaultBody != nil {
+		for _, bs := range defaultBody {
+			c.stmt(bs)
+		}
+	} else {
+		c.trap(st.Pos(), "select would block (single-threaded approximation)")
+	}
+	end := len(c.ch.Code)
+	for _, j := range exits {
+		c.patchA(j, end)
+	}
+	for _, b := range cc.breaks {
+		c.patchA(b, end)
+	}
+	c.ctrl = c.ctrl[:len(c.ctrl)-1]
+	c.fs.popBlock()
+}
+
+// selectRecv extracts a receive case from a CommClause's comm statement:
+// `case <-ch`, `case v := <-ch`, `case v, ok := <-ch`, or assignments.
+func selectRecv(comm ast.Stmt) (recv *ast.UnaryExpr, lhs []ast.Expr, define bool) {
+	arrow := func(e ast.Expr) *ast.UnaryExpr {
+		if u, ok := e.(*ast.UnaryExpr); ok && u.Op == token.ARROW {
+			return u
+		}
+		return nil
+	}
+	switch s := comm.(type) {
+	case *ast.ExprStmt:
+		if u := arrow(s.X); u != nil {
+			return u, nil, false
+		}
+	case *ast.AssignStmt:
+		if len(s.Rhs) == 1 {
+			if u := arrow(s.Rhs[0]); u != nil {
+				return u, s.Lhs, s.Tok == token.DEFINE
+			}
+		}
+	}
+	return nil, nil, false
+}
+
+// bindRecv binds a select receive payload (already on the stack) to the
+// case's LHS: a Tuple for two binds, a plain value for one, discarded else.
+func (c *compiler) bindRecv(lhs []ast.Expr, define bool) {
+	switch len(lhs) {
+	case 0:
+		c.emit(bytecode.OpPop, 0, 0, 0)
+	case 1:
+		c.storeTarget(lhs[0], define)
+	default:
+		c.emit3(bytecode.OpUnpack, len(lhs), 0, 0, 0)
+		for i := len(lhs) - 1; i >= 0; i-- {
+			c.storeTarget(lhs[i], define)
+		}
+	}
+}
+
 func (c *compiler) returnStmt(st *ast.ReturnStmt) {
 	if len(st.Results) == 0 {
 		c.emit(bytecode.OpReturn, -1, 0, st.Pos()) // -1: use named result slots
@@ -824,7 +1023,8 @@ func (c *compiler) unary(x *ast.UnaryExpr) {
 		c.expr(x.X)
 		c.emit(bytecode.OpUnary, int(bytecode.UnXor), 0, x.Pos())
 	case token.ARROW:
-		c.trap(x.Pos(), "channel receive is not supported")
+		c.expr(x.X)
+		c.emit(bytecode.OpRecv, 0, 0, x.Pos())
 	default:
 		c.trap(x.Pos(), "unsupported unary %s", x.Op)
 	}
@@ -1033,7 +1233,7 @@ func (c *compiler) typeExpr(e ast.Expr) {
 	case *ast.Ellipsis:
 		c.typeExpr(t.Elt)
 	case *ast.ChanType:
-		c.trap(e.Pos(), "channel types are not supported")
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindChan}), 0, e.Pos())
 	default:
 		c.trap(e.Pos(), "unsupported type expression %T", e)
 	}
@@ -1114,10 +1314,9 @@ func literalValue(l *ast.BasicLit) (any, error) {
 // orderSpecs sorts var/const specs in dependency order (Go spec: package-level
 // initialization proceeds in dependency order, with source order as the
 // tie-breaker). A spec depends on every package-level name free in its value
-// expressions. Cyclic leftovers keep source order.
-//
-// Note: dependencies through function bodies (var x = f() where f reads
-// var y) are not yet analyzed — that needs transitive function deps.
+// expressions — including names reached transitively through function bodies
+// (`var x = f()` depends on every package-level var f reads, and on what
+// functions f calls read, recursively). Cyclic leftovers keep source order.
 func orderSpecs(ix *index.Index, reps []*index.Decl) []*index.Decl {
 	declared := map[string]bool{}
 	for n := range ix.Vars {
@@ -1127,9 +1326,52 @@ func orderSpecs(ix *index.Index, reps []*index.Decl) []*index.Decl {
 		declared[n] = true
 	}
 
-	specOf := map[*ast.ValueSpec]*index.Decl{}
-	for _, d := range reps {
-		specOf[d.Spec.(*ast.ValueSpec)] = d
+	// idents referenced by an AST (also covers nested func literals)
+	refs := func(n ast.Node, out map[string]bool) {
+		ast.Inspect(n, func(x ast.Node) bool {
+			if id, ok := x.(*ast.Ident); ok {
+				out[id.Name] = true
+			}
+			return true
+		})
+	}
+
+	// funcRefs(name) = package-level names reachable from the function's
+	// body, transitively through other functions/methods it references.
+	funcRefsCache := map[string]map[string]bool{}
+	var funcRefs func(name string, depth int) map[string]bool
+	funcRefs = func(name string, depth int) map[string]bool {
+		if depth > 16 {
+			return nil // recursion budget: cycles/deep chains keep source order
+		}
+		if r, ok := funcRefsCache[name]; ok {
+			return r
+		}
+		d := ix.Funcs[name]
+		if d == nil {
+			for _, td := range ix.Types {
+				if m := td.Methods[name]; m != nil {
+					d = m
+					break
+				}
+			}
+		}
+		if d == nil {
+			return nil
+		}
+		r := map[string]bool{}
+		refs(d.Func, r)
+		// follow function-valued references one level further
+		for n := range r {
+			if declared[n] {
+				continue
+			}
+			for m := range funcRefs(n, depth+1) {
+				r[m] = true
+			}
+		}
+		funcRefsCache[name] = r
+		return r
 	}
 
 	// spec -> specs it depends on (a spec provides its names)
@@ -1149,17 +1391,26 @@ func orderSpecs(ix *index.Index, reps []*index.Decl) []*index.Decl {
 			vals = d.Inherited
 		}
 		ds := map[*ast.ValueSpec]bool{}
+		names := map[string]bool{}
 		for _, e := range vals {
-			ast.Inspect(e, func(n ast.Node) bool {
-				id, ok := n.(*ast.Ident)
-				if !ok || !declared[id.Name] {
-					return true
-				}
-				if dep := providedBy[id.Name]; dep != nil && dep != vs {
-					ds[dep] = true
-				}
-				return true
-			})
+			refs(e, names)
+		}
+		// widen direct references through function bodies
+		for n := range names {
+			if declared[n] {
+				continue
+			}
+			for m := range funcRefs(n, 0) {
+				names[m] = true
+			}
+		}
+		for n := range names {
+			if !declared[n] {
+				continue
+			}
+			if dep := providedBy[n]; dep != nil && dep != vs {
+				ds[dep] = true
+			}
 		}
 		deps[vs] = ds
 	}

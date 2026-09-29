@@ -13,7 +13,7 @@ import (
 
 	"github.com/iancoleman/orderedmap"
 	"github.com/podhmo/flagstruct"
-	"github.com/podhmo/go-scan"
+	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/scanner"
 )
 

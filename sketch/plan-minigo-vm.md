@@ -740,4 +740,46 @@ These refine — not invalidate — the design above.
 so an imported package pays parse+index only until a member is touched —
 the expensive part is avoided, per the `lazyboom` panic test.
 
+## 21. Round-2 notes: what the first review pass exposed
+
+These came out of fixing the skeleton's first review findings; they are the
+parts the design text had left implicit.
+
+- **The `__init__` chunk mixes decls from several files, so "the current
+  file scope" cannot come from `Function.File`.** Recover the file per
+  instruction from `Pos` (`fset.PositionFor(pos).Filename` →
+  `Package.FileByName`). Every instruction already carries a decl position,
+  so imports in package-level initializer expressions resolve against the
+  correct file's import table with no extra machinery.
+- **Package init order is dependency order, not file order.** `var B = A+1`
+  before `var A = 1` must initialize `A` first. Phase-0 topologically sorts
+  specs by free identifiers in their value expressions; transitive deps
+  through function bodies (`var x = f()` where `f` reads `var y`) are a
+  documented gap — a full dep analysis needs func-body reachability.
+- **Imported vars are Cells; member access must unwrap them.** `pkg.X+1`
+  must not operate on the `*Cell` itself. The same unwrap rule applies to
+  `OpSetGlobal`/`OpGlobalRef` targets.
+- **`for i := range s` (single var) yields the key/index** — not the
+  element. Two-var form yields key+elem. Getting this backwards silently
+  changes semantics.
+- **`:=` inside the same block assigns rather than redeclaring.** `x, y :=`
+  where `x` exists in the innermost block must reuse `x`'s cell (closures
+  capturing `x` see the update); only names absent from the current block
+  get fresh slots.
+- **Struct values copy on every store** (param bind, `OpNewLocal`,
+  `OpSetLocal`, `OpNewGlobal`, `OpSetGlobal`). `b := a` without a copy
+  leaks mutations back through `a`. Slices/maps/pointers share as in Go.
+- **Pointer receivers need an addressable cell.** Method selection wraps a
+  non-cell receiver in a fresh `Cell` for `PtrRecv` methods; value
+  receivers get a struct copy. This distinction lives on
+  `runtime.Function.PtrRecv`, set from `*ast.StarExpr` in the receiver.
+- **Visibility enforcement point**: `selectMember` (the `x.y` path) checks
+  `token.IsExported` for `ImportRef`/`Package` bases — engine entry-point
+  calls intentionally bypass it (`main.main` is unexported).
+- **A directory `Run`/`Package` ref can read and execute any reachable Go
+  tree** — by design for a local interpreter, but it is a limitation for
+  embedding/hosted use. Candidate knob: `resolve` option
+  `AllowedRoots []string` checked in `LocateDir`. Left to the maintainer
+  (tracked in TODO.md).
+
 ## (end)

@@ -26,8 +26,10 @@ addressing three regrets of the v1 design:
 3. **Design/maintainability** — `Parse / Index / Resolve / Initialize /
    Compile / Execute` become fully separate phases in separate packages.
 
-`go-scan` is **not** a dependency of `minigo2`; it is an optional adapter
-behind the resolver interface.
+`go-scan` supplies the **default resolver** — the user has decided to reuse
+the existing lazy package locator rather than shell out to the go command.
+The `PackageResolver` interface still keeps it swappable, so `minigo2` can
+run without `go-scan` if a different backend is ever wanted.
 
 The redesign can be framed as three pillars:
 
@@ -313,28 +315,30 @@ type PackageMeta struct {
 }
 ```
 
-**Recommended default oracle: `go list -e -json -find <pkg>`** — `-find`
-identifies a package *without resolving dependencies* (documented behavior),
-so it stays within our laziness rules while giving us `Dir`, `Name`,
-`GoFiles`, `CgoFiles`, `Standard`, `Module`, **and correct
-GOOS/GOARCH/build-tag file selection** for free — the part a hand-rolled
-resolver gets wrong (`*_windows.go`, `//go:build`, cgo file lists).
+**Decided: the default backend is go-scan.** The user wants `minigo2` to
+reuse the existing lazy machinery rather than shell out to the go command.
+Two complementary levels are available from `go-scan`:
 
-> ⚠️ **Decision needed** — repo rules currently ban `go list`. The ban's
-> rationale is avoiding eager dependency expansion, which `-find` does not
-> do; still, adopting it needs an explicit OK. Trade-off: requires the `go`
-> toolchain at runtime (fine for a dev-tooling interpreter; a consideration
-> for embedded use) and one process spawn per new package (cacheable).
+- **`locator`** — import path → directory, already implementing the whole
+  chain without `go list`: `go.work` → main `go.mod` (module path +
+  require/replace) → `GOROOT` → `GOMODCACHE/<mod>@<ver>` (module-cache
+  layout). It fills `PackageMeta{ImportPath, Name, Dir, Standard, Module}`;
+  file selection needs a build-tag filter (`//go:build`, `_GOOS`/`_GOARCH`
+  suffixes) added on top — the one thing the go command would do for free.
+- **`goscan.Scanner`** — symbol-targeted scanning
+  (`FindSymbolInPackage`): an even *lazier* option where `Materialize`
+  parses only the files needed to find a requested symbol instead of every
+  file in the package. Package-granular parsing is the baseline; the
+  scanner path is the upgrade for very large packages.
 
-Backends behind the interface:
+Alternative backends behind the same interface:
 
-- `resolve/go_command.go` — `go list -find` oracle (recommended default)
-- `resolve/gomod.go` — pure-Go fallback: `go.work` → go.mod module path +
-  require/replace via `x/mod/modfile` → `vendor/modules.txt` → `GOROOT/src`
-  → `GOMODCACHE/<mod>@<ver>`; portable but must approximate build-tag file
-  selection
-- `resolve/goscan_adapter.go` — optional `go-scan` `locator` adapter (the
-  ideas/tests transfer; the dependency does not)
+- `resolve/go_command.go` — `go list -e -json -find <pkg>` oracle
+  (identifies a package *without resolving dependencies*; the most accurate
+  build-tag file selection, but repo rules ban `go list` and it needs the
+  go toolchain at runtime — keep as opt-in only)
+- `resolve/gomod.go` — a from-scratch pure-Go fallback using
+  `x/mod/modfile`; only needed if `minigo2` ever leaves the go-scan repo
 
 ## 11. Packages Come From Providers, Not From the Loader
 
@@ -560,7 +564,7 @@ engine.NewSession()                      // fresh globals for isolation
 minigo2/
   cmd/minigo/            CLI: run --entry, repl, gen-intrinsics
   syntax/                parse.go — go/parser wrapper (syntax.File wraps *ast.File)
-  resolve/               resolver.go, go_command.go, gomod.go, goscan.go
+  resolve/               resolver.go, goscan.go (default), go_command.go (opt-in)
   loader/                package.go, import.go, lifecycle.go
   index/                 package_index.go, declarations.go
   types/                 type.go, typeref.go, methodset.go
@@ -595,9 +599,11 @@ Every step after the entry is demand-driven.
   Index-resolved locals still beat tree-walking.
 - **No compile-time name errors** — misspelled globals trap at runtime;
   positional stack traces mitigate.
-- **`go list -find` needs the go toolchain** at runtime + process spawns
-  (cacheable). The pure-Go resolver avoids both but approximates build-tag
-  file selection. Flagged for decision.
+- **The go-scan resolver approximates build-tag file selection** —
+  `//go:build` constraints and `_GOOS`/`_GOARCH` suffixes must be filtered
+  in `resolve/` (using `go/build/constraint`, pure Go, no `go list`). The
+  `go list -find` backend remains as an opt-in for environments where
+  exactness matters more than the toolchain dependency.
 - **Generics inference stays heuristic** (no `go/types`) — explicit type args
   first, inference next, unhandled patterns `TRAP`.
 - **Stdlib interpretation is partial by nature** — runtime/unsafe/assembly
@@ -656,15 +662,14 @@ solid MVP (through 7) ≈ 2–3 sessions; conformance is ongoing.
 
 ## 19. Open Questions
 
-1. **`go list -e -json -find` as default resolver?** Conflicts with the repo's
-   `go list` ban (the ban's eager-loading rationale doesn't apply to `-find`,
-   but it needs explicit approval). Alternative: pure-Go resolver default +
-   go-command opt-in.
+1. ~~**Resolver backend**~~ — **decided**: go-scan (`locator`, optionally
+   `Scanner` for symbol-level laziness). `go list -find` is demoted to an
+   opt-in backend; the `go list` ban stands.
 2. **Location**: `minigo2/` inside go-scan (side-by-side, then swap) vs a new
-   standalone repo/module? In-repo `minigo2/` keeps CI/tooling; recommended.
-3. **Reuse `locator`** as the pure-Go resolver backend via adapter, or write
-   `resolve/gomod.go` fresh? (locator works but has a hand-rolled go.mod
-   parser; `x/mod/modfile` is cleaner.)
+   standalone repo/module? Using go-scan as default nudges toward in-repo
+   `minigo2/` — recommended.
+3. ~~**locator vs fresh `resolve/gomod.go`**~~ — **decided**: reuse
+   `locator`/`Scanner` behind `PackageResolver`.
 4. **GoCompatibleInit** — needed in v2.0 or defer until requested?
 5. **`OP_EVAL_AST` migration bridge** — port constructs incrementally from
    the v1 evaluator (faster MVP) vs clean-slate VM (smaller final code)?

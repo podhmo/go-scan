@@ -395,9 +395,11 @@ func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
 			return mv
 		}
 	}
-	// 3. dot imports (indexed, not initialized; exported names only)
+	// 3. dot imports: index without initializing, then initialize the package
+	// only when the requested name exists there.
 	if file != nil && token.IsExported(name) {
-		for _, ref := range pkg.Scopes[file] {
+		var imported *runtime.Package
+		for _, ref := range pkg.Imports[file] {
 			if ref.Alias != "." {
 				continue
 			}
@@ -405,9 +407,29 @@ func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
 			if err != nil {
 				f.trap("dot import %s: %s", ref.Path, err)
 			}
-			if gv, ok := p.Globals.Get(name); ok {
-				return gv
+			_, inGlobals := p.Globals.Get(name)
+			inIndex := false
+			if p.Index != nil {
+				_, inIndex = lookupDecl(p, name)
 			}
+			if !inGlobals && !inIndex {
+				continue
+			}
+			if imported != nil {
+				f.trap("ambiguous dot-imported name: %s", name)
+			}
+			imported = p
+		}
+		if imported != nil {
+			mv, err := imported.Member(name, v.H.Materialize)
+			if err != nil {
+				f.trap("dot import %s: %s", imported.Path, err)
+			}
+			if c, isCell := mv.(*runtime.Cell); isCell {
+				return c.Elem
+			}
+			imported.Globals.Set(name, mv)
+			return mv
 		}
 	}
 	// 4. builtins

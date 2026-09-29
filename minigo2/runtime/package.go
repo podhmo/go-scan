@@ -88,9 +88,10 @@ type Package struct {
 
 	Globals *Env // values populated at Initialize / on member access
 
-	// Scopes maps each parsed file to its file-scope import refs, keyed by
-	// local name (alias or basename).
+	// Scopes maps each parsed file's named import refs by local name.
 	Scopes map[*syntax.File]map[string]*ImportRef
+	// Imports retains every import in source order, including dot and blank imports.
+	Imports map[*syntax.File][]*ImportRef
 
 	// FileByName maps an absolute source path to its file — used to recover
 	// per-declaration file context from instruction positions (the synthetic

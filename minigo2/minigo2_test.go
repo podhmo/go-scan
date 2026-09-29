@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/minigo2"
 	"github.com/podhmo/go-scan/minigo2/runtime"
 )
@@ -69,6 +70,34 @@ func TestLazyImport(t *testing.T) {
 	_, err := e.Run(context.Background(), "./testdata/lazyuser", "Bad")
 	if err == nil || !strings.Contains(err.Error(), "BOOM") {
 		t.Fatalf("Bad: expected BOOM panic, got %v", err)
+	}
+}
+
+func TestBlankImportInitializes(t *testing.T) {
+	e := newEngine(t)
+	_, err := e.Run(context.Background(), "./testdata/blankimport", "OK")
+	if err == nil || !strings.Contains(err.Error(), "BOOM") {
+		t.Fatalf("blank import must initialize before entry: %v", err)
+	}
+}
+
+func TestDotImports(t *testing.T) {
+	e := newEngine(t)
+	for _, tc := range []struct {
+		name string
+		want runtime.Value
+	}{
+		{name: "Greeting", want: "hi x"},
+		{name: "Number", want: int64(11)},
+	} {
+		got := run(t, e, "./testdata/dotimports", tc.name)
+		if diff := cmp.Diff(tc.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", tc.name, diff)
+		}
+	}
+	_, err := e.Run(context.Background(), "./testdata/dotimports", "TouchBoom")
+	if err == nil || !strings.Contains(err.Error(), "BOOM") {
+		t.Fatalf("dot-imported member must initialize its package: %v", err)
 	}
 }
 

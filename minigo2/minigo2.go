@@ -192,6 +192,7 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 		Fset:    e.fset,
 		Globals: runtime.NewEnv(),
 		Scopes:  map[*syntax.File]map[string]*runtime.ImportRef{},
+		Imports: map[*syntax.File][]*runtime.ImportRef{},
 	}
 	// publish before parsing to make import cycles convergent
 	e.mu.Lock()
@@ -228,10 +229,14 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 	for _, sf := range files {
 		m := map[string]*runtime.ImportRef{}
 		for _, imp := range sf.Imports {
-			m[imp.LocalName()] = &runtime.ImportRef{
+			ref := &runtime.ImportRef{
 				Path:  imp.Path,
 				Alias: imp.Alias,
 				Load:  func(path string) (*runtime.Package, error) { return e.loadPath(context.Background(), path) },
+			}
+			p.Imports[sf] = append(p.Imports[sf], ref)
+			if imp.Alias != "_" && imp.Alias != "." {
+				m[imp.LocalName()] = ref
 			}
 		}
 		p.Scopes[sf] = m
@@ -243,6 +248,20 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 
 // bootstrap runs the synthetic __init__ function of a package.
 func (e *Engine) bootstrap(p *runtime.Package) error {
+	for _, sf := range p.Files {
+		for _, ref := range p.Imports[sf] {
+			if ref.Alias != "_" {
+				continue
+			}
+			imported, err := ref.Materialize()
+			if err != nil {
+				return fmt.Errorf("initialize blank import %q: %w", ref.Path, err)
+			}
+			if err := imported.EnsureReady(); err != nil {
+				return fmt.Errorf("initialize blank import %q: %w", ref.Path, err)
+			}
+		}
+	}
 	ch, err := compile.InitFunc(p)
 	if err != nil {
 		return err

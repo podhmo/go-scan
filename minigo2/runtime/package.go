@@ -103,6 +103,10 @@ type Package struct {
 	// Bootstrap builds and runs the package initializer (var/const decls +
 	// init() funcs). Injected by the engine; called exactly once.
 	Bootstrap func(*Package) error
+
+	// LazyInit answers type/signature queries (functions and type decls)
+	// without running initializers — set by the engine's InitMode.
+	LazyInit bool
 }
 
 // EnsureReady advances the package through Initialize to Ready.
@@ -128,6 +132,27 @@ func (p *Package) EnsureReady() error {
 // index (functions/types are materialized on demand via materialize).
 // materialize is engine-provided and builds *Function / *TypeDef objects.
 func (p *Package) Member(name string, materialize func(*Package, *index.Decl) (Value, error)) (Value, error) {
+	// A failed initialization must not go unnoticed: globals registered
+	// before the failure are partial state, so surface the error instead.
+	if p.State == Failed {
+		if p.initErr != nil {
+			return nil, p.initErr
+		}
+		return nil, fmt.Errorf("package %s failed to load", p.Name)
+	}
+	if v, ok := p.Globals.Get(name); ok {
+		return v, nil
+	}
+	if p.Index != nil && p.LazyInit {
+		// functions and type decls are queryable without running
+		// initializers; var/const values require the package to be Ready
+		if d, ok := memberDecl(p.Index, name); ok && (d.Kind == index.FuncDecl || d.Kind == index.TypeDecl) {
+			if materialize == nil {
+				return nil, fmt.Errorf("no materializer for %s.%s", p.Name, name)
+			}
+			return materialize(p, d)
+		}
+	}
 	if err := p.EnsureReady(); err != nil {
 		return nil, err
 	}
@@ -135,18 +160,25 @@ func (p *Package) Member(name string, materialize func(*Package, *index.Decl) (V
 		return v, nil
 	}
 	if p.Index != nil {
-		if d, ok := p.Index.Funcs[name]; ok {
-			return materialize(p, d)
-		}
-		if d, ok := p.Index.Types[name]; ok && d.Decl != nil {
-			return materialize(p, d.Decl)
-		}
-		if d, ok := p.Index.Consts[name]; ok {
-			return materialize(p, d)
-		}
-		if d, ok := p.Index.Vars[name]; ok {
+		if d, ok := memberDecl(p.Index, name); ok {
 			return materialize(p, d)
 		}
 	}
 	return nil, fmt.Errorf("undefined: %s.%s", p.Name, name)
+}
+
+func memberDecl(ix *index.Index, name string) (*index.Decl, bool) {
+	if d, ok := ix.Funcs[name]; ok {
+		return d, true
+	}
+	if d, ok := ix.Types[name]; ok && d.Decl != nil {
+		return d.Decl, true
+	}
+	if d, ok := ix.Consts[name]; ok {
+		return d, true
+	}
+	if d, ok := ix.Vars[name]; ok {
+		return d, true
+	}
+	return nil, false
 }

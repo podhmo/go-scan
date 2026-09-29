@@ -34,6 +34,7 @@ type Engine struct {
 
 	builtins *runtime.Env
 	vmm      *vm.VM
+	initMode InitMode
 
 	mu    sync.Mutex
 	pkgs  map[string]*runtime.Package // by import path
@@ -43,9 +44,35 @@ type Engine struct {
 // Option configures an Engine.
 type Option func(*Engine)
 
+// InitMode selects how eagerly packages run their initializers.
+type InitMode int
+
+const (
+	// GoCompatibleInit runs a package's initializers on first member access
+	// (the default): importing or calling into a package behaves like Go —
+	// vars/consts and init() have run before the member is used.
+	GoCompatibleInit InitMode = iota
+	// LazyInit answers member queries without running initializers: types
+	// and function signatures materialize while var/const/init side effects
+	// stay pending. Useful when a tool wants names/types without execution.
+	LazyInit
+)
+
 // WithBuildConfig sets GOOS/GOARCH/build tags for file selection.
 func WithBuildConfig(cfg resolve.BuildConfig) Option {
 	return func(e *Engine) { e.cfg = cfg }
+}
+
+// WithInitMode sets how eagerly package initializers run (see InitMode).
+func WithInitMode(m InitMode) Option {
+	return func(e *Engine) { e.initMode = m }
+}
+
+// WithAllowedRoots restricts the directories the resolver may hand out:
+// entry points and located packages must live inside one of the roots
+// (see resolve.BuildConfig.AllowedRoots).
+func WithAllowedRoots(roots ...string) Option {
+	return func(e *Engine) { e.cfg.AllowedRoots = roots }
 }
 
 // NewEngine creates an engine whose default resolver is go-scan
@@ -71,7 +98,9 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 	e.vmm = &vm.VM{H: vm.Hooks{
 		Builtin:     e.builtins.Get,
 		Materialize: e.materialize,
+		CompileExpr: compile.Expr,
 	}}
+	e.installStdlib()
 	return e
 }
 
@@ -185,14 +214,15 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 	e.mu.Unlock()
 
 	p := &runtime.Package{
-		Path:    meta.ImportPath,
-		Name:    meta.Name,
-		State:   runtime.Parsed,
-		Dir:     meta.Dir,
-		Fset:    e.fset,
-		Globals: runtime.NewEnv(),
-		Scopes:  map[*syntax.File]map[string]*runtime.ImportRef{},
-		Imports: map[*syntax.File][]*runtime.ImportRef{},
+		Path:     meta.ImportPath,
+		Name:     meta.Name,
+		State:    runtime.Parsed,
+		Dir:      meta.Dir,
+		Fset:     e.fset,
+		LazyInit: e.initMode == LazyInit,
+		Globals:  runtime.NewEnv(),
+		Scopes:   map[*syntax.File]map[string]*runtime.ImportRef{},
+		Imports:  map[*syntax.File][]*runtime.ImportRef{},
 	}
 	// publish before parsing to make import cycles convergent
 	e.mu.Lock()
@@ -272,15 +302,40 @@ func (e *Engine) bootstrap(p *runtime.Package) error {
 	return err
 }
 
-// bindCompiles attaches the compile hook to every *runtime.Function found in
-// chunk constants (init functions, function literals).
+// bindCompiles attaches the compile hook to *runtime.Function constants
+// that still need lazy compilation. Function-literal protos carry their
+// chunk already (eager compile) and have no Decl — hooking them would
+// re-run compile.Func on a nil Decl.
 func bindCompiles(p *runtime.Package, ch *bytecode.Chunk) {
 	for _, cv := range ch.Consts {
 		if fn, ok := cv.(*runtime.Function); ok {
 			fn.Pkg = p
-			fn.Compile = compile.Func
+			if fn.Decl != nil && fn.Chunk == nil {
+				fn.Compile = compile.Func
+			}
 		}
 	}
+}
+
+// EvalExpr evaluates a single parsed expression in a package's scope — the
+// OP_EVAL_AST migration bridge: the fragment travels as AST inside a chunk
+// and compiles (compile.Expr) on first execution, so callers that hold
+// interpreter-visible AST fragments can run them under the VM without
+// committing to bytecode at build time. Names resolve exactly like inside
+// a function body of file: package globals, that file's imports, builtins.
+func (e *Engine) EvalExpr(ctx context.Context, pkg *runtime.Package, file *syntax.File, expr ast.Expr) (runtime.Value, error) {
+	if err := pkg.EnsureReady(); err != nil {
+		return nil, err
+	}
+	ch := &bytecode.Chunk{
+		Name:   "<eval>",
+		Consts: []any{&bytecode.ASTFragment{Expr: expr, File: file}},
+		Code: []bytecode.Instruction{
+			{Op: bytecode.OpEvalAST, A: 0, C: -1},
+			{Op: bytecode.OpReturn, A: 1, C: -1},
+		},
+	}
+	return e.vmm.Call(&runtime.Function{Pkg: pkg, File: file, Name: "<eval>", Chunk: ch}, nil)
 }
 
 // materialize builds the runtime value for one decl on first access.

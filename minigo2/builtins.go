@@ -68,6 +68,9 @@ func builtins() *runtime.Env {
 			return &runtime.Slice{Elems: el}, nil
 		case runtime.KindMap:
 			return &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}}, nil
+		case runtime.KindChan:
+			// buffer capacity is not modeled: sends never block
+			return &runtime.Chan{}, nil
 		default:
 			return nil, fmt.Errorf("make of kind %d", td.Kind)
 		}
@@ -75,8 +78,27 @@ func builtins() *runtime.Env {
 	bf("new", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		return &runtime.Cell{Elem: runtime.NIL}, nil
 	})
+	bf("close", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+		ch, ok := args[0].(*runtime.Chan)
+		if !ok {
+			if c, isCell := args[0].(*runtime.Cell); isCell {
+				ch, ok = c.Elem.(*runtime.Chan)
+			}
+			if !ok {
+				return nil, fmt.Errorf("close of non-channel %T", args[0])
+			}
+		}
+		if ch.Closed {
+			panic(&runtime.Panic{Value: "close of closed channel"})
+		}
+		ch.Closed = true
+		return runtime.NIL, nil
+	})
 	bf("panic", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		panic(&runtime.Panic{Value: args[0]})
+	})
+	bf("recover", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+		return v.Recover(), nil
 	})
 	bf("print", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		for _, a := range args {
@@ -110,6 +132,8 @@ func lenOf(v runtime.Value) (runtime.Value, error) {
 		return int64(len(x.Elems)), nil
 	case *runtime.Map:
 		return int64(len(x.Pairs)), nil
+	case *runtime.Chan:
+		return int64(len(x.Elems)), nil
 	case string:
 		return int64(len(x)), nil
 	default:

@@ -16,6 +16,7 @@ import (
 	"go/constant"
 	"go/token"
 	"strconv"
+	"strings"
 
 	"github.com/podhmo/go-scan/minigo2/bytecode"
 	"github.com/podhmo/go-scan/minigo2/index"
@@ -25,19 +26,49 @@ import (
 
 // fscope is the static scope model of one function while compiling.
 type fscope struct {
-	parent  *fscope
-	blocks  []map[string]int // name -> local slot
-	nlocals int
-	upvals  []bytecode.UpvalDesc
-	upmap   map[string]int
+	parent    *fscope
+	blocks    []map[string]int // name -> local slot
+	blockIDs  []int            // unique id per open block, for goto scoping
+	nextID    int
+	typeDecls map[string]bool // names bound by local `type` decls (not vars)
+	nlocals   int
+	upvals    []bytecode.UpvalDesc
+	upmap     map[string]int
 }
 
 func newFScope(parent *fscope) *fscope {
-	return &fscope{parent: parent, upmap: map[string]int{}}
+	return &fscope{parent: parent, upmap: map[string]int{}, typeDecls: map[string]bool{}}
 }
 
-func (s *fscope) pushBlock() { s.blocks = append(s.blocks, map[string]int{}) }
-func (s *fscope) popBlock()  { s.blocks = s.blocks[:len(s.blocks)-1] }
+func (s *fscope) pushBlock() {
+	s.nextID++
+	s.blocks = append(s.blocks, map[string]int{})
+	s.blockIDs = append(s.blockIDs, s.nextID)
+}
+func (s *fscope) popBlock() {
+	s.blocks = s.blocks[:len(s.blocks)-1]
+	s.blockIDs = s.blockIDs[:len(s.blockIDs)-1]
+}
+
+// scopeSnapshot captures which blocks are open and which variable names
+// are visible — the two things Go's goto legality rules compare between
+// a goto and its target label.
+func (s *fscope) scopeSnapshot() (blocks map[int]bool, vars map[string]bool) {
+	blocks = map[int]bool{}
+	for _, id := range s.blockIDs {
+		blocks[id] = true
+	}
+	vars = map[string]bool{}
+	for _, b := range s.blocks {
+		for n := range b {
+			if s.typeDecls[n] || strings.HasPrefix(n, "$") {
+				continue // type decls and internal slots are not variable decls
+			}
+			vars[n] = true
+		}
+	}
+	return blocks, vars
+}
 
 func (s *fscope) declare(name string) int {
 	slot := s.nlocals
@@ -117,16 +148,20 @@ type ctrlCtx struct {
 // position). `goto L` resolves against it; `break L`/`continue L` find the
 // control construct it was attached to.
 type labelInfo struct {
-	name string
-	ip   int
+	name   string
+	ip     int
+	blocks map[int]bool    // blocks open at the label
+	vars   map[string]bool // variable names in scope at the label
 }
 
 // pendingGoto is a goto emitted before its label was defined; resolved at
 // the end of the function's compilation.
 type pendingGoto struct {
-	ins  int
-	name string
-	pos  token.Pos
+	ins    int
+	name   string
+	pos    token.Pos
+	blocks map[int]bool    // blocks open at the goto
+	vars   map[string]bool // variable names in scope at the goto
 }
 
 // compiler holds the state for one chunk under construction.
@@ -138,6 +173,7 @@ type compiler struct {
 	ctrl []*ctrlCtx
 
 	binds         map[string]runtime.Value // generic instantiation: type-param name -> *TypeDef
+	results       []ast.Expr               // declared result types, parallel to NamedSlots order
 	labels        map[string]*labelInfo
 	pendingGotos  []pendingGoto
 	pendingLabels []*labelInfo // labels waiting to be claimed by a construct
@@ -220,14 +256,22 @@ func Func(fn *runtime.Function) error {
 
 	// Params (and the receiver for methods) are pre-bound by the VM into
 	// slots 0..NParams-1; they are only declared here, not re-created.
+	var coerces []paramCoerce // declared-type coercions for the prologue
 	nparams := 0
 	if fn.Decl.Recv != nil {
 		recv := "$recv"
-		if len(fn.Decl.Recv.List) > 0 && len(fn.Decl.Recv.List[0].Names) > 0 {
-			recv = fn.Decl.Recv.List[0].Names[0].Name
+		var recvType ast.Expr
+		if len(fn.Decl.Recv.List) > 0 {
+			if len(fn.Decl.Recv.List[0].Names) > 0 {
+				recv = fn.Decl.Recv.List[0].Names[0].Name
+			}
+			recvType = fn.Decl.Recv.List[0].Type
 		}
-		c.fs.declare(recv)
+		slot := c.fs.declare(recv)
 		nparams++
+		if recvType != nil {
+			coerces = append(coerces, paramCoerce{slot: slot, typ: recvType})
+		}
 	}
 	if fn.Decl.Type.Params != nil {
 		for _, field := range fn.Decl.Type.Params.List {
@@ -236,7 +280,8 @@ func Func(fn *runtime.Function) error {
 				names = []*ast.Ident{{Name: fmt.Sprintf("$arg%d", nparams)}}
 			}
 			for _, n := range names {
-				c.fs.declare(n.Name)
+				slot := c.fs.declare(n.Name)
+				coerces = append(coerces, paramCoerce{slot: slot, typ: field.Type})
 				nparams++
 			}
 			if _, ok := field.Type.(*ast.Ellipsis); ok {
@@ -245,8 +290,13 @@ func Func(fn *runtime.Function) error {
 		}
 	}
 	c.ch.NParams = nparams
+	// declared param types coerce the bound args (e.g. a typed nil arg
+	// crossing into an interface-typed param boxes it, like Go).
+	c.emitParamCoerces(coerces)
 
-	// Named results are local cells initialized to nil.
+	// Named results are local cells initialized to their declared zero
+	// (var-style coerce) so a bare `return` under `func f() (r *T)`
+	// yields a typed nil, not untyped NIL.
 	nresults := 0
 	if fn.Decl.Type.Results != nil {
 		nresults = countResults(fn.Decl.Type.Results)
@@ -256,10 +306,12 @@ func Func(fn *runtime.Function) error {
 				c.ch.NamedSlots = append(c.ch.NamedSlots, slot)
 				c.emit(bytecode.OpNil, 0, 0, n.Pos())
 				c.emit(bytecode.OpNewLocal, slot, 0, n.Pos())
+				c.emitTypeCoerce(slot, field.Type, n.Pos())
 			}
 		}
 	}
 	c.ch.NResults = nresults
+	c.results = resultTypes(fn.Decl.Type.Results)
 
 	c.stmt(fn.Decl.Body)
 	c.resolveGotos()
@@ -310,6 +362,47 @@ func ExprScoped(pkg *runtime.Package, file *syntax.File, e ast.Expr, locals, upv
 	c.emit(bytecode.OpReturn, 1, 0, e.End())
 	c.ch.NLocals = c.fs.nlocals
 	return c.ch, nil
+}
+
+// paramCoerce is a slot + declared-type pair for the function prologue.
+type paramCoerce struct {
+	slot int
+	typ  ast.Expr
+}
+
+// emitParamCoerces emits typeExpr+OpCoerce for each declared parameter.
+func (c *compiler) emitParamCoerces(pcs []paramCoerce) {
+	for _, pc := range pcs {
+		c.emitTypeCoerce(pc.slot, pc.typ, token.NoPos)
+	}
+}
+
+// emitTypeCoerce emits typeExpr(t) + OpCoerce(slot). The type expr keeps
+// the compiler total: an unresolvable type name traps only when reached.
+func (c *compiler) emitTypeCoerce(slot int, t ast.Expr, pos token.Pos) {
+	if t == nil {
+		return
+	}
+	c.typeExpr(t)
+	c.emit(bytecode.OpCoerce, slot, 0, pos)
+}
+
+// resultTypes flattens the declared result types, one per result value.
+func resultTypes(fl *ast.FieldList) []ast.Expr {
+	if fl == nil {
+		return nil
+	}
+	var out []ast.Expr
+	for _, f := range fl.List {
+		n := len(f.Names)
+		if n == 0 {
+			n = 1
+		}
+		for i := 0; i < n; i++ {
+			out = append(out, f.Type)
+		}
+	}
+	return out
 }
 
 func countResults(fl *ast.FieldList) int {
@@ -387,22 +480,34 @@ func (c *compiler) valueSpec(vs *ast.ValueSpec, d *index.Decl) {
 	if isConst && len(vals) == 0 {
 		vals = d.Inherited
 	}
+	// `var x T` at package level gets the same declared-type coerce as a
+	// local: zero values materialize (var s Sq -> Struct), typed nils too.
+	coerceG := func(name *ast.Ident) {
+		if isConst || vs.Type == nil {
+			return
+		}
+		c.typeExpr(vs.Type)
+		c.emit(bytecode.OpCoerceGlobal, c.nameIdx(name.Name), 0, name.Pos())
+	}
 	switch {
 	case len(vals) == 0:
 		for _, name := range vs.Names {
 			c.emit(bytecode.OpNil, 0, 0, name.Pos())
 			bind(name)
+			coerceG(name)
 		}
 	case len(vals) == 1 && len(vs.Names) > 1:
 		c.expr(vals[0])
 		c.emit3(bytecode.OpUnpack, len(vs.Names), 0, 0, vs.Pos())
 		for i := len(vs.Names) - 1; i >= 0; i-- {
 			bind(vs.Names[i])
+			coerceG(vs.Names[i])
 		}
 	default:
 		for i, name := range vs.Names {
 			c.expr(vals[i])
 			bind(name)
+			coerceG(name)
 		}
 	}
 }
@@ -427,11 +532,18 @@ func (c *compiler) stmt(s ast.Stmt) {
 			case token.VAR, token.CONST:
 				vs := spec.(*ast.ValueSpec)
 				isConst := gd.Tok == token.CONST
+				// `var x T` binds a typed zero / typed nil via OpCoerce.
+				coerce := func(name *ast.Ident, slot int) {
+					if isConst || vs.Type == nil || slot < 0 {
+						return
+					}
+					c.emitTypeCoerce(slot, vs.Type, name.Pos())
+				}
 				if len(vs.Values) == 1 && len(vs.Names) > 1 {
 					c.expr(vs.Values[0])
 					c.emit3(bytecode.OpUnpack, len(vs.Names), 0, 0, vs.Pos())
 					for i := len(vs.Names) - 1; i >= 0; i-- {
-						c.bindLocal(vs.Names[i].Name, vs.Names[i].Pos(), isConst)
+						coerce(vs.Names[i], c.bindLocal(vs.Names[i].Name, vs.Names[i].Pos(), isConst))
 					}
 					break
 				}
@@ -441,10 +553,12 @@ func (c *compiler) stmt(s ast.Stmt) {
 					} else {
 						c.expr(vs.Values[i])
 					}
-					c.bindLocal(name.Name, name.Pos(), isConst)
+					coerce(name, c.bindLocal(name.Name, name.Pos(), isConst))
 				}
 			case token.TYPE:
-				// local type declarations are rare; treat as no-op for MVP
+				// `type S struct{...}` inside a function binds the TypeDef as a
+				// local value: S{...} literals, var x S, x.(S) all resolve it.
+				c.localTypeDecl(spec.(*ast.TypeSpec))
 			case token.IMPORT:
 				c.trap(st.Pos(), "import inside function is not valid Go")
 			}
@@ -530,13 +644,89 @@ func (c *compiler) stmt(s ast.Stmt) {
 	}
 }
 
-func (c *compiler) bindLocal(name string, pos token.Pos, _ bool) {
+func (c *compiler) bindLocal(name string, pos token.Pos, _ bool) int {
 	if name == "_" {
 		c.emit(bytecode.OpPop, 0, 0, pos)
-		return
+		return -1
 	}
 	slot := c.fs.declare(name)
 	c.emit(bytecode.OpNewLocal, slot, 0, pos)
+	return slot
+}
+
+// localTypeDecl binds a `type` declaration inside a function body: the
+// typedef is a compile-time const pushed as the local's value, so name
+// resolution, composite literals, conversions and asserts all see it.
+// Local types carry no methods (Go forbids methods on them anyway).
+func (c *compiler) localTypeDecl(ts *ast.TypeSpec) {
+	td := &runtime.TypeDef{
+		Pkg: c.pkg, File: c.file, Name: ts.Name.Name,
+		Spec: ts, Anon: ts.Type,
+	}
+	if ts.TypeParams != nil {
+		for _, tp := range ts.TypeParams.List {
+			for _, n := range tp.Names {
+				td.TParams = append(td.TParams, n.Name)
+				td.TConstraints = append(td.TConstraints, tp.Type)
+			}
+		}
+	}
+	switch t := ts.Type.(type) {
+	case *ast.StructType:
+		td.Kind = runtime.KindStruct
+		for _, fld := range t.Fields.List {
+			tag := ""
+			if fld.Tag != nil {
+				tag, _ = strconv.Unquote(fld.Tag.Value)
+			}
+			if len(fld.Names) > 0 {
+				for _, n := range fld.Names {
+					td.Fields = append(td.Fields, n.Name)
+					if tag != "" {
+						if td.FTags == nil {
+							td.FTags = map[string]string{}
+						}
+						td.FTags[n.Name] = tag
+					}
+				}
+			} else {
+				// anonymous field: embed by type name
+				td.EmbedSpecs = append(td.EmbedSpecs, fld.Type)
+				td.EmbedIdx = append(td.EmbedIdx, len(td.Fields))
+				td.Fields = append(td.Fields, embedFieldName(fld.Type))
+			}
+		}
+	case *ast.InterfaceType:
+		td.Kind = runtime.KindInterface
+		for _, m := range t.Methods.List {
+			if len(m.Names) == 0 {
+				td.IEmbeds = append(td.IEmbeds, m.Type)
+				continue
+			}
+			for _, n := range m.Names {
+				td.MReqs = append(td.MReqs, n.Name)
+			}
+		}
+	case *ast.ArrayType:
+		td.Kind = runtime.KindSlice
+	case *ast.MapType:
+		td.Kind = runtime.KindMap
+	case *ast.FuncType:
+		td.Kind = runtime.KindFunc
+	case *ast.ChanType:
+		td.Kind = runtime.KindChan
+	case *ast.StarExpr:
+		td.Kind = runtime.KindPointer
+	default:
+		td.Kind = runtime.KindNamedBasic
+	}
+	if ts.Assign.IsValid() {
+		td.Kind = runtime.KindAlias
+	}
+	c.fs.typeDecls[ts.Name.Name] = true
+	c.emit(bytecode.OpConst, c.constIdx(td), 0, ts.Pos())
+	slot := c.fs.declare(ts.Name.Name)
+	c.emit(bytecode.OpNewLocal, slot, 0, ts.Pos())
 }
 
 // callStmt compiles `defer f(x)` / `go f(x)`: callee and args are
@@ -1018,11 +1208,24 @@ func (c *compiler) bindRecv(lhs []ast.Expr, define bool) {
 
 func (c *compiler) returnStmt(st *ast.ReturnStmt) {
 	if len(st.Results) == 0 {
+		// bare return: coerce named slots to their declared types so
+		// `return` under `func f() (r *T)` yields a typed nil.
+		for i, slot := range c.ch.NamedSlots {
+			if i < len(c.results) && c.results[i] != nil {
+				c.emitTypeCoerce(slot, c.results[i], st.Pos())
+			}
+		}
 		c.emit(bytecode.OpReturn, -1, 0, st.Pos()) // -1: use named result slots
 		return
 	}
-	for _, r := range st.Results {
+	for i, r := range st.Results {
 		c.expr(r)
+		// `return e` coerces e to the declared result type — `return nil`
+		// under a *T result yields a typed nil, under any an IfaceNil.
+		if i < len(c.results) && c.results[i] != nil {
+			c.typeExpr(c.results[i])
+			c.emit(bytecode.OpCoerceTop, 0, 0, r.Pos())
+		}
 	}
 	c.emit(bytecode.OpReturn, len(st.Results), 0, st.Pos())
 }
@@ -1060,14 +1263,21 @@ func (c *compiler) branchStmt(st *ast.BranchStmt) {
 			}
 			c.trap(st.Pos(), "continue label %s is not defined", st.Label.Name)
 		case token.GOTO:
+			gb, gv := c.fs.scopeSnapshot()
 			if li, ok := c.labels[st.Label.Name]; ok {
+				if why := gotoViolation(li, gb, gv); why != "" {
+					c.trap(st.Pos(), "%s", why)
+					return
+				}
 				c.emit(bytecode.OpJump, li.ip, 0, st.Pos())
 				return
 			}
 			c.pendingGotos = append(c.pendingGotos, pendingGoto{
-				ins:  c.emit(bytecode.OpJump, 0, 0, st.Pos()),
-				name: st.Label.Name,
-				pos:  st.Pos(),
+				ins:    c.emit(bytecode.OpJump, 0, 0, st.Pos()),
+				name:   st.Label.Name,
+				pos:    st.Pos(),
+				blocks: gb,
+				vars:   gv,
 			})
 		case token.FALLTHROUGH:
 			c.trap(st.Pos(), "fallthrough cannot have a label")
@@ -1109,7 +1319,8 @@ func (c *compiler) branchStmt(st *ast.BranchStmt) {
 // directly wrapping a control construct (for/range/switch/select/type
 // switch) is claimed by that construct so `break L`/`continue L` work.
 func (c *compiler) labeledStmt(st *ast.LabeledStmt) {
-	li := &labelInfo{name: st.Label.Name, ip: len(c.ch.Code)}
+	lb, lv := c.fs.scopeSnapshot()
+	li := &labelInfo{name: st.Label.Name, ip: len(c.ch.Code), blocks: lb, vars: lv}
 	if _, dup := c.labels[st.Label.Name]; dup {
 		c.trap(st.Pos(), "label %s redeclared", st.Label.Name)
 	}
@@ -1143,6 +1354,11 @@ func (c *compiler) takeLabels() []string {
 func (c *compiler) resolveGotos() {
 	for _, pg := range c.pendingGotos {
 		if li, ok := c.labels[pg.name]; ok {
+			if why := gotoViolation(li, pg.blocks, pg.vars); why != "" {
+				ti := c.trap(pg.pos, "%s", why)
+				c.patchA(pg.ins, ti)
+				continue
+			}
 			c.patchA(pg.ins, li.ip)
 			continue
 		}
@@ -1150,6 +1366,25 @@ func (c *compiler) resolveGotos() {
 		c.patchA(pg.ins, ti)
 	}
 	c.pendingGotos = nil
+}
+
+// gotoViolation reports why `goto L` is illegal given the scope snapshots
+// taken at the goto and at the label. Go forbids jumping INTO a block
+// (a label's open blocks must all be open at the goto) and jumping OVER a
+// variable declaration (every var visible at the label must already be
+// visible at the goto). Returns "" when the jump is legal.
+func gotoViolation(li *labelInfo, gotoBlocks map[int]bool, gotoVars map[string]bool) string {
+	for id := range li.blocks {
+		if !gotoBlocks[id] {
+			return fmt.Sprintf("goto %s jumps into a block", li.name)
+		}
+	}
+	for n := range li.vars {
+		if !gotoVars[n] {
+			return fmt.Sprintf("goto %s jumps over declaration of %s", li.name, n)
+		}
+	}
+	return ""
 }
 
 // typeSwitchStmt compiles `switch v := x.(type) { case T: ... }`. The
@@ -1308,11 +1543,15 @@ func (c *compiler) expr(e ast.Expr) {
 		c.emit(bytecode.OpSelect, c.nameIdx(x.Sel.Name), 0, x.Pos())
 	case *ast.IndexExpr:
 		// OpInstantiate doubles as indexing: non-generic bases fall back to
-		// an index lookup, so `a[i]` and `F[T]` share one encoding. The
-		// index stays a value expr (a generic base's ident args resolve the
-		// same way through getRef).
+		// an index lookup, so `a[i]` and `F[T]` share one encoding. A type
+		// form arg (F[[]int]) compiles to a typedef; anything else stays a
+		// value expr (ident type args resolve through getRef too).
 		c.expr(x.X)
-		c.expr(x.Index)
+		if isTypeForm(x.Index) {
+			c.typeExpr(x.Index)
+		} else {
+			c.expr(x.Index)
+		}
 		c.emit(bytecode.OpInstantiate, 1, 0, x.Pos())
 	case *ast.SliceExpr:
 		if x.Slice3 {
@@ -1578,7 +1817,9 @@ func isTypePositionCall(x *ast.CallExpr) bool {
 // isTypeForm reports whether e is syntactically a type expression (and thus
 // a conversion when used as a call callee).
 func isTypeForm(e ast.Expr) bool {
-	switch e.(type) {
+	switch t := e.(type) {
+	case *ast.ParenExpr:
+		return isTypeForm(t.X) // (*T)(x) is a conversion, not a deref call
 	case *ast.ArrayType, *ast.MapType, *ast.StructType, *ast.FuncType,
 		*ast.InterfaceType, *ast.StarExpr, *ast.ChanType:
 		return true
@@ -1613,15 +1854,16 @@ func (c *compiler) compileLit(x *ast.CompositeLit, baseType ast.Expr, depth int)
 		}
 		c.expr(val)
 	}
+	// Whether an identifier key is a field name or a real expression is
+	// decidable when the peeled element type is syntactically a map or an
+	// array — `map[int]int{K: 1}` and `[]int{K: 1}` evaluate K.
+	keysAreExprs := literalKeysAreExprs(baseType, depth)
 	for _, el := range x.Elts {
 		if kv {
 			kvel := el.(*ast.KeyValueExpr)
-			// In struct literals the key is a field name, not an expression.
-			// (For maps an identifier key is a real expression — we can't
-			// distinguish statically without types, so identifiers compile
-			// to their name string; map keys requiring identifiers are a
-			// known gap for this phase.)
-			if id, ok := kvel.Key.(*ast.Ident); ok {
+			if id, ok := kvel.Key.(*ast.Ident); ok && !keysAreExprs {
+				// In struct literals the key is a field name, not an
+				// expression; the typedef confirms the map/index case.
 				c.emit(bytecode.OpConst, c.constIdx(id.Name), 0, id.Pos())
 			} else {
 				c.expr(kvel.Key)
@@ -1638,6 +1880,38 @@ func (c *compiler) compileLit(x *ast.CompositeLit, baseType ast.Expr, depth int)
 	c.emit(bytecode.OpMakeComposite, len(x.Elts), b, x.Pos())
 }
 
+// literalKeysAreExprs peels a composite literal's declared element type
+// `depth` levels (array elt / map value / pointer / ellipsis) and reports
+// whether the resulting type is syntactically a map or array — where a
+// key is a real expression, not a field name. Named types (idents,
+// selector, instantiations) keep the struct-style name heuristic since
+// the underlying shape is not visible to the compiler.
+func literalKeysAreExprs(baseType ast.Expr, depth int) bool {
+	t := baseType
+	for i := 0; t != nil && i < depth; i++ {
+		switch tt := t.(type) {
+		case *ast.ArrayType:
+			t = tt.Elt
+		case *ast.MapType:
+			t = tt.Value
+		case *ast.StarExpr:
+			t = tt.X
+		case *ast.Ellipsis:
+			t = tt.Elt
+		case *ast.ParenExpr:
+			t = tt.X
+			i-- // parens don't count as a peel level
+		default:
+			t = nil
+		}
+	}
+	switch t.(type) {
+	case *ast.MapType, *ast.ArrayType:
+		return true
+	}
+	return false
+}
+
 // typeExpr emits a push of *runtime.TypeDef for a type expression.
 func (c *compiler) typeExpr(e ast.Expr) {
 	switch t := e.(type) {
@@ -1650,7 +1924,9 @@ func (c *compiler) typeExpr(e ast.Expr) {
 	case *ast.MapType:
 		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
 	case *ast.StarExpr:
-		c.typeExpr(t.X) // pointer types collapse to their element typedef for MVP
+		// *T is a real typedef now: `var p *int` yields a TypedNil,
+		// `x.(*T)` asserts on pointer identity, `[]*T{{...}}` auto-takes &.
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindPointer, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
 	case *ast.StructType:
 		td := &runtime.TypeDef{Kind: runtime.KindStruct}
 		for _, f := range t.Fields.List {
@@ -1708,6 +1984,7 @@ func (c *compiler) funcLit(x *ast.FuncLit) {
 	ic := &compiler{pkg: c.pkg, file: c.file, fs: newFScope(c.fs), ch: &bytecode.Chunk{Name: "<funclit>"}, labels: map[string]*labelInfo{}, binds: c.binds}
 	ic.fs.pushBlock()
 	nparams := 0
+	var coerces []paramCoerce
 	if x.Type.Params != nil {
 		for _, field := range x.Type.Params.List {
 			names := field.Names
@@ -1715,7 +1992,8 @@ func (c *compiler) funcLit(x *ast.FuncLit) {
 				names = []*ast.Ident{{Name: fmt.Sprintf("$arg%d", nparams)}}
 			}
 			for _, n := range names {
-				ic.fs.declare(n.Name)
+				slot := ic.fs.declare(n.Name)
+				coerces = append(coerces, paramCoerce{slot: slot, typ: field.Type})
 				nparams++
 			}
 			if _, ok := field.Type.(*ast.Ellipsis); ok {
@@ -1724,6 +2002,7 @@ func (c *compiler) funcLit(x *ast.FuncLit) {
 		}
 	}
 	ic.ch.NParams = nparams
+	ic.emitParamCoerces(coerces)
 	if x.Type.Results != nil {
 		for _, field := range x.Type.Results.List {
 			for _, n := range field.Names {
@@ -1731,10 +2010,12 @@ func (c *compiler) funcLit(x *ast.FuncLit) {
 				ic.ch.NamedSlots = append(ic.ch.NamedSlots, slot)
 				ic.emit(bytecode.OpNil, 0, 0, n.Pos())
 				ic.emit(bytecode.OpNewLocal, slot, 0, n.Pos())
+				ic.emitTypeCoerce(slot, field.Type, n.Pos())
 			}
 		}
 		ic.ch.NResults = countResults(x.Type.Results)
 	}
+	ic.results = resultTypes(x.Type.Results)
 	ic.stmt(x.Body)
 	ic.resolveGotos()
 	ic.emit(bytecode.OpReturn, ic.ch.NResults, 0, x.End())

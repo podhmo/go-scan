@@ -977,4 +977,125 @@ left implicit.
 - **`x.(any)` on a nil interface fails** (nil has no dynamic type);
   `case nil` in a type switch is `BinEql`, never `OpAssertOK`.
 
+## 24. Round-5 notes: declared types, typed nils, goto legality, constraint checks
+
+Round 5 pushed the value model one step closer to Go's: declared types
+now reach the VM for bindings (`var x T`), typed nils keep their
+identity through interface slots, and the compiler diagnoses `goto`
+scope violations and generic constraint failures — still as run-time
+traps, never compile errors, so the total-function invariant holds.
+
+### Declared types at run time (`OpCoerce`)
+
+- **The compiler emits a typedef + coerce op wherever Go would apply a
+  declared type**: `var x T` locals (`OpCoerce`), package-level vars
+  (`OpCoerceGlobal`), call params and named results (a prologue of
+  `OpCoerce` per declared param — also what makes `var z T` inside a
+  generic body see the *bound* typedef, since `binds` rewrites the type
+  ident to the targ's TypeDef), and explicit returns (`OpCoerceTop`
+  against the declared result type). `coerce` itself is tiny: `NIL` →
+  the declared type's zero; `*TypedNil` into an interface kind →
+  `*IfaceNil`; everything else passes through — the VM stays
+  dynamically typed, the annotation only manufactures zeros and boxes.
+- **`runtime.Zero(td)` materializes Go zero values**: interface kinds →
+  `NIL` (an interface zero is nil), nilable kinds
+  (`*T`/`slice`/`map`/`chan`/`func`) → `*TypedNil{Typ}`, structs →
+  `*Struct` with `Fields` slots, named basics → the underlying literal
+  (`int64(0)`), aliases via the `Underlying` hook.
+- **Struct zeros need field types the runtime cannot see** — `Def` only
+  carries names. A new `Hooks.FieldTypes` resolves each field's AST in
+  parallel with `td.Fields` lazily (embedded fields count once,
+  `td.Binds` answers `T`-typed fields on an instantiated generic). The
+  VM's `zeroValue` recurses through it with an ancestor `seen` set so
+  `type T struct{ X T }` bottoms out instead of diverging; unresolvable
+  field types stay `NIL`. The same fill applies to composite literals —
+  `Sq{}` zeros unmentioned fields too.
+- **Typed nil is a real value**: `*TypedNil{Typ}` for `(*int)(nil)` and
+  friends (`== nil` is true), `*IfaceNil{Typ}` for a typed nil boxed
+  into an interface slot (`== nil` is false — matching Go's non-nil
+  interface). Every VM path that learns "this is nil" learned both:
+  eql/truthy/index/deref/iterate/member-select/method-dispatch/
+  assert/convert/popArgs. `OpDeref`/`OpSetInd` on a TypedNil pointer
+  raise a recoverable `*Panic` (Go's nil-pointer panic), other nilable
+  kinds keep the trap.
+- **`*T` became a first-class typedef (`KindPointer`)**: `x.(*int)`
+  asserts pointer identity (a `*Cell` whose element typedef matches),
+  `[]*Sq{{...}}` elides `&` via `ElemOf` peeling, and a paren-wrapped
+  callee — `(*int)(nil)` — is parsed as a conversion, not a deref
+  (`isTypeForm` now peels `ParenExpr`; the earlier shape compiled a
+  `*int` deref of the `int` typedef and trapped).
+
+### Map reads return the element zero
+
+- `*runtime.Map` grew `Typ *TypeDef`; literals and `make(map[K]V)` set
+  it. A missing key — or any read on a nil map — yields `mapZero`:
+  `ElemOf` → `zeroValue`, so `m["k"]` on `map[string]int` is `0`, not
+  `NIL` (scripts doing `v != 0` now behave). Maps built by intrinsics
+  may carry `Typ == nil` and fall back to `NIL` — a known seam.
+
+### Function-local `type` declarations
+
+- `DeclStmt TYPE` inside a body binds a `*TypeDef` const as a local —
+  `type S struct{...}` in a function resolves identically to a
+  package-level one (literals, asserts, conversions, methods all go
+  through the same `getRef`/`TypeDef` paths, so nothing else had to
+  learn about locality). The typedef's `Methods` map lazily fills via
+  the receiver scan like top-level types.
+
+### `goto` scoping diagnostics
+
+- Labels record the set of block IDs they're declared in plus a
+  snapshot of visible variable names; each `goto` records its own two
+  sets at resolve time. `gotoViolation` checks label-blocks ⊆
+  goto-blocks (else "jumps into a block") then label-vars ⊆ goto-vars
+  (else "jumps over declaration of x") — an approximation of the spec
+  rule expressed over the compiler's own block/var bookkeeping. A
+  violation replaces the `OpJump` with an `OpTrap` carrying Go's
+  message shape; the compile still never fails.
+
+### Constraint checking at instantiation
+
+- `TypeSpec.TypeParams` constraints are collected into
+  `TypeDef.TConstraints`/`Function.TConstraints` at materialize time;
+  `checkTArgs` runs at `OpInstantiate` before binds are applied. A
+  subtlety: `T ~int | ~string` arrives as a top-level `BinaryExpr`, not
+  wrapped in `InterfaceType` — element-shaped constraint expressions
+  route through `satisfiesTypeElem` (`~T` = underlying-kind match, `|`
+  = union member check, `comparable` and plain method-less interfaces
+  accept). A wrong arg traps at the instantiation site, which is the
+  closest a run-time system gets to Go's type-check rejection.
+- Call-site inference (`inferBinds`): when a generic function has
+  `TParams` but no `Binds`, the VM binds each type param from the
+  dynamic type of the corresponding arg (`Id(40)` → `T=int`). It is
+  argument-driven only — no result/context inference — and uses the
+  arg's *runtime* type, so a `T` constrained to a named basic may
+  under-infer.
+
+### Intrinsics & host surface
+
+- The fmt `Print*` family and the builtin `print`/`println` route
+  through `Engine.out` (`WithOutput(io.Writer)`), closing the
+  output-destination gap the host-policy note flagged.
+- Coverage: `errors.Join`; strings `ContainsAny`/`Compare`/`Replace`/
+  `Cut`/`CutPrefix`/`CutSuffix`; strconv `Quote`/`Unquote`/`ParseUint`/
+  `FormatFloat`/`FormatBool`; sort `SliceIsSorted`; slices `IsSorted`/
+  `SortFunc`/`EqualFunc`/`IndexFunc`/`Max`/`Min`/`Reverse`/`Insert`/
+  `Delete`; maps `Copy`/`Equal`; time `Parse`/`Unix` — mostly
+  script-predicate bridges over `VMCaller.Call`.
+
+### Surprises found while implementing
+
+- **Indexed slice literals sized by element count**, not max index:
+  `[]int{1: 7, 3: 9}` allocated a 2-elem slice and panicked. Now sizes
+  by `max(index)+1` with `NIL` gaps (approximating Go's zero gaps).
+- **`F[[]int]` never reached `typeExpr`** — the single-index expr path
+  always compiled the index as a value expression, so only idents
+  could be type args. Type-form args now route to `typeExpr`.
+- **`Binds` had to move onto `TypeDef`** (it only lived on `Function`):
+  `specializeType` records the targs so `FieldTypes` can answer what a
+  `T`-typed field resolves to on an instantiated struct.
+- **`errors.As`'s approximation stays**: the script side still cannot
+  spell `*target` the way Go requires; the current binding-of-first-
+  cause is documented rather than re-engineered.
+
 ## (end)

@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"io"
+	"reflect"
 	"sync"
 
 	"github.com/podhmo/go-scan/minigo2/bytecode"
@@ -37,6 +39,7 @@ type Engine struct {
 	initMode   InitMode
 	specials   map[runtime.SymbolID]runtime.SpecialFunc
 	hostPolicy func(importPath, symbol string) bool // nil = allow all bound intrinsics
+	out        io.Writer                            // print/println/fmt.Print* destination; nil = io.Discard
 
 	mu    sync.Mutex
 	pkgs  map[string]*runtime.Package // by import path
@@ -85,19 +88,27 @@ func WithHostPolicy(allow func(importPath, symbol string) bool) Option {
 	return func(e *Engine) { e.hostPolicy = allow }
 }
 
+// WithOutput sets the writer print/println and fmt.Print/Printf/Println
+// write to. The default io.Discard keeps script output silent; a session
+// or REPL passes os.Stdout or a buffer to observe it.
+func WithOutput(w io.Writer) Option {
+	return func(e *Engine) { e.out = w }
+}
+
 // NewEngine creates an engine whose default resolver is go-scan
 // (locator.WithGoModuleResolver). startDir is used to locate the go.mod /
 // go.work anchor for import-path resolution.
 func NewEngine(startDir string, opts ...Option) *Engine {
 	e := &Engine{
 		fset:     token.NewFileSet(),
-		builtins: builtins(),
 		pkgs:     map[string]*runtime.Package{},
 		byDir:    map[string]*runtime.Package{},
+		specials: map[runtime.SymbolID]runtime.SpecialFunc{},
 	}
 	for _, o := range opts {
 		o(e)
 	}
+	e.builtins = builtins(e)
 	res, err := resolve.NewGoScanResolver(startDir, e.cfg)
 	if err != nil {
 		// fall back to GOPATH-less dir resolution only; Locate() will still
@@ -105,8 +116,14 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 		res = nil
 	}
 	e.resolver = res
-	e.specials = map[runtime.SymbolID]runtime.SpecialFunc{}
-	e.vmm = &vm.VM{H: vm.Hooks{
+	e.vmm = e.newVM()
+	e.installStdlib()
+	return e
+}
+
+// newVM wires a VM to this engine's hooks.
+func (e *Engine) newVM() *vm.VM {
+	return &vm.VM{H: vm.Hooks{
 		Builtin:           e.builtins.Get,
 		Materialize:       e.materialize,
 		CompileExpr:       compile.Expr,
@@ -116,9 +133,151 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 		IfaceReqs:         e.ifaceReqs,
 		FindMethod:        e.findMethod,
 		ElemOf:            e.elemOf,
+		TypeMethods:       e.typeMethods,
+		Underlying:        e.underlying,
+		FieldTypes:        e.fieldTypes,
 	}}
-	e.installStdlib()
-	return e
+}
+
+// NewSession returns a fresh engine sharing this engine's resolver, build
+// config, specials, host policy and output writer — but with an empty
+// package cache and its own VM. Repeated script runs in a REPL each get
+// isolated state while keeping one resolution/indexing setup.
+func (e *Engine) NewSession() *Engine {
+	s := &Engine{
+		resolver:   e.resolver,
+		cfg:        e.cfg,
+		fset:       token.NewFileSet(),
+		initMode:   e.initMode,
+		specials:   e.specials,
+		hostPolicy: e.hostPolicy,
+		out:        e.out,
+		pkgs:       map[string]*runtime.Package{},
+		byDir:      map[string]*runtime.Package{},
+	}
+	s.builtins = builtins(s)
+	s.vmm = s.newVM()
+	s.installStdlib()
+	return s
+}
+
+// Result wraps a Run return value with a typed accessor.
+type Result struct {
+	V runtime.Value
+}
+
+// RunResult is Run plus a Result so callers can unmarshal directly.
+func (e *Engine) RunResult(ctx context.Context, ref, fnName string, args ...runtime.Value) (*Result, error) {
+	v, err := e.Run(ctx, ref, fnName, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{V: v}, nil
+}
+
+// As unmarshals the result into dst (a pointer). Scalars assign directly
+// when the types agree; composite minigo values (structs, slices, maps)
+// are re-decoded via reflection, mapping field names and indices.
+func (r *Result) As(dst any) error {
+	rv := reflect.ValueOf(dst)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return fmt.Errorf("As: dst must be a non-nil pointer")
+	}
+	return assignReflect(rv.Elem(), r.V)
+}
+
+// assignReflect copies a minigo value into a reflect-visible destination.
+func assignReflect(dst reflect.Value, v runtime.Value) error {
+	if !dst.CanSet() {
+		return fmt.Errorf("cannot set %s", dst.Type())
+	}
+	switch x := v.(type) {
+	case runtime.Nil, *runtime.TypedNil, *runtime.IfaceNil:
+		switch dst.Kind() {
+		case reflect.Ptr, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func, reflect.Interface, reflect.UnsafePointer:
+			dst.SetZero()
+			return nil
+		}
+		return fmt.Errorf("cannot assign nil to %s", dst.Type())
+	case *runtime.Cell:
+		if dst.Kind() == reflect.Ptr {
+			p := reflect.New(dst.Type().Elem())
+			if err := assignReflect(p.Elem(), x.Elem); err != nil {
+				return err
+			}
+			dst.Set(p)
+			return nil
+		}
+		return assignReflect(dst, x.Elem)
+	case *runtime.Struct:
+		if dst.Kind() != reflect.Struct {
+			return fmt.Errorf("cannot assign struct to %s", dst.Type())
+		}
+		for i, name := range x.Def.Fields {
+			if name == "" {
+				continue
+			}
+			fld := dst.FieldByName(name)
+			if !fld.IsValid() {
+				continue
+			}
+			if err := assignReflect(fld, x.Fields[i]); err != nil {
+				return fmt.Errorf("field %s: %w", name, err)
+			}
+		}
+		return nil
+	case *runtime.Slice:
+		if dst.Kind() != reflect.Slice {
+			return fmt.Errorf("cannot assign slice to %s", dst.Type())
+		}
+		out := reflect.MakeSlice(dst.Type(), len(x.Elems), len(x.Elems))
+		for i, el := range x.Elems {
+			if err := assignReflect(out.Index(i), el); err != nil {
+				return err
+			}
+		}
+		dst.Set(out)
+		return nil
+	case *runtime.Map:
+		if dst.Kind() != reflect.Map {
+			return fmt.Errorf("cannot assign map to %s", dst.Type())
+		}
+		out := reflect.MakeMap(dst.Type())
+		for k, mv := range x.Pairs {
+			kv := reflect.New(dst.Type().Key()).Elem()
+			if err := assignReflect(kv, k); err != nil {
+				return err
+			}
+			vv := reflect.New(dst.Type().Elem()).Elem()
+			if err := assignReflect(vv, mv); err != nil {
+				return err
+			}
+			out.SetMapIndex(kv, vv)
+		}
+		dst.Set(out)
+		return nil
+	case *runtime.GoValue:
+		gv := reflect.ValueOf(x.V)
+		if gv.IsValid() && gv.Type().AssignableTo(dst.Type()) {
+			dst.Set(gv)
+			return nil
+		}
+		return fmt.Errorf("cannot assign %T to %s", x.V, dst.Type())
+	case *runtime.Tuple:
+		return fmt.Errorf("cannot assign tuple to %s", dst.Type())
+	default:
+		gv := reflect.ValueOf(v)
+		if gv.IsValid() && gv.Type().AssignableTo(dst.Type()) {
+			dst.Set(gv)
+			return nil
+		}
+		if gv.IsValid() && gv.Type().ConvertibleTo(dst.Type()) &&
+			(gv.Kind() >= reflect.Int && gv.Kind() <= reflect.Float64 || gv.Kind() == reflect.String || gv.Kind() == reflect.Bool) {
+			dst.Set(gv.Convert(dst.Type()))
+			return nil
+		}
+		return fmt.Errorf("cannot assign %T to %s", v, dst.Type())
+	}
 }
 
 // RegisterSpecial installs a special-form handler for a canonical symbol
@@ -376,7 +535,9 @@ func (e *Engine) materialize(pkg *runtime.Package, d *index.Decl) (runtime.Value
 	switch d.Kind {
 	case index.FuncDecl:
 		return &runtime.Function{Pkg: pkg, File: d.File, Decl: d.Func, Name: d.Name,
-			TParams: typeParamNames(d.Func.Type.TypeParams), Compile: compile.Func}, nil
+			TParams:      typeParamNames(d.Func.Type.TypeParams),
+			TConstraints: typeParamConstraints(d.Func.Type.TypeParams),
+			Compile:      compile.Func}, nil
 	case index.TypeDecl:
 		return e.typeDefOf(pkg, d)
 	case index.ConstDecl, index.VarDecl:
@@ -391,7 +552,9 @@ func (e *Engine) materialize(pkg *runtime.Package, d *index.Decl) (runtime.Value
 func (e *Engine) typeDefOf(pkg *runtime.Package, d *index.Decl) (runtime.Value, error) {
 	ts := d.Spec.(*ast.TypeSpec)
 	td := &runtime.TypeDef{Pkg: pkg, Name: d.Name, File: d.File, Spec: ts,
-		TParams: typeParamNames(ts.TypeParams), Anon: ts.Type}
+		TParams:      typeParamNames(ts.TypeParams),
+		TConstraints: typeParamConstraints(ts.TypeParams),
+		Anon:         ts.Type}
 	switch t := ts.Type.(type) {
 	case *ast.StructType:
 		td.Kind = runtime.KindStruct
@@ -425,6 +588,10 @@ func (e *Engine) typeDefOf(pkg *runtime.Package, d *index.Decl) (runtime.Value, 
 		td.Kind = runtime.KindMap
 	case *ast.FuncType:
 		td.Kind = runtime.KindFunc
+	case *ast.StarExpr:
+		td.Kind = runtime.KindPointer
+	case *ast.ChanType:
+		td.Kind = runtime.KindChan
 	case *ast.Ident:
 		td.Kind = runtime.KindNamedBasic
 	default:

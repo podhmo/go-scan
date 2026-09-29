@@ -21,6 +21,41 @@ type BuildConfig struct {
 	GOOS   string
 	GOARCH string
 	Tags   []string
+
+	// AllowedRoots, when non-empty, restricts which directories a Resolver
+	// may hand out: a located package directory must live inside one of the
+	// roots (or be the root itself). This is the "which directories may the
+	// interpreter enter" knob — e.g. a REPL's AllowedRoots is its CWD.
+	AllowedRoots []string
+}
+
+// checkDir verifies dir against AllowedRoots (no-op when unrestricted).
+// Both sides are resolved through EvalSymlinks so a symlink inside a root
+// pointing outside it cannot bypass the check.
+func (cfg BuildConfig) checkDir(dir string) error {
+	if len(cfg.AllowedRoots) == 0 {
+		return nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	for _, root := range cfg.AllowedRoots {
+		r, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(r); err == nil {
+			r = resolved
+		}
+		if abs == r || strings.HasPrefix(abs, r+string(filepath.Separator)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("directory %s is outside the allowed roots", abs)
 }
 
 // PackageMeta is the cheap metadata level of a package — enough to know its

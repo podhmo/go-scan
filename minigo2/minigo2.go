@@ -15,6 +15,7 @@ import (
 	"go/ast"
 	"go/token"
 	"io"
+	"path/filepath"
 	"reflect"
 	"sync"
 
@@ -44,6 +45,7 @@ type Engine struct {
 	mu    sync.Mutex
 	pkgs  map[string]*runtime.Package // by import path
 	byDir map[string]*runtime.Package // synthetic packages by dir
+	files map[string]*runtime.Package // single-file packages by abs path
 	binds map[string]*runtime.Package // host-bound packages (sessions inherit)
 }
 
@@ -104,6 +106,7 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 		fset:     token.NewFileSet(),
 		pkgs:     map[string]*runtime.Package{},
 		byDir:    map[string]*runtime.Package{},
+		files:    map[string]*runtime.Package{},
 		binds:    map[string]*runtime.Package{},
 		specials: map[runtime.SymbolID]runtime.SpecialFunc{},
 	}
@@ -157,6 +160,7 @@ func (e *Engine) NewSession() *Engine {
 		out:        e.out,
 		pkgs:       map[string]*runtime.Package{},
 		byDir:      map[string]*runtime.Package{},
+		files:      map[string]*runtime.Package{},
 		binds:      map[string]*runtime.Package{},
 	}
 	s.builtins = builtins(s)
@@ -419,18 +423,7 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 	}
 	e.mu.Unlock()
 
-	p := &runtime.Package{
-		Path:     meta.ImportPath,
-		Name:     meta.Name,
-		State:    runtime.Parsed,
-		Dir:      meta.Dir,
-		Fset:     e.fset,
-		LazyInit: e.initMode == LazyInit,
-		Globals:  runtime.NewEnv(),
-		Scopes:   map[*syntax.File]map[string]*runtime.ImportRef{},
-		Imports:  map[*syntax.File][]*runtime.ImportRef{},
-		Specials: e.specials,
-	}
+	p := e.newPackage(meta.ImportPath, meta.Name, meta.Dir)
 	// publish before parsing to make import cycles convergent
 	e.mu.Lock()
 	e.pkgs[meta.ImportPath] = p
@@ -448,6 +441,33 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 		}
 		files = append(files, sf)
 	}
+	if err := e.indexFiles(p, files); err != nil {
+		p.State = runtime.Failed
+		return nil, err
+	}
+	return p, nil
+}
+
+// newPackage builds a Package shell wired to this engine (Parsed state).
+func (e *Engine) newPackage(path, name, dir string) *runtime.Package {
+	return &runtime.Package{
+		Path:     path,
+		Name:     name,
+		State:    runtime.Parsed,
+		Dir:      dir,
+		Fset:     e.fset,
+		LazyInit: e.initMode == LazyInit,
+		Globals:  runtime.NewEnv(),
+		Scopes:   map[*syntax.File]map[string]*runtime.ImportRef{},
+		Imports:  map[*syntax.File][]*runtime.ImportRef{},
+		Specials: e.specials,
+	}
+}
+
+// indexFiles finishes a package over already-selected files: declaration
+// index, file-by-name map, per-file import scopes, and the lazy initializer
+// hook. Directory discovery and build-constraint filtering happen upstream.
+func (e *Engine) indexFiles(p *runtime.Package, files []*syntax.File) error {
 	p.Files = files
 	p.FileByName = map[string]*syntax.File{}
 	for _, sf := range files {
@@ -456,8 +476,7 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 
 	ix, err := index.Build(files)
 	if err != nil {
-		p.State = runtime.Failed
-		return nil, fmt.Errorf("index %s: %w", meta.ImportPath, err)
+		return fmt.Errorf("index %s: %w", p.Path, err)
 	}
 	p.Index = ix
 	p.State = runtime.Indexed
@@ -480,7 +499,59 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 	}
 
 	p.Bootstrap = e.bootstrap
+	return nil
+}
+
+// LoadFile builds a package out of one named file, bypassing directory
+// discovery and build-constraint filtering: a DSL file guarded by
+// `//go:build codegen` — or a script outside any package — is a first-class
+// entry point. The file's own imports still resolve through the resolver.
+// The package's import path is synthetic ("<file>" + abs path); nothing can
+// import it back. AllowedRoots applies to the file's directory, like any
+// other entry point.
+func (e *Engine) LoadFile(ctx context.Context, filename string) (*runtime.Package, error) {
+	abs, err := filepath.Abs(filename)
+	if err != nil {
+		return nil, err
+	}
+	e.mu.Lock()
+	if p, ok := e.files[abs]; ok {
+		e.mu.Unlock()
+		return p, nil
+	}
+	e.mu.Unlock()
+
+	if err := e.cfg.CheckDir(filepath.Dir(abs)); err != nil {
+		return nil, err
+	}
+	sf, err := syntax.ParseFile(e.fset, abs, nil)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", filename, err)
+	}
+
+	p := e.newPackage("<file>"+abs, sf.AST.Name.Name, filepath.Dir(abs))
+	e.mu.Lock()
+	e.files[abs] = p
+	e.mu.Unlock()
+
+	if err := e.indexFiles(p, []*syntax.File{sf}); err != nil {
+		p.State = runtime.Failed
+		return nil, err
+	}
 	return p, nil
+}
+
+// RunFile is Run for a single file: LoadFile + Call. A bare "" fnName calls
+// the file's main function.
+func (e *Engine) RunFile(ctx context.Context, filename, fnName string, args ...runtime.Value) (runtime.Value, error) {
+	if fnName == "" {
+		fnName = "main"
+	}
+	pkg, err := e.LoadFile(ctx, filename)
+	if err != nil {
+		return nil, err
+	}
+	return e.Call(ctx, pkg, fnName, args...)
 }
 
 // bootstrap runs the synthetic __init__ function of a package.

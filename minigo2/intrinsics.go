@@ -43,6 +43,26 @@ func (e *Engine) installStdlib() {
 	})
 	e.Bind("errors", map[string]runtime.Value{
 		"New": h.fn("errors.New", func(a []any) (any, error) { return errors.New(str(a[0])), nil }),
+		"Is": h.fn2("errors.Is", func(a []any) (any, error) {
+			return errors.Is(asErr(a[0]), asErr(a[1])), nil
+		}),
+		"Unwrap": h.fn("errors.Unwrap", func(a []any) (any, error) {
+			return errVal(errors.Unwrap(asErr(a[0]))), nil
+		}),
+		// As is approximated: the script cannot spell the target type, so it
+		// assigns the first non-nil cause in the chain to *target.
+		"As": &runtime.BuiltinFunc{Name: "errors.As", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("errors.As needs 2 args")
+			}
+			for err := asErr(goNative(args[0])); err != nil; err = errors.Unwrap(err) {
+				if runtime.SetRef(args[1], errVal(err)) {
+					return true, nil
+				}
+				return nil, fmt.Errorf("errors.As: target must be a pointer (cell)")
+			}
+			return false, nil
+		}},
 	})
 	e.Bind("strings", map[string]runtime.Value{
 		"Contains":    h.fn2("strings.Contains", func(a []any) (any, error) { return strings.Contains(str(a[0]), str(a[1])), nil }),
@@ -58,6 +78,9 @@ func (e *Engine) installStdlib() {
 		"Repeat":      h.fn2("strings.Repeat", func(a []any) (any, error) { return strings.Repeat(str(a[0]), intOf(a[1])), nil }),
 		"Builder":     &runtime.TypeDef{Name: "Builder", Kind: runtime.KindNamedBasic},
 		"NewReplacer": h.fn2("strings.NewReplacer", func(a []any) (any, error) { return strings.NewReplacer(strSlice(a[0])...), nil }),
+		"Fields":      h.fn("strings.Fields", func(a []any) (any, error) { return strsSlice(strings.Fields(str(a[0]))), nil }),
+		"EqualFold":   h.fn2("strings.EqualFold", func(a []any) (any, error) { return strings.EqualFold(str(a[0]), str(a[1])), nil }),
+		"Count":       h.fn2("strings.Count", func(a []any) (any, error) { return int64(strings.Count(str(a[0]), str(a[1]))), nil }),
 	})
 	e.Bind("strconv", map[string]runtime.Value{
 		"Atoi":     h.fn("strconv.Atoi", func(a []any) (any, error) { return retErr2(strconv.Atoi(str(a[0]))) }),
@@ -79,10 +102,32 @@ func (e *Engine) installStdlib() {
 		"Contains": h.fn2("slices.Contains", func(a []any) (any, error) {
 			return slices.Contains(anySlice(a[0]), a[1]), nil
 		}),
+		"Index": h.fn2("slices.Index", func(a []any) (any, error) {
+			return int64(slices.Index(anySlice(a[0]), a[1])), nil
+		}),
+		"Clone": h.fn("slices.Clone", func(a []any) (any, error) {
+			return slices.Clone(anySlice(a[0])), nil
+		}),
+		"Concat": h.fn("slices.Concat", func(a []any) (any, error) {
+			var parts [][]any
+			for _, p := range a {
+				parts = append(parts, anySlice(p))
+			}
+			return slices.Concat(parts...), nil
+		}),
+		"Equal": h.fn2("slices.Equal", func(a []any) (any, error) {
+			return slices.Equal(anySlice(a[0]), anySlice(a[1])), nil
+		}),
 	})
 	e.Bind("maps", map[string]runtime.Value{
 		"Keys":   h.fn("maps.Keys", func(a []any) (any, error) { return mapKeys(a[0]), nil }),
 		"Values": h.fn("maps.Values", func(a []any) (any, error) { return mapValues(a[0]), nil }),
+		"Clone": h.fn("maps.Clone", func(a []any) (any, error) {
+			if m, ok := a[0].(map[any]any); ok {
+				return maps.Clone(m), nil
+			}
+			return nil, fmt.Errorf("maps.Clone: arg must be a map")
+		}),
 	})
 	// os: an interpreted program must never observe or terminate the host
 	// process — Exit is always a trap; the environment/argv surface is only
@@ -245,6 +290,22 @@ func scriptVal(v any) runtime.Value {
 		return strsSlice(x)
 	case time.Duration:
 		return int64(x)
+	case []any:
+		el := make([]runtime.Value, len(x))
+		for i, e := range x {
+			el[i] = scriptVal(e)
+		}
+		return &runtime.Slice{Elems: el}
+	case map[any]any:
+		m := &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}}
+		for k, vv := range x {
+			kk := scriptVal(k)
+			if _, ok := m.Pairs[kk]; !ok {
+				m.Order = append(m.Order, kk)
+			}
+			m.Pairs[kk] = scriptVal(vv)
+		}
+		return m
 	case runtime.Nil, *runtime.Tuple, *runtime.Cell, *runtime.Slice,
 		*runtime.Map, *runtime.Struct, *runtime.Function, *runtime.Closure,
 		*runtime.BoundMethod, *runtime.BuiltinFunc, *runtime.GoValue,
@@ -283,6 +344,20 @@ func goNative(v runtime.Value) any {
 		return x.V
 	default:
 		return v
+	}
+}
+
+// asErr coerces a marshalled script value to error for errors.* calls:
+// GoValue-boxed errors unwrap to natives via goNative already, so v is
+// either an error, nil, or a value that formats to one.
+func asErr(v any) error {
+	switch e := v.(type) {
+	case nil:
+		return nil
+	case error:
+		return e
+	default:
+		return fmt.Errorf("%v", v)
 	}
 }
 

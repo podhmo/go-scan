@@ -21,6 +21,13 @@ import (
 // reflect method set. Other values have no methods.
 func (e *Engine) methodsOfValue(v runtime.Value) (map[string]bool, error) {
 	for {
+		// a Named value exposes its own declared method set — `type A B`
+		// does not inherit B's methods (Go). Checked inside the deref
+		// loop: a pointer like &c lands on a *Cell{Named} and must stop
+		// on the tag rather than deref past it.
+		if n, ok := v.(*runtime.Named); ok {
+			return e.typeMethods(n.Typ)
+		}
 		dv, ok := runtime.Deref(v)
 		if !ok {
 			break
@@ -61,6 +68,16 @@ func (e *Engine) typeMethods(td *runtime.TypeDef) (map[string]bool, error) {
 		return e.ifaceReqsRec(td, map[*runtime.TypeDef]bool{}), nil
 	}
 	return e.methodSetOf(td, map[*runtime.TypeDef]bool{}), nil
+}
+
+// aliasOf implements the Hooks.AliasOf hook: a KindAlias typedef resolves
+// its target expression — one hop only, so `type A = B` gives B's own
+// typedef even when B is itself a declared type (unlike underlying).
+func (e *Engine) aliasOf(td *runtime.TypeDef) (*runtime.TypeDef, error) {
+	if td == nil || td.Kind != runtime.KindAlias || td.Anon == nil {
+		return td, nil
+	}
+	return e.resolveTypeRef(td, td.Anon)
 }
 
 // underlying implements the Hooks.Underlying hook: a KindAlias typedef
@@ -172,6 +189,16 @@ func (e *Engine) fieldTypes(td *runtime.TypeDef) ([]*runtime.TypeDef, error) {
 			ft, err := e.elemTypeRef(td, fld.Type)
 			if err == nil {
 				out[i] = ft
+			} else {
+				// the declared type did not resolve (missing import, unbound
+				// name): keep a hole typedef instead of nil so the field zero
+				// still produces a typed nil, not a bare NIL.
+				out[i] = &runtime.TypeDef{
+					Kind: runtime.KindNamedBasic,
+					Anon: fld.Type,
+					Pkg:  td.Pkg,
+					File: td.File,
+				}
 			}
 			i++
 		}

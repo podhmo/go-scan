@@ -137,6 +137,7 @@ func (e *Engine) newVM() *vm.VM {
 		ElemOf:            e.elemOf,
 		TypeMethods:       e.typeMethods,
 		Underlying:        e.underlying,
+		AliasOf:           e.aliasOf,
 		FieldTypes:        e.fieldTypes,
 	}}
 }
@@ -220,6 +221,8 @@ func assignReflect(dst reflect.Value, v runtime.Value) error {
 			return nil
 		}
 		return assignReflect(dst, x.Elem)
+	case *runtime.Named:
+		return assignReflect(dst, x.V)
 	case *runtime.Struct:
 		if dst.Kind() != reflect.Struct {
 			return fmt.Errorf("cannot assign struct to %s", dst.Type())

@@ -281,7 +281,13 @@ func SetRef(v, val Value) bool {
 type Tuple struct{ Elems []Value }
 
 // Slice is a Go slice value.
-type Slice struct{ Elems []Value }
+type Slice struct {
+	Elems []Value
+	// Typ is the declared slice type when one is known (a named literal or
+	// a `var s S` bind): element stores re-coerce and named slice types
+	// keep their identity on rebinds.
+	Typ *TypeDef
+}
 
 // Map is a Go map value (keys must be comparable basics for now).
 type Map struct {
@@ -298,6 +304,9 @@ type Map struct {
 type Chan struct {
 	Elems  []Value
 	Closed bool
+	// Typ is the declared channel type when one is known (make or a
+	// `var c C` bind): sends re-coerce to the element type.
+	Typ *TypeDef
 }
 
 // TypeDef is a runtime type descriptor for a named type.

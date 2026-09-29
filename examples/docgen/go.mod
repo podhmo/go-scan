@@ -1,20 +1,18 @@
 module github.com/podhmo/go-scan/examples/docgen
 
-go 1.24.2
-
-toolchain go1.24.3
+go 1.26.0
 
 replace github.com/podhmo/go-scan => ../../
 
 require (
 	github.com/google/go-cmp v0.7.0
-	github.com/podhmo/go-scan v0.0.0-00010101000000-000000000000
+	github.com/podhmo/go-scan v0.0.3
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	github.com/kr/pretty v0.3.1 // indirect
-	golang.org/x/mod v0.29.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 )

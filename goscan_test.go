@@ -367,6 +367,7 @@ func TestListExportedSymbols(t *testing.T) {
 		"ContainsRune",
 		"Count",
 		"Cut",
+		"CutLast",
 		"CutPrefix",
 		"CutSuffix",
 		"EqualFold",

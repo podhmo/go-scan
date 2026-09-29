@@ -1,20 +1,18 @@
 module github.com/podhmo/go-scan/examples/deriving-all
 
-go 1.24.2
-
-toolchain go1.24.3
+go 1.26.0
 
 require (
 	github.com/google/go-cmp v0.7.0
-	github.com/podhmo/go-scan v0.0.0
+	github.com/podhmo/go-scan v0.0.3
 	github.com/podhmo/go-scan/examples/derivingbind v0.0.0
 	github.com/podhmo/go-scan/examples/derivingjson v0.0.0
-	golang.org/x/tools v0.37.0
+	golang.org/x/tools v0.50.0
 )
 
 require (
-	golang.org/x/mod v0.29.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 )
 
 replace github.com/podhmo/go-scan => ../../

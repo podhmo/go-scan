@@ -1,299 +1,488 @@
 # Plan: minigo Redesign — A Lazy, Stack-VM Go Interpreter
 
-This document proposes a ground-up redesign of `minigo`. It keeps the core
-philosophy of the current implementation (lazy, `go/ast`-driven, no
-`go/packages`/`go/types`/`go list`) while addressing three regrets of the v1
-design:
+> **Status**: merged proposal. v1 of this document proposed the stack-VM +
+> lazy-import redesign; this revision folds in a second proposal ("案2") that
+> sharpened several points: strict phase separation, `TRAP` vs script `Panic`,
+> the package lifecycle state machine, per-function lazy compilation,
+> `go list -find` as a resolver oracle, stub-package host intrinsics, and a
+> `PackageProvider` abstraction. Divergences and open questions are marked.
 
-1. **No VM** — v1 is a monolithic AST-walking evaluator (`evaluator.go` ~5,300
-   lines). The redesign compiles AST to bytecode for a small stack machine.
-2. **Stdlib bindings are per-package work** — v1 requires running
-   `gen-bindings` per package (`stdlib/<pkg>/install.go`). The redesign makes
-   source interpretation the default and shrinks the native boundary to a
-   handful of primitives.
-3. **Design/maintainability** — the new code is split into small,
-   single-purpose packages instead of one giant evaluator.
+This document proposes a ground-up redesign of `minigo` — **as a separate
+`minigo2` implementation, not an in-place rewrite** — that keeps the core
+philosophy (lazy, `go/ast`-driven, no eager dependency expansion) while
+addressing three regrets of the v1 design:
+
+1. **No VM** — v1 is a monolithic AST-walking evaluator (`evaluator.go`
+   ~5,300 lines) where Evaluator, package cache, symbol registry and scanner
+   are tightly coupled. The redesign compiles AST to bytecode for a small
+   stack machine.
+2. **Stdlib bindings are per-package work** — v1 requires `gen-bindings` per
+   package (`stdlib/<pkg>/install.go`). The redesign makes source
+   interpretation the default and shrinks the native boundary from
+   "per-package bindings" to "a fixed set of runtime intrinsics".
+3. **Design/maintainability** — `Parse / Index / Resolve / Initialize /
+   Compile / Execute` become fully separate phases in separate packages.
+
+`go-scan` is **not** a dependency of `minigo2`; it is an optional adapter
+behind the resolver interface.
 
 ## 1. Requirements
 
 | Requirement | Consequence |
 |---|---|
-| Depend on `go/ast` only | Frontend is `go/parser` → `*ast.File`. No `go/types`, no `go/packages`, no `go list`. |
-| All code must be parseable; runtime panic allowed | The compiler is a *total function* over the AST: it never rejects a construct. Unsupported features compile to `OpUnsupported` and panic only if executed. |
-| Free entry point | Execution API is `Call(pkgPath, funcName, args)`; an entry point is just a lazy package load + symbol lookup + call. |
-| gopls works | The implementation is an ordinary Go module. Scripts are ordinary `.go` files inside real modules, so gopls/gofmt/goimports work on them unchanged. |
-| Per-package lazy imports | `import` records an alias→path mapping only. A package is located, parsed and compiled the first time one of its symbols is selected at runtime. |
-| Go module system works | Resolution walks `go.work` → main `go.mod` (module path + require + replace) → `vendor/` → `GOROOT` → `GOMODCACHE`, without shelling out to `go list`. |
-| Macro-like features | Special forms (v1's `RegisterSpecial`: call sites that receive unevaluated `[]ast.Expr`) are preserved via the constant pool. |
+| Depend on `go/ast` only | Frontend is `go/parser` → `*ast.File`. No `go/types`, no `go/packages` in the core. |
+| All code must be parseable; runtime panic allowed | The compiler is a *total function* over the AST: it never rejects a construct. Unsupported features compile to `TRAP` and panic only if executed. |
+| Free entry point | Execution API is `Run(Entry{Package, Function, Args})`; an entry point is just a lazy package load + index lookup + call. |
+| gopls works | The implementation is an ordinary Go module; scripts are ordinary `.go` files in real modules. No magic globals, no language extensions — host extensions are real (stub) packages. |
+| Per-package lazy imports | `import` records an `ImportRef` only. A package is located, parsed, indexed and initialized the first time one of its symbols is fetched at runtime. |
+| Go module system works | A `PackageResolver` resolves import path → package dir + file list without expanding the import graph. |
+| Macro-like features | Special forms (v1's `RegisterSpecial`: call sites receiving unevaluated `[]ast.Expr`) are preserved via the constant pool. |
 
-## 2. The Key Decision: Dynamic Global Resolution
+## 2. Pipeline
 
-The property "parse/compile everything, panic only on execution" falls out of
-one design choice:
+```text
+                     ┌─────────────────────┐
+                     │ ordinary Go source  │
+                     │ .go / go.mod/go.work│
+                     └──────────┬──────────┘
+                                │ go/parser (only entry point)
+                                ▼
+                       ┌────────────────┐
+                       │   *ast.File    │
+                       └───────┬────────┘
+                               │ Index declarations — nothing executes
+                               ▼
+                    ┌────────────────────┐
+                    │ PackageIndex       │
+                    │ func/type/var/const│
+                    │ ImportRefs         │
+                    └─────────┬──────────┘
+                              │ entry point lookup
+                              ▼
+                 ┌─────────────────────────┐
+                 │ Lazy bytecode compiler  │
+                 │ ast.FuncDecl -> Chunk   │  (per function, on first CALL)
+                 └────────────┬────────────┘
+                              ▼
+                       ┌─────────────┐
+                       │  Stack VM   │
+                       └──────┬──────┘
+                pkg.X ────────┼────────────────┐
+                              ▼                │
+                        PKG_GET(pkg,X)         │
+                              │                │
+                              ▼                │
+                  ┌────────────────────┐       │
+                  │ Lazy PackageLoader │       │
+                  └─────────┬──────────┘       │
+                            │ Resolve → Parse → Index → Initialize
+                            └──────────────────┘
+```
+
+There is **no import-graph traversal**: needed edges are walked at runtime,
+one package at a time. This is the essential difference from a
+`go/packages`-style architecture — `go/packages`/`go/types` load transitively
+because type-checking a package needs its imports' type information, which is
+exactly the eagerness we avoid.
+
+## 3. The Central Invariant
+
+```text
+unsupported syntax
+    ≠ compile error
+    ≠ parse error
+
+unsupported syntax
+    → TRAP opcode emitted inline
+```
+
+- **The compiler never fails on an AST node.** `go`/`select`/`chan`/
+  `unsafe`-dependent constructs emit `TRAP("unsupported ChanType")` where the
+  construct occurs. A function that is never called traps never; a branch
+  that is never taken traps never.
+- Parse is `parser.ParseFile(fset, name, src, parser.ParseComments |
+  parser.SkipObjectResolution | parser.AllErrors)` — `SkipObjectResolution`
+  is the recommended mode (object resolution is deprecated and unused here);
+  `AllErrors` surfaces all syntax errors instead of stopping early.
+- The parse ceiling is whatever Go version the host toolchain's `go/parser`
+  understands.
+
+This invariant is what makes a VM the right structure: unsupported-ness
+becomes *data* (an opcode), not a walker's failure path.
+
+## 4. Dynamic Global Resolution
+
+The "parse/compile everything, panic only on execution" property falls out of
+one rule:
 
 > **The compiler resolves only local variables and upvalues statically.
-> Every other name (package-level vars/funcs/types, imported package members,
-> builtins) is emitted as a *symbolic* reference resolved at runtime.**
+> Every other name (package-level decls, imported package members, builtins)
+> is emitted as a symbolic reference resolved at runtime.**
 
-- `x` as a local → `OpLoadLocal(slot)`. A local escapes (is captured or
-  addressed) → it becomes a cell: `OpLoadUpval(idx)` / heap `*Cell`.
-- `x` unresolved by the function's own scope analysis → `OpLoadGlobal("x")`:
-  looked up at runtime in package env → file import table → builtins.
-- `fmt.Println` → `OpLoadGlobal("fmt")` yielding a `*LazyPackage` (from the
-  file's import table), then `OpSelect("Println")`, which triggers the lazy
-  load on first access.
-
-Consequences:
-
+- `x` local → `GET_LOCAL slot`; captured or address-taken → `*Cell` +
+  `GET_UPVALUE`. Loop vars follow Go 1.22+ semantics (fresh cell per
+  iteration when captured).
+- `x` unresolved → `GET_GLOBAL "x"`: package env → import table → builtins.
+- `fmt.Println` → `GET_GLOBAL "fmt"` yields `*ImportRef`, `PKG_GET` /
+  `Select "Println"` triggers the lazy lifecycle on first access.
 - The compiler cannot fail on an unresolved or mistyped name — it does not
-  know what the name is. Typos panic at runtime, which the requirements
-  explicitly allow.
-- Function bodies never trigger package loads; an import is only paid for
-  when code actually selects a member. This preserves v1's headline feature.
-- Per-file import semantics come free: each file contributes its own
-  alias→path table, including `.` and `_` imports and aliases.
+  know what the name is. Typos trap at runtime, which requirements allow.
+- Function bodies never trigger package loads — imports are only paid for
+  when code actually fetches a member. This preserves v1's headline feature.
 
-The compiler is therefore a small, total AST→bytecode translator with one
-job per node kind — this is where most of v1's incidental complexity
-disappears.
+## 5. Package Lifecycle
 
-## 3. Architecture
-
-```
-source ──go/parser──> *ast.File ──compiler──> *Func{Code []Instr, Consts, NLocals, UpvalDescs}
-                                               │
-                     Loader ──> *LazyPackage ──select──> compile decls ──> pkg env
-                                               │
-                                    VM: operand stack + frames + defer stack
+```text
+Unseen → Located → Parsed → Indexed → Initializing → Ready
+                                                  ↘ Failed
 ```
 
-### 3.1 Package layout
+Three lazily separated levels, so that *cheap* metadata is not conflated with
+*expensive* materialization:
 
+| Stage | Cost | What it yields |
+|---|---|---|
+| `ImportRef` | ~0 | alias → path mapping from the file's import decl |
+| `Describe`/`Locate` | cheap | `PackageMeta{Dir, Name, GoFiles, Standard, Module}` — needed to answer "package name" when basename ≠ package name (e.g. `import "…/foo/v2"` → package `foo`) |
+| `Materialize` (Parse+Index) | medium | ASTs + `PackageIndex`, no execution |
+| `Initialize` | first `PKG_GET` | package-var initializers + `init()` run |
+
+```go
+type ImportRef struct {
+    Path         string
+    ExplicitName string        // alias, "_", ".", or ""
+    metaOnce     sync.Once; meta *PackageMeta
+    pkgOnce      sync.Once; pkg  *Package
+}
 ```
-minigo2/                  (new directory, side-by-side with minigo/ during migration)
-  minigo.go               public API: Run, Interpreter, Call, Result.As
-  compiler/               AST -> bytecode. compile_expr.go, compile_stmt.go,
-                          scope.go (locals/upvalues analysis)
-  vm/                     instr.go (opcodes), machine.go (dispatch loop,
-                          frames, defer/panic machinery)
-  value/                  value model, runtime type descriptors, method sets
-  loader/                 lazy package objects, import tables, init ordering
-  resolve/                import path -> directory (module resolution)
-  gostd/                  stdlib shims written in plain .go source
-  natives/                native function registry (the syscall boundary)
-  cmd/minigo/             CLI: run -pkg -fn, repl, gen-natives
+
+### Init semantics — explicitly *not* Go semantics
+
+Real Go runs an imported package's `init()` before `main`. Here, a package's
+init runs on **first actual reference**. This divergence is made explicit:
+
+```go
+type InitMode int
+const (
+    LazyInit         InitMode = iota // default: init on first PKG_GET
+    GoCompatibleInit                  // init all imports before entry
+)
 ```
 
-Everything is plain Go in the existing module; nothing obstructs gopls.
+Per import-kind behavior:
 
-### 3.2 Compiler
+- `import "foo"` — untouched until first `PKG_GET` (under `LazyInit`).
+- `import . "foo"` — on first *unresolved* identifier, advance foo to
+  `Parsed`/`Indexed` (needed to answer "is `Bar` local or `foo.Bar`?"),
+  but **not** `Initialize`.
+- `import _ "foo"` — its only meaning is side effects: `Initialize` eagerly
+  when the importing package initializes.
 
-- **Scope analysis per function**: declare/define locals into slots; a
-  variable that is captured by an inner function or has its address taken is
-  promoted to a cell. Loop variables follow Go 1.22+ semantics — a fresh cell
-  per iteration when captured.
-- **Total coverage**: every `ast.Node` kind emits code. `go`/`select`/`chan`/
-  `unsafe`-dependent constructs emit `OpUnsupported(feature)` inline — a
-  runtime panic exactly where the construct is reached, never a compile error.
+Circular imports: a package marked `Initializing` returns its partially
+initialized env; a member still missing errors at access time only.
+
+## 6. Index, Don't Evaluate
+
+v1's `EvalDeclarations` becomes `IndexDeclarations` — **nothing executes**:
+
+```go
+type PackageIndex struct {
+    Funcs  map[string]*Function  // *ast.FuncDecl, Chunk nil until compiled
+    Types  map[string]*TypeDecl  // TypeRef, unresolved
+    Vars   map[string]*VarDecl   // init expr kept as AST
+    Consts map[string]*ConstDecl // expr kept as AST
+}
+```
+
+`var x = expensive()` indexes as `VarDecl{InitAST: CallExpr(expensive)}`;
+it evaluates only at package `Initialize`.
+
+## 7. Compiler
+
+- **Per-function lazy compilation**, not per-package: `Function{Decl,
+  compileOnce, Chunk}` — `first CALL → compile → cache → execute`. Parsing a
+  package compiles nothing. This composes perfectly with lazy packages.
+- **Total coverage**: `default:` case of every node-kind switch emits
+  `TRAP`.
 - **Constants & positions**: literals, names, and call-site `[]ast.Expr`
-  (for special forms) go into the function's `Consts`; a parallel line table
-  maps ip → `token.Pos` for stack traces.
-- **Package compilation**: on first touch of a package, all its files are
-  parsed and all decls compiled. `var` initializers and `init()` run at that
-  moment (lazy init — the package's own imports still resolve lazily when
-  referenced). Circular imports: a package marked "loading" returns its
-  partially-initialized env; a member that is still missing errors at access
-  time only.
+  (special forms) go into `Chunk.Consts`; every `Instruction` carries
+  `token.Pos` for clean stack traces.
+- **Generics = monomorphize-on-use**: `Foo[int](x)` → specialization cache
+  `InstanceKey{FuncID, TypeArgs}` → compile `Foo[int]`. Start with explicit
+  type args; add inference from runtime argument types next (v1's heuristic);
+  unhandled patterns `TRAP`. Never a parse failure.
+- **Migration path**: an `OP_EVAL_AST nodeID` opcode can delegate
+  not-yet-ported constructs to the v1 evaluator as a slow path — compile the
+  skeleton first, port constructs incrementally, then retire the opcode (or
+  keep it for debugging).
 
-### 3.3 Bytecode and the stack machine
+## 8. Bytecode and the Stack VM
 
-- `Instr` is a fixed-size struct `{Op, A, B int32}` (or packed `uint64`).
-  `Func{Code []Instr, Consts []Value, NLocals int, Upvals []UpvalDesc}`.
-- Frame: `{fn *Func, ip, bp int, defers []deferred}`; one operand stack
-  shared by frames (single-threaded, as today).
-- Dispatch is a `for { switch op }` loop. Representative op set:
+```go
+type Instruction struct { Op Op; A, B uint32; Pos token.Pos }
+type Chunk struct { Code []Instruction; Consts []Value }
 
-  ```
-  OpLoadLocal/OpStoreLocal, OpLoadUpval/OpStoreUpval, OpAllocCell
-  OpLoadGlobal(nameIx), OpSelect(symIx), OpIndex, OpStoreIndex
-  OpLoadConst, OpPop, OpDup
-  OpBinary(op)/OpUnary(op)         // dynamic per-op dispatch
-  OpJump/OpJumpIfFalse, OpRangeNext
-  OpMakeSlice/OpMakeMap/OpMakeStruct/OpMakePointer
-  OpCall(argc, astIx), OpCallMethod, OpReturn
-  OpDefer, OpPanic, OpRecover
-  OpUnsupported(featureIx)
-  ```
+type Frame struct { Func *Function; IP, Base int; Defers []Value }
+type VM struct { Stack []Value; Frames []Frame; Runtime *Runtime }
+```
 
-- **Calls**: a call always leaves one result object on the stack; multi-value
-  returns are a `*Tuple` unpacked by multi-assign (same model as v1, simplest
-  correct option; a fixed-arity calling convention is a later optimization).
-- **defer/panic/recover are mapped onto Go's**: `panic(x)` executes
-  `panic(&ScriptPanic{v: x})`. Each frame's dispatch runs its registered
-  script-defers in a Go `defer` wrapper while unwinding; `recover()` converts
-  an in-flight `*ScriptPanic` back into a normal return value. This reuses
-  Go's unwinding instead of hand-rolling longjmp — the cheapest correct
-  implementation.
-- **Special forms**: a call site stores its raw argument ASTs in `Consts`.
-  `OpCall` checks the callee: if it is a `*SpecialForm`, it is invoked with
-  the unevaluated `[]ast.Expr` instead of evaluated args. Identical semantics
-  to v1's `RegisterSpecial`; convert-define-style macros keep working.
+Representative opcodes:
 
-### 3.4 Value model
-
-Start boxed (`type Value = any`), optimize later:
-
-- primitives: `int64` (all ints), `float64`, `string`, `bool`, `nil`
-- `*Cell` (mutable slot for pointers/addressed/captured vars)
-- `*Struct{Def *TypeDef, Fields []Value}`, `*Slice{Elems []Value}`,
-  `*Map{Pairs}`, `*Pointer{Cell *Cell}`
-- `*Closure{Fn *Func, Upvals []*Cell}`, `*BoundMethod`, `*Tuple`
-- `*TypeDef` — runtime type descriptors (name, kind, fields, lazy method set
-  including promoted methods through embedding). Named types get identity;
-  interfaces are satisfied by **duck typing**: a value satisfies an interface
-  iff its (lazy) method set covers the interface's. Assertions and type
-  switches are runtime checks on method sets — no static type world needed.
-- `*GenericFunc{TypeParams, Fn}` — instantiation at call time: type args
-  inferred from runtime argument types when not explicit (same heuristic as
-  v1; documented limitation).
-- `*Native{reflect.Value}` — the v1 `GoValue` equivalent for host-injected
-  values and native-call results. Field/method access goes through reflect;
-  conversions between `Value` and `reflect.Value` reuse the v1
-  marshal/unmarshal logic.
-
-### 3.5 Loader and resolver
-
-- `Resolver` interface: `ResolveDir(importPath) (dir string, err error)`.
-  Resolution order:
-  1. `go.work` workspace modules
-  2. main module: `module` path prefix → `rootDir/sub`
-  3. `replace` directives (local and versioned), parsed with
-     `golang.org/x/mod/modfile` (already a repo dependency) rather than the
-     hand-rolled line parser in `locator`
-  4. `vendor/modules.txt` when a vendor dir exists
-  5. `GOROOT/src/<path>` for stdlib
-  6. `GOMODCACHE/<mod>@<ver>/<sub>` from the main go.mod's require set
-     (module-graph pruning means requires already list transitives)
-  7. cache miss → error suggesting `go mod download` (opt-in auto-download
-     flag; `go mod download` is not `go list`, but implicit shelling-out is
-     still opt-in by default)
-- Reuse of the existing `locator` package behind `Resolver` is the pragmatic
-  path (it already does all of this without `go list`, using only `go env`);
-  a fresh `resolve/` package is the independent path. Recommended: wrap
-  `locator` first, swap later if desired — go-scan dependency stays optional
-  either way.
-- `*LazyPackage{Path}`: created from a file's import table; first `OpSelect`
-  triggers locate→parse→compile→init→member lookup, cached per path.
-
-### 3.6 Stdlib strategy — fixing the binding pain
-
-Three tiers, tried in order per package:
-
-1. **Source interpretation (default)**: load `$GOROOT/src/<pkg>` like any
-   other package. Works for the pure-Go majority (`strings`, `bytes`, `sort`,
-   `slices`, `errors`, `path`, `strconv` mostly…). An uninterpretable leaf
-   (`unsafe`, assembly internals) panics only if actually called.
-2. **Go-source shims**: `gostd/` ships ordinary `.go` files implementing
-   stdlib-compatible APIs over a small native core — written in Go, readable
-   by gopls, no codegen. Use where real stdlib source is too gnarly (e.g. a
-   simplified `fmt`, `strings.Builder` internals).
-3. **Natives**: `func(*VM, []Value) []Value` registered per symbol — the true
-   syscall boundary (file I/O, `os.Getenv`, `time.Now`, printing). Optional
-   `gen-natives` emits **one** generated file for a user-chosen package list,
-   replacing v1's per-package `install.go`.
-
-Net effect: bindings exist only at the boundary where interpretation cannot
-reach; adding a stdlib package is usually "it just works" or "write a `.go`
-shim", not "write a binding".
-
-### 3.7 Interop surface (unchanged concepts, new internals)
-
-- `Interpreter.Globals`/`Register` — reflect-wrapped host values/functions.
-- `Result.As(&dst)` — reflect unmarshal (port v1's `unmarshal`).
-- `RegisterSpecial` — macro-style special forms (see §3.3).
-- Entry points: `interp.Call(ctx, "import/path", "Func", args...)`;
-  `main.main` by default; methods reachable as `pkg.Type.Method` where
-  unambiguous.
-- CLI: `minigo run -pkg ./dir -fn Func`, `-eval`, `repl`, `gen-natives`.
-
-### 3.8 Special forms and gopls
-
-Scripts calling special forms stay gopls-clean the way convert-define already
-does it: the DSL's import path resolves to a real Go package containing no-op
-stub signatures, so gopls type-checks the script while the VM dispatches the
-call to the registered special form.
-
-## 4. Requirement → Mechanism Map
-
-| Requirement | Mechanism |
+| Category | Ops |
 |---|---|
-| go/ast only | `go/parser` + `*ast.File`; bytecode, no type-checker |
-| parse everything / panic at runtime | total compiler + `OpUnsupported`; dynamic global resolution |
-| free entry point | lazy package load + `Call(path, name, args)` |
-| gopls | plain module, `.go` scripts, stub packages for DSLs |
-| lazy per-package import | import table → `*LazyPackage` → load on first `OpSelect` |
-| module system | `Resolver` chain over `x/mod/modfile`; no `go list` |
-| less binding work | source-interpret → `.go` shims → small native boundary |
-| stack VM | compile AST → `[]Instr`; frames + operand stack |
-| macros | call-site ASTs in `Consts`; `*SpecialForm` natives |
+| values | `CONST`, `NIL`, `ZERO` |
+| locals | `GET_LOCAL`, `SET_LOCAL`, `GET_UPVALUE`, `SET_UPVALUE` |
+| globals | `GET_GLOBAL`, `SET_GLOBAL` |
+| packages | `PKG_GET` |
+| ops | `ADD`, `SUB`, `EQ`, `LT`, `UNARY` |
+| control | `JUMP`, `JUMP_IF_FALSE`, `RANGE_NEXT` |
+| calls | `CALL`, `RETURN`, `MAKE_CLOSURE` |
+| composites | `MAKE_STRUCT`, `MAKE_SLICE`, `MAKE_MAP` |
+| access | `GET_FIELD`, `SET_FIELD`, `INDEX`, `SET_INDEX` |
+| semantics | `CONVERT`, `TYPE_ASSERT` |
+| failure | `DEFER`, `PANIC`, `RECOVER`, `TRAP` (+ `OP_EVAL_AST` while migrating) |
 
-## 5. Trade-offs and Risks
+**Calls** leave one object on the stack; multi-value returns are a `*Tuple`
+unpacked by multi-assign (v1's model — simplest correct; a fixed-arity
+convention is a later optimization).
 
-- **Speed vs. laziness**: runtime name resolution costs a map lookup per
-  global/member access. Mitigation: per-callsite member cache on packages,
-  and later an inline cache on `OpSelect`. A stack VM with index-resolved
-  locals still beats tree-walking.
-- **No compile-time errors**: misspelled globals panic at runtime. Accepted
-  per requirements; positional stack traces mitigate debugging cost.
-- **Generics inference stays heuristic** (no `go/types`): explicit
-  `[T](args)` works; inference from runtime arg types covers common cases;
-  documented as a limit, same as v1.
-- **Stdlib interpretation is partial by nature**: packages tight to
-  runtime/unsafe/assembly can't be fully interpreted; the shim+native tiers
-  cover the practical subset. The boundary is documented, not hidden.
-- **`go`/`select`/channels**: compile to `OpUnsupported` — parseable, panics
-  if reached. (If wanted later, real goroutines are feasible on this VM since
-  frames/stacks are per-goroutine objects; out of scope for v2.)
-- **Member visibility**: source-interpreted packages should expose only
-  exported symbols to importers (filter at `OpSelect`), while internal decls
-  stay visible inside the package's own env.
+**defer/panic/recover map onto Go's own mechanisms**: script `panic(x)` runs
+`panic(&ScriptPanic{v: x})`; a frame-level `defer` wrapper runs pending
+script-defers while unwinding; `recover()` converts an in-flight
+`*ScriptPanic` to a value. Two distinct unwinding types:
 
-## 6. Alternatives Considered
+```go
+type Panic struct { Value Value }              // catchable by recover()
+type Trap  struct { Pos token.Pos; Reason string } // bypasses recover(),
+                                                  // unwinds to the VM boundary
+```
 
-- **Keep the tree-walker, refactor `evaluator.go`** — does not deliver the VM
-  and keeps the monolith's resolution complexity. Rejected.
-- **Adopt `traefik/yaegi`** — it already ships generated stdlib symbol tables
-  and interprets imports from source. Rejected as primary: heavy external
-  dependency, its own object system and eager-ish package model, and the
-  goal here is a deliberately small core we control. Worth a spike only if
-  the VM effort balloons.
-- **Transpile to Go + compile/plugin** — needs a toolchain at runtime and
-  loses the lazy, embeddable character. Rejected.
-- **`go/types`-assisted compilation** — banned by repo rules (eager imports).
+A `Trap` is a VM-level failure (`unsupported select statement`), never a
+script panic — `recover()` must not swallow it. Stack traces render as
+`file:line in Func` chains from per-instruction `Pos`.
 
-## 7. Phased Implementation
+## 9. Value Model
 
-1. **Skeleton**: value model, compiler for expressions/functions/control
-   flow, VM core, `OpLoadGlobal` + `*LazyPackage` + `Resolver` →
-   `minigo run -fn hello file.go` works.
-2. **Composites**: struct/slice/map/pointer, methods, field/index assign.
-3. **Interfaces + generics-lite**: method sets, duck typing, instantiation.
-4. **defer/panic/recover** via Go-panic mapping; stack traces.
-5. **gostd shims + native boundary + `gen-natives`**.
-6. **Special forms, CLI, REPL.**
-7. **Conformance harness**: golden `.go` files run under both `go run` and
-   the VM (differential tests); port v1 `testdata` cases.
+Start boxed, optimize later:
 
-Rough estimate in Devin terms: a demonstrable core (phases 1–2) ≈ 1 session;
-a solid MVP (through 5) ≈ 2–3 sessions; conformance polish is ongoing.
+```go
+type Value struct { Type *Type; Data any }   // v0 — tagged/u64 repr is a
+                                            //      later optimization
+```
 
-## 8. Open Questions
+- Primitives `int64`/`float64`/`string`/`bool`/`nil`; `*Cell` for mutable
+  slots; `*Struct`, `*Slice`, `*Map`, `*Pointer`, `*Closure`, `*BoundMethod`,
+  `*Tuple`, `*GenericFunc`.
+- **`reflect.Value` is not the core representation** — it is confined to the
+  FFI boundary (`*Native` box for host/native values).
+- Type identity: `(packageID, typeName)` for named types; structural identity
+  for anonymous types. Interfaces satisfied by **duck typing** against lazily
+  computed method sets (incl. promoted methods via embedding); assertions and
+  type switches are runtime method-set checks.
+- **`TypeRef` — AST type expressions stay lazy**: `NamedTypeRef{Pkg, Name}`,
+  `PointerTypeRef{Elem}`, `SliceTypeRef{Elem}`, `MapTypeRef{K,V}`… Indexing
+  `type Foo struct { Client *http.Client }` does **not** load `net/http`;
+  resolution happens when `Foo` is instantiated or its method set is needed.
 
-1. Land as `minigo2/` side-by-side (recommended: compare during migration,
-   then swap) or replace `minigo/` in place?
-2. Reuse `locator` behind `Resolver` (recommended now) vs. a fresh
-   standalone `resolve/` package?
-3. Opt-in `go mod download` on cache miss — acceptable, or strict error only?
-4. Range-over-func iterators (`for f := range seq`): keep desugaring to a
-   yield-closure call as v1 does, or defer to phase 3+? (Recommend keeping —
-   it compiles to an ordinary function call.)
+## 10. Resolution — the module system without graph expansion
+
+```go
+type PackageResolver interface {
+    Locate(ctx context.Context, fromDir, importPath string, cfg BuildConfig) (*PackageMeta, error)
+}
+type PackageMeta struct {
+    ImportPath, Name, Dir string
+    GoFiles, CgoFiles     []string
+    Standard              bool
+    Module                *ModuleMeta
+}
+```
+
+**Recommended default oracle: `go list -e -json -find <pkg>`** — `-find`
+identifies a package *without resolving dependencies* (documented behavior),
+so it stays within our laziness rules while giving us `Dir`, `Name`,
+`GoFiles`, `CgoFiles`, `Standard`, `Module`, **and correct
+GOOS/GOARCH/build-tag file selection** for free — the part a hand-rolled
+resolver gets wrong (`*_windows.go`, `//go:build`, cgo file lists).
+
+> ⚠️ **Decision needed** — repo rules currently ban `go list`. The ban's
+> rationale is avoiding eager dependency expansion, which `-find` does not
+> do; still, adopting it needs an explicit OK. Trade-off: requires the `go`
+> toolchain at runtime (fine for a dev-tooling interpreter; a consideration
+> for embedded use) and one process spawn per new package (cacheable).
+
+Backends behind the interface:
+
+- `resolve/go_command.go` — `go list -find` oracle (recommended default)
+- `resolve/gomod.go` — pure-Go fallback: `go.work` → go.mod module path +
+  require/replace via `x/mod/modfile` → `vendor/modules.txt` → `GOROOT/src`
+  → `GOMODCACHE/<mod>@<ver>`; portable but must approximate build-tag file
+  selection
+- `resolve/goscan_adapter.go` — optional `go-scan` `locator` adapter (the
+  ideas/tests transfer; the dependency does not)
+
+## 11. Packages Come From Providers, Not From the Loader
+
+```go
+type PackageProvider interface {
+    Open(ctx context.Context, meta *PackageMeta) (PackageSource, bool, error)
+}
+```
+
+Provider chain: `IntrinsicProvider` → `SourceProvider` →
+`OptionalNativeProvider`.
+
+- **Source (default)**: ordinary packages, incl. `$GOROOT` stdlib — parse,
+  index, execute.
+- **Intrinsic**: `unsafe`, `runtime`, `minigo.dev/host`, syscall-ish host IO —
+  where source cannot reach. Not package-API bindings; a **fixed set of
+  runtime primitives** (`memmove`-class ops, OS boundary, `unsafe.Sizeof`)
+  collapses the old `fmt/strings/json/...`-per-package binding maintenance
+  into a bounded intrinsic table.
+- **OptionalNative**: a real Go function bound via reflect for hot paths
+  (e.g. `encoding/json`) — opt-in, core VM is unaware.
+
+### Host extension via stub packages — the gopls-friendly pattern
+
+No magic `Globals` map for new code (kept as convenience for embedding):
+host capabilities live behind a *real* package path:
+
+```go
+import "minigo.dev/host"
+func Config() string { return host.Getenv("HOME") }
+```
+
+The repo ships `package host` with stub bodies (`panic("minigo intrinsic")`),
+so gopls/gofmt/goimports/rename all work on scripts; the VM intercepts
+`minigo.dev/host.*` as intrinsics. Special forms work the same way
+(convert-define's `define` package is the existing precedent).
+
+## 12. API — Engine + Session
+
+```go
+engine := minigo.New(minigo.Config{
+    Resolver: minigo.NewGoResolver(),
+    InitMode: minigo.LazyInit,
+})
+session := engine.NewSession()          // shared package/init state
+result, err := session.Run(ctx, minigo.Entry{
+    Package: "./config", Function: "Build",
+    Args: []minigo.Value{minigo.String("prod")},
+})
+session.Run(ctx, minigo.Entry{Package: "./config", Function: "Preview"})
+engine.NewSession()                      // fresh globals for isolation
+```
+
+- Entry points stay **outside** the source — `minigo run ./app --entry Build`
+  — so scripts remain perfectly ordinary Go.
+- `Session` naturally extends to a REPL; `engine.NewSession()` gives a clean
+  global state.
+- `Result.As(&dst)` reflect-unmarshal and `Register(pkg, symbols)`/`Globals`
+  port over as convenience APIs.
+
+## 13. Package Layout
+
+```text
+minigo2/
+  cmd/minigo/            CLI: run --entry, repl, gen-intrinsics
+  syntax/                parse.go — go/parser wrapper (syntax.File wraps *ast.File)
+  resolve/               resolver.go, go_command.go, gomod.go, goscan.go
+  loader/                package.go, import.go, lifecycle.go
+  index/                 package_index.go, declarations.go
+  types/                 type.go, typeref.go, methodset.go
+  bytecode/              opcode.go, chunk.go, disasm.go
+  compile/               compiler.go, expr.go, stmt.go, func.go
+  vm/                    vm.go, frame.go, call.go, panic.go, defer.go
+  runtime/               value.go, heap.go, slice.go, map.go, iface.go
+  builtin/               builtin.go
+  intrinsic/             provider.go, host.go, runtime.go
+  ffi/                   reflect.go, generated.go
+  debug/                 stacktrace.go, position.go
+```
+
+## 14. Boot Sequence
+
+```text
+minigo run ./app --entry BuildConfig
+    Resolve("./app") → parse app → Index → find BuildConfig
+    → initialize app → compile BuildConfig → CALL
+        ... PKG_GET("foo","X") → first access
+            → Resolve foo → Parse foo → Index foo → Initialize foo → X
+```
+
+Every step after the entry is demand-driven.
+
+## 15. Trade-offs and Risks
+
+- **Runtime name resolution cost** — map lookup per global/member access;
+  mitigated by per-callsite member caches, later an `OpSelect` inline cache.
+  Index-resolved locals still beat tree-walking.
+- **No compile-time name errors** — misspelled globals trap at runtime;
+  positional stack traces mitigate.
+- **`go list -find` needs the go toolchain** at runtime + process spawns
+  (cacheable). The pure-Go resolver avoids both but approximates build-tag
+  file selection. Flagged for decision.
+- **Generics inference stays heuristic** (no `go/types`) — explicit type args
+  first, inference next, unhandled patterns `TRAP`.
+- **Stdlib interpretation is partial by nature** — runtime/unsafe/assembly
+  leaves can't be interpreted; intrinsics + optional natives cover the
+  practical subset. The boundary is documented, not hidden.
+- **`go`/`select`/channels** — `TRAP` for now; the frame/stack model leaves
+  room for real goroutines later (per-goroutine VM state) — out of scope.
+- **Init divergence is deliberate** — `LazyInit` changes observable init
+  order vs Go; `GoCompatibleInit` is offered for compatibility-sensitive
+  use.
+- **Imported visibility** — source-interpreted packages expose only exported
+  symbols to importers (filter at `PKG_GET`); internals stay in the package
+  env.
+
+## 16. Alternatives Considered
+
+- **In-place refactor of the tree-walker** — keeps the coupled monolith and
+  delivers no VM. Rejected.
+- **Adopt `traefik/yaegi`** — ships generated stdlib symbol tables and
+  interprets imports from source. Rejected as primary: heavy external dep,
+  its own object system and package model, and the goal is a small
+  controlled core. A spike candidate only if VM effort balloons.
+- **Transpile to Go + plugin/compile** — `plugin` is Linux/FreeBSD/macOS-only
+  and requires exact toolchain/build-tag match (runtime crash risk per Go
+  docs); loses lazy embeddability anyway. Rejected.
+- **`go/types`-assisted compilation** — reintroduces eager transitive loading.
+  Rejected. Editor-level type correctness is delegated to gopls; the VM's
+  runtime type system stays deliberately dumber (clean responsibility split).
+
+## 17. Phased Implementation
+
+1. **Skeleton**: resolver + parser + `PackageIndex` — parse/index GOROOT and
+   large repos *without executing*; proves the lazy pipeline.
+2. **VM core**: values, frames, expressions, calls, control flow →
+   `minigo run --entry hello` works.
+3. **Lazy packages end-to-end**: `PKG_GET` lifecycle + init ordering +
+   `TypeRef`.
+4. **Composites + methods + interfaces** (method sets, duck typing).
+5. **defer/panic/recover** (Panic/Trap split), stack traces.
+6. **Generics-lite** (monomorphize-on-use), iterators/range-over-func as
+   yield-closure calls.
+7. **Intrinsic boundary + stdlib via source**, `minigo.dev/host` stubs,
+   special forms, CLI/REPL.
+8. **Conformance harness**: differential tests — golden `.go` files under
+   `go run` vs VM; port v1 `testdata`.
+
+Rough estimate in Devin terms: a demonstrable core (1–3) ≈ 1 session; a
+solid MVP (through 7) ≈ 2–3 sessions; conformance is ongoing.
+
+## 18. Open Questions
+
+1. **`go list -e -json -find` as default resolver?** Conflicts with the repo's
+   `go list` ban (the ban's eager-loading rationale doesn't apply to `-find`,
+   but it needs explicit approval). Alternative: pure-Go resolver default +
+   go-command opt-in.
+2. **Location**: `minigo2/` inside go-scan (side-by-side, then swap) vs a new
+   standalone repo/module? 案2 recommends separate implementation regardless;
+   in-repo `minigo2/` keeps CI/tooling and is recommended here.
+3. **Reuse `locator`** as the pure-Go resolver backend via adapter, or write
+   `resolve/gomod.go` fresh? (locator already does the job but has a
+   hand-rolled go.mod parser; `x/mod/modfile` is cleaner.)
+4. **GoCompatibleInit** — needed in v2.0 or defer until requested?
+5. **`OP_EVAL_AST` migration bridge** — port constructs incrementally from
+   the v1 evaluator (faster MVP) vs clean-slate VM (smaller final code)?

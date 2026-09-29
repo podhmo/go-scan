@@ -19,7 +19,7 @@ import (
 //	int64, float64, string, bool, Nil,
 //	*Cell, *Slice, *Map, *Struct, *TypeDef,
 //	*Function, *Closure, *BoundMethod, *BuiltinFunc, *Tuple,
-//	*Package, *Iterator, *GoValue
+//	*Package, *Iterator, *GoValue, *TypedNil, *IfaceNil
 type Value = any
 
 // Nil is the nil value.
@@ -27,6 +27,81 @@ type Nil struct{}
 
 // NIL is the singleton nil.
 var NIL Value = Nil{}
+
+// TypedNil is a nil value that knows its (non-interface) type: the zero of
+// `var p *int`, `var s []int`, `(*int)(nil)`, `return nil` under a *T
+// result. It still compares equal to nil — a nil pointer IS nil in Go —
+// but carries enough type information to distinguish `x == nil` once it
+// is stored into an interface-typed slot (see IfaceNil), to report the
+// right zero through comma-ok asserts, and to panic on deref like a real
+// nil pointer.
+type TypedNil struct{ Typ *TypeDef }
+
+// IfaceNil is a TypedNil that crossed an interface-typed boundary
+// (`var x any = (*int)(nil)`, an `any` parameter, an `any` result). The
+// interface records a dynamic type, so unlike a bare TypedNil it is NOT
+// nil: `x == nil` is false, `if x` is true, and `x.(T)` sees the
+// recorded dynamic type.
+type IfaceNil struct{ Typ *TypeDef }
+
+// Zero returns the zero value of a typedef: a Struct with nil fields,
+// a TypedNil for nilable kinds (pointer, slice, map, chan, func), NIL for
+// interface types, and the matching literal zero for basic types. Named
+// basic types approximate through int64 storage.
+func Zero(td *TypeDef) Value {
+	if td == nil {
+		return NIL
+	}
+	switch td.Kind {
+	case KindInterface:
+		return NIL
+	case KindSlice, KindMap, KindChan, KindFunc, KindPointer:
+		return &TypedNil{Typ: td}
+	case KindStruct:
+		s := &Struct{Def: td, Fields: make([]Value, len(td.Fields))}
+		for i := range s.Fields {
+			s.Fields[i] = NIL
+		}
+		return s
+	}
+	switch td.Name {
+	case "string":
+		return ""
+	case "bool":
+		return false
+	case "float32", "float64":
+		return float64(0)
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune", "uintptr":
+		return int64(0)
+	}
+	if td.Kind == KindNamedBasic {
+		// `type S string` zeros as the underlying literal: the declared
+		// name is the new name, so read the underlying ident instead.
+		if id, ok := td.Anon.(*ast.Ident); ok {
+			if z, ok := basicZero(id.Name); ok {
+				return z
+			}
+		}
+		return int64(0) // unresolvable underlying approximates via int64
+	}
+	return NIL
+}
+
+func basicZero(name string) (Value, bool) {
+	switch name {
+	case "string":
+		return "", true
+	case "bool":
+		return false, true
+	case "float32", "float64":
+		return float64(0), true
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune", "uintptr":
+		return int64(0), true
+	}
+	return nil, false
+}
 
 // Cell is a mutable slot. Every declared variable is a cell, which makes
 // closures, pointers and addressable receivers uniform: a pointer IS a cell.
@@ -163,7 +238,8 @@ type Slice struct{ Elems []Value }
 // Map is a Go map value (keys must be comparable basics for now).
 type Map struct {
 	Pairs map[Value]Value
-	Order []Value // insertion order for stable-ish range
+	Order []Value  // insertion order for stable-ish range
+	Typ   *TypeDef // declared map type (nil => missing keys yield NIL)
 }
 
 // Chan is a channel value. minigo2 approximates goroutines by running `go`
@@ -189,7 +265,9 @@ type TypeDef struct {
 	Methods map[string]*Function // lazily built method set
 	once    sync.Once
 
-	TParams []string // generic type parameter names (type Foo[T any] ...)
+	TParams      []string         // generic type parameter names (type Foo[T any] ...)
+	TConstraints []ast.Expr       // constraint expr per TParams entry (nil = unconstrained)
+	Binds        map[string]Value // instantiation bindings: type params -> TypeDef args
 
 	// Interfaces: MReqs are the directly declared method names; IEmbeds are
 	// the embedded element expressions (io.Reader, ~int unions, ...). The
@@ -217,6 +295,7 @@ const (
 	KindInterface
 	KindAlias
 	KindChan
+	KindPointer // *T — a named or anonymous pointer type
 )
 
 // Struct is an instance of a KindStruct TypeDef.
@@ -244,6 +323,13 @@ type VMCaller interface {
 	// Recover implements the recover() builtin: it returns the in-flight
 	// panic value when called directly by a deferred function, else nil.
 	Recover() Value
+	// Member selects base.name for a host intrinsic (e.g. calling a
+	// script-defined Unwrap on an error value); ok=false when the member
+	// does not exist or selection traps.
+	Member(base Value, name string) (m Value, ok bool)
+	// Zero returns the Go zero value of a typedef (struct fields get
+	// typed zeros, nilable kinds get TypedNil) — used by new().
+	Zero(td *TypeDef) Value
 }
 
 // Function is a compiled-or-compilable function. Chunk is produced lazily
@@ -256,8 +342,9 @@ type Function struct {
 	Recv    string // receiver type name, "" for plain funcs
 	PtrRecv bool
 
-	TParams []string         // generic type parameter names
-	Binds   map[string]Value // compile-time bindings: type params -> TypeDef args
+	TParams      []string         // generic type parameter names
+	TConstraints []ast.Expr       // constraint expr per TParams entry
+	Binds        map[string]Value // compile-time bindings: type params -> TypeDef args
 
 	Compile func(*Function) error // injected by the engine
 	once    sync.Once

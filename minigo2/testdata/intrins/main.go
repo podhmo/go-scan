@@ -47,4 +47,11 @@ func SlicesSortInPlace() string {
 	return s[0] + s[1] + s[2] // "abc"
 }
 
+// Prints writes to the engine's configured output (WithOutput) — the
+// assertion lives in the test, which captures the buffer.
+func Prints() int {
+	fmt.Println("hello", 42)
+	return 0
+}
+
 func main() {}

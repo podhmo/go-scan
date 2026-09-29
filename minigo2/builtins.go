@@ -2,14 +2,23 @@ package minigo2
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/podhmo/go-scan/minigo2/runtime"
 )
 
 // builtins returns the predeclared universe: builtin functions and builtin
 // type names (as *TypeDef values so `int(x)` is a normal conversion call).
-func builtins() *runtime.Env {
+// print/println write to the engine's configured output.
+func builtins(e *Engine) *runtime.Env {
 	env := runtime.NewEnv()
+
+	out := func() io.Writer {
+		if e.out == nil {
+			return io.Discard
+		}
+		return e.out
+	}
 
 	bf := func(name string, fn func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error)) {
 		env.Set(name, &runtime.BuiltinFunc{Name: name, Fn: fn})
@@ -27,31 +36,67 @@ func builtins() *runtime.Env {
 		return lenOf(args[0])
 	})
 	bf("append", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
-		s, ok := args[0].(*runtime.Slice)
-		if !ok {
-			if args[0] == runtime.NIL {
-				s = &runtime.Slice{}
-			} else {
-				return nil, fmt.Errorf("append on %T", args[0])
-			}
+		var s *runtime.Slice
+		switch x := args[0].(type) {
+		case *runtime.Slice:
+			s = x
+		case *runtime.Cell:
+			s, _ = x.Elem.(*runtime.Slice)
+		case *runtime.IfaceNil:
+			s = nil // nil slice boxed in an interface
+		case *runtime.TypedNil:
+			s = nil
+		case runtime.Nil:
+			s = nil
+		default:
+			return nil, fmt.Errorf("append on %T", args[0])
 		}
-		return &runtime.Slice{Elems: append(append([]runtime.Value{}, s.Elems...), args[1:]...)}, nil
+		var elems []runtime.Value
+		if s != nil {
+			elems = s.Elems
+		}
+		return &runtime.Slice{Elems: append(append([]runtime.Value{}, elems...), args[1:]...)}, nil
 	})
 	bf("copy", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
-		dst, ok1 := args[0].(*runtime.Slice)
-		src, ok2 := args[1].(*runtime.Slice)
+		sliceOf := func(x runtime.Value) (*runtime.Slice, bool) {
+			switch s := x.(type) {
+			case *runtime.Slice:
+				return s, true
+			case *runtime.Cell:
+				if ss, ok := s.Elem.(*runtime.Slice); ok {
+					return ss, true
+				}
+			case *runtime.TypedNil, *runtime.IfaceNil, runtime.Nil:
+				return nil, true // nil slice: copies 0 elements
+			}
+			return nil, false
+		}
+		dst, ok1 := sliceOf(args[0])
+		src, ok2 := sliceOf(args[1])
 		if !ok1 || !ok2 {
 			return nil, fmt.Errorf("copy on non-slice")
+		}
+		if dst == nil || src == nil {
+			return int64(0), nil
 		}
 		n := copy(dst.Elems, src.Elems)
 		return int64(n), nil
 	})
 	bf("delete", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
-		m, ok := args[0].(*runtime.Map)
-		if !ok {
+		switch m := args[0].(type) {
+		case *runtime.Map:
+			delete(m.Pairs, args[1])
+		case *runtime.Cell:
+			if mm, ok := m.Elem.(*runtime.Map); ok {
+				delete(mm.Pairs, args[1])
+				return runtime.NIL, nil
+			}
+			return nil, fmt.Errorf("delete on %T", args[0])
+		case *runtime.TypedNil, *runtime.IfaceNil, runtime.Nil:
+			// delete on a nil map is a no-op
+		default:
 			return nil, fmt.Errorf("delete on %T", args[0])
 		}
-		delete(m.Pairs, args[1])
 		return runtime.NIL, nil
 	})
 	bf("make", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
@@ -71,7 +116,7 @@ func builtins() *runtime.Env {
 			}
 			return &runtime.Slice{Elems: el}, nil
 		case runtime.KindMap:
-			return &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}}, nil
+			return &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}, Typ: td}, nil
 		case runtime.KindChan:
 			// buffer capacity is not modeled: sends never block
 			return &runtime.Chan{}, nil
@@ -80,17 +125,23 @@ func builtins() *runtime.Env {
 		}
 	})
 	bf("new", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
-		return &runtime.Cell{Elem: runtime.NIL}, nil
+		td, _ := args[0].(*runtime.TypeDef)
+		return &runtime.Cell{Elem: v.Zero(td)}, nil
 	})
 	bf("close", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
-		ch, ok := args[0].(*runtime.Chan)
-		if !ok {
-			if c, isCell := args[0].(*runtime.Cell); isCell {
-				ch, ok = c.Elem.(*runtime.Chan)
-			}
-			if !ok {
-				return nil, fmt.Errorf("close of non-channel %T", args[0])
-			}
+		var ch *runtime.Chan
+		switch x := args[0].(type) {
+		case *runtime.Chan:
+			ch = x
+		case *runtime.Cell:
+			ch, _ = x.Elem.(*runtime.Chan)
+		case *runtime.TypedNil, *runtime.IfaceNil, runtime.Nil:
+			panic(&runtime.Panic{Value: "close of nil channel"})
+		default:
+			return nil, fmt.Errorf("close of non-channel %T", args[0])
+		}
+		if ch == nil {
+			panic(&runtime.Panic{Value: "close of nil channel"})
 		}
 		if ch.Closed {
 			panic(&runtime.Panic{Value: "close of closed channel"})
@@ -106,7 +157,7 @@ func builtins() *runtime.Env {
 	})
 	bf("print", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		for _, a := range args {
-			fmt.Print(display(a))
+			fmt.Fprint(out(), display(a))
 		}
 		return runtime.NIL, nil
 	})
@@ -115,7 +166,7 @@ func builtins() *runtime.Env {
 		for i, a := range args {
 			parts[i] = display(a)
 		}
-		fmt.Println(parts...)
+		fmt.Fprintln(out(), parts...)
 		return runtime.NIL, nil
 	})
 
@@ -143,7 +194,7 @@ func lenOf(v runtime.Value) (runtime.Value, error) {
 		return int64(len(x.Elems)), nil
 	case string:
 		return int64(len(x)), nil
-	case runtime.Nil:
+	case runtime.Nil, *runtime.TypedNil, *runtime.IfaceNil:
 		return int64(0), nil // len(nil slice/map/chan) == 0
 	default:
 		return nil, fmt.Errorf("len of %T", v)
@@ -152,7 +203,7 @@ func lenOf(v runtime.Value) (runtime.Value, error) {
 
 func display(v runtime.Value) any {
 	switch x := v.(type) {
-	case runtime.Nil:
+	case runtime.Nil, *runtime.TypedNil, *runtime.IfaceNil:
 		return nil
 	case *runtime.Cell:
 		return display(x.Elem)

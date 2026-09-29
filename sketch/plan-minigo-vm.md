@@ -675,3 +675,69 @@ solid MVP (through 7) ≈ 2–3 sessions; conformance is ongoing.
    the v1 evaluator (faster MVP) vs clean-slate VM (smaller final code)?
 6. **`SpecialContext` surface** — the full interface above, or start with
    `Eval`/`Resolve`/`Format` only and grow on demand?
+
+## 20. Phase-0 Implementation Notes (minigo2 skeleton)
+
+Deltas and gaps discovered while building the skeleton (`minigo2/` tree).
+These refine — not invalidate — the design above.
+
+### Representations chosen
+
+- **Pointers are cells.** Every declared variable is a `*Cell`; `&x` is the
+  cell itself (`OpLocalRef`/`OpGlobalRef`). Struct literals produce `*Struct`;
+  `&T{...}` wraps in a cell (`OpBox`). `*p = v` is `OpSetInd` on the cell.
+- **Receiver is param slot 0**, pre-bound by the VM; `BoundMethod{Recv, Fn}`
+  is created by `OpSelect` when a method name hits a `Struct`'s method set.
+  Method expressions (`T.M`) return the raw `*Function`.
+- **Multi-return is `*Tuple`** + `OpPack`/`OpUnpack` at call/assign sites.
+- **`iota` is a hidden local** in the synthetic `__init__` chunk, reset per
+  `GenDecl` spec index; const specs with no values reuse the previous spec's
+  values (`Decl.Inherited`, populated at index time).
+- **Bare `return` reads `Chunk.NamedSlots`** (local slots of named results).
+- **Conversions are calls on `*TypeDef`**: `int(x)` is `OpGlobal "int"` →
+  builtin typedef → `OpCall` → host-side `convert`. `make`/`new`/call
+  position route syntactic type forms (`[]T`, `map[K]V`, `struct{...}`,
+  `func(...)` — `isTypeForm`) through `typeExpr`; `chan`/`interface` forms
+  trap.
+- **LHS store order**: `OpSetField`/`OpSetIndex`/`OpSetInd` pop value-then-
+  base(-key); since RHS is evaluated before LHS bases, `OpSwap`/`OpRot3`
+  reorder the operand stack (Go leaves LHS-vs-RHS eval order unspecified).
+
+### Deviations from the design text
+
+- **Function literals compile eagerly** with the parent chunk — not
+  compile-on-first-call. `compileOnce` laziness currently applies only to
+  top-level functions. Funclits are embedded as `*Function` constants and
+  become `Closure` values via `OpMakeClosure` + `UpvalDesc` (parent local
+  or parent upval).
+- **`defer`, `go`, `select`, channel ops, type assertions, spread calls,
+  fallthrough, labels/goto** are `OpTrap` in phase-0. `defer` is common
+  enough in real code that it should move up the phase list (defer→Go
+  panic mapping still stands as the approach).
+- **`nil` is the zero value for typed vars** (`var x T` → `nil`, not
+  type-directed zero). Named-type identity is not preserved on values
+  (`type MyInt int` converts pass-through).
+- **Map literal keys that are identifiers are a known ambiguity**: in kv
+  position an `Ident` key compiles to its name string (struct field case);
+  map keys requiring identifier evaluation need typedef info and trap.
+- **`parser.ParseFile(fset, name, nil, …)` footgun**: a typed-nil `[]byte`
+  passed as `src` reads as an empty file — pass `any(nil)` explicitly.
+- **Entry resolution**: `Engine.Package(ctx, ref)` accepts either an import
+  path or a directory (`resolve.LooksLikeDir`); dir-located packages get
+  synthetic paths (`<dir>` + abs) when `locator.PathToImport` fails
+  (outside-module trees).
+- **`&s.f`, `x[i]++`, compound-assign on non-ident targets** trap —
+  they need base/key dup patterns not yet emitted.
+- **`import "x/vN"` local name** falls back to the parent path element
+  when basename is `vN`; basename≠package-name is otherwise still
+  unresolved (cheap `PackageClauseOnly` metadata pass is the fix).
+
+### Lifecycle note
+
+`InitMode.LazyInit` is not implemented: `Package.Member` → `EnsureReady` →
+`Bootstrap` (compiled `__init__`: var/const specs in file order, then
+`init()` calls). Function bodies still compile lazily on first `CALL`,
+so an imported package pays parse+index only until a member is touched —
+the expensive part is avoided, per the `lazyboom` panic test.
+
+## (end)

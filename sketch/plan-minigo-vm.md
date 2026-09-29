@@ -1376,5 +1376,11 @@ that now pass:
   first real consumer confirms it, but each new special-form host should
   keep an aliased-import case in its own acceptance suite, since the
   dispatch table is populated per tool, not per engine.
+- **`ResolveSymbol` beats a raw `Scopes` lookup for exactly the reason
+  the plan gave the interface the method.** convert-define now calls
+  `ctx.ResolveSymbol(expr)` for both quoted `pkg.Type` and `pkg.Func`
+  args: it still never materializes, and it additionally rejects a local
+  or captured variable shadowing an import name — silent
+  misresolution the direct `Scopes[file][name]` read could not see.
 
 ## (end)

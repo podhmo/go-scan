@@ -98,17 +98,6 @@ func (r *Runner) Run(ctx context.Context, filename string) error {
 	return nil
 }
 
-// importPath resolves a file-local import name to its import path without
-// materializing the imported package (the import table is built at parse
-// time).
-func (r *Runner) importPath(ctx runtime.SpecialContext, ident *ast.Ident) (string, error) {
-	ref, ok := ctx.Package().Scopes[ctx.File()][ident.Name]
-	if !ok {
-		return "", ctx.Errorf(ident, "package alias %q not found in imports", ident.Name)
-	}
-	return ref.Path, nil
-}
-
 func (r *Runner) handleConvert(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
 	args := call.Call.Args
 	if len(args) != 1 {
@@ -213,15 +202,11 @@ func (r *Runner) resolveTypeFromExpr(ctx runtime.SpecialContext, expr ast.Expr) 
 	if !ok {
 		return nil, fmt.Errorf("expected a selector expression (pkg.Type), but got %T", expr)
 	}
-	pkgIdent, ok := selector.X.(*ast.Ident)
-	if !ok {
-		return nil, fmt.Errorf("selector must be on a package identifier")
-	}
-	typeName := selector.Sel.Name
-	pkgPath, err := r.importPath(ctx, pkgIdent)
+	sym, err := ctx.ResolveSymbol(selector)
 	if err != nil {
 		return nil, err
 	}
+	pkgPath, typeName := sym.PackagePath, sym.Name
 
 	pkgInfo, err := r.scanner.ScanPackageFromImportPath(context.Background(), pkgPath)
 	if err != nil {
@@ -249,11 +234,11 @@ func (r *Runner) handleRule(ctx runtime.SpecialContext, call *runtime.QuotedCall
 	if !ok {
 		return nil, ctx.Errorf(call.Call, "receiver of function selector must be a package identifier")
 	}
-	funcName := funcExpr.Sel.Name
-	pkgPath, err := r.importPath(ctx, pkgIdent)
+	sym, err := ctx.ResolveSymbol(funcExpr)
 	if err != nil {
 		return nil, err
 	}
+	pkgPath, funcName := sym.PackagePath, sym.Name
 
 	gctx := context.Background()
 	pkgInfo, err := r.scanner.ScanPackageFromImportPath(gctx, pkgPath)

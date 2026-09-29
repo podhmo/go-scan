@@ -568,6 +568,28 @@ func (v *VM) loop(f *frame) {
 				f.trap("declared type is not a type")
 			}
 			f.stack[len(f.stack)-1] = v.coerce(f, f.stack[len(f.stack)-1], td)
+		case bytecode.OpCoerceN:
+			// pop A typedefs then one value: a *Tuple coerces element-wise
+			// (multi-value return), anything else against the first type
+			cnt := int(ins.A)
+			tds := make([]*runtime.TypeDef, cnt)
+			for i := cnt - 1; i >= 0; i-- {
+				tds[i] = typedefOf(f.pop())
+			}
+			x := f.pop()
+			if tp, ok := x.(*runtime.Tuple); ok {
+				elems := make([]runtime.Value, len(tp.Elems))
+				for i, e := range tp.Elems {
+					var td *runtime.TypeDef
+					if i < len(tds) {
+						td = tds[i]
+					}
+					elems[i] = v.coerce(f, e, td)
+				}
+				f.push(&runtime.Tuple{Elems: elems})
+			} else {
+				f.push(v.coerce(f, x, tds[0]))
+			}
 		case bytecode.OpCoerceGlobal:
 			td := typedefOf(f.pop())
 			if td == nil {
@@ -1109,7 +1131,11 @@ func (v *VM) index(f *frame, base, idx runtime.Value) runtime.Value {
 		}
 		return b.Elems[i]
 	case *runtime.Map:
-		return b.Pairs[idx]
+		val, found := b.Pairs[idx]
+		if !found {
+			val = v.mapZero(f, b.Typ)
+		}
+		return val
 	case string:
 		i, ok := idx.(int64)
 		if !ok {
@@ -1121,6 +1147,32 @@ func (v *VM) index(f *frame, base, idx runtime.Value) runtime.Value {
 		return nil
 	}
 	return nil
+}
+
+// fieldTypedefs returns declared field types for a struct typedef (nil
+// when the hook is unset or resolution fails — coerce passes through).
+func (v *VM) fieldTypedefs(td *runtime.TypeDef) []*runtime.TypeDef {
+	if v.H.FieldTypes == nil {
+		return nil
+	}
+	fts, err := v.H.FieldTypes(td)
+	if err != nil {
+		return nil
+	}
+	return fts
+}
+
+// elemTypedef resolves the element type of a container typedef (nil when
+// unresolvable — coerce then passes values through).
+func (v *VM) elemTypedef(f *frame, td *runtime.TypeDef) *runtime.TypeDef {
+	if v.H.ElemOf == nil {
+		return nil
+	}
+	et, err := v.H.ElemOf(td)
+	if err != nil {
+		return nil
+	}
+	return et
 }
 
 // mapZero is the value a map read produces for a missing key or a nil
@@ -1281,14 +1333,21 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 				s.Elems[raw[i*2].(int64)] = raw[i*2+1]
 			}
 		} else {
+			// elements coerce to the declared element type — `[]any{x}`
+			// boxes a typed nil while `[]*int{x}` keeps it
+			et := v.elemTypedef(f, td)
+			for i := range raw {
+				raw[i] = v.coerce(f, raw[i], et)
+			}
 			s.Elems = raw
 		}
 		return s
 	case runtime.KindMap:
 		m := &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}, Typ: td}
+		et := v.elemTypedef(f, td)
 		for i := 0; i < n; i++ {
 			k := raw[i*2]
-			m.Pairs[k] = raw[i*2+1]
+			m.Pairs[k] = v.coerce(f, raw[i*2+1], et)
 			m.Order = append(m.Order, k)
 		}
 		return m
@@ -1312,6 +1371,7 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 			}
 		}
 		if kv {
+			fts := v.fieldTypedefs(et)
 			for i := 0; i < n; i++ {
 				name, ok := raw[i*2].(string)
 				if !ok {
@@ -1320,7 +1380,11 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 				found := false
 				for fi, fn := range et.Fields {
 					if fn == name {
-						es.Fields[fi] = raw[i*2+1]
+						var ft *runtime.TypeDef
+						if fi < len(fts) {
+							ft = fts[fi]
+						}
+						es.Fields[fi] = v.coerce(f, raw[i*2+1], ft)
 						found = true
 						break
 					}
@@ -1330,7 +1394,14 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 				}
 			}
 		} else {
-			copy(es.Fields, raw)
+			fts := v.fieldTypedefs(et)
+			for i := 0; i < n && i < len(es.Fields); i++ {
+				var ft *runtime.TypeDef
+				if i < len(fts) {
+					ft = fts[i]
+				}
+				es.Fields[i] = v.coerce(f, raw[i], ft)
+			}
 		}
 		return &runtime.Cell{Elem: es}
 	case runtime.KindStruct, runtime.KindNamedBasic, runtime.KindAlias:
@@ -1342,6 +1413,7 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 			}
 		}
 		if kv {
+			fts := v.fieldTypedefs(td)
 			for i := 0; i < n; i++ {
 				name, ok := raw[i*2].(string)
 				if !ok {
@@ -1350,7 +1422,11 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 				found := false
 				for fi, fn := range td.Fields {
 					if fn == name {
-						s.Fields[fi] = raw[i*2+1]
+						var ft *runtime.TypeDef
+						if fi < len(fts) {
+							ft = fts[fi]
+						}
+						s.Fields[fi] = v.coerce(f, raw[i*2+1], ft)
 						found = true
 						break
 					}
@@ -1360,7 +1436,14 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 				}
 			}
 		} else {
-			copy(s.Fields, raw)
+			fts := v.fieldTypedefs(td)
+			for i := 0; i < n && i < len(s.Fields); i++ {
+				var ft *runtime.TypeDef
+				if i < len(fts) {
+					ft = fts[i]
+				}
+				s.Fields[i] = v.coerce(f, raw[i], ft)
+			}
 		}
 		return s
 	default:
@@ -2210,14 +2293,6 @@ func (v *VM) coerce(f *frame, x runtime.Value, td *runtime.TypeDef) runtime.Valu
 		if tn, ok := x.(*runtime.TypedNil); ok {
 			return &runtime.IfaceNil{Typ: tn.Typ}
 		}
-		if sl, ok := x.(*runtime.Slice); ok {
-			// variadic/spread binding: coerce each element (any <- typed nil)
-			for i, e := range sl.Elems {
-				if tn, ok := e.(*runtime.TypedNil); ok {
-					sl.Elems[i] = &runtime.IfaceNil{Typ: tn.Typ}
-				}
-			}
-		}
 		return x
 	}
 	return x
@@ -2238,6 +2313,16 @@ func (v *VM) zeroSeen(f *frame, td *runtime.TypeDef, seen map[*runtime.TypeDef]b
 	}
 	seen[td] = true
 	defer delete(seen, td) // sibling fields may share a type
+	// Named basics peel to their underlying typedef so `type S string`
+	// zeros as "" and `type A B` chains resolve transitively. The cap
+	// keeps a self-referential chain from looping forever.
+	for i := 0; i < 32 && td.Kind == runtime.KindNamedBasic && v.H.Underlying != nil; i++ {
+		u, err := v.H.Underlying(td)
+		if err != nil || u == nil || u == td {
+			break
+		}
+		td = u
+	}
 	z := runtime.Zero(td)
 	s, ok := z.(*runtime.Struct)
 	if !ok || v.H.FieldTypes == nil {

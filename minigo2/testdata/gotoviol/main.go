@@ -36,4 +36,17 @@ loop:
 	return n // 3
 }
 
+// Shadow: the label resolves `x` to the inner declaration declared
+// between the goto and the label — illegal even though an outer `x`
+// was already visible at the goto (a name-only check would miss it).
+func Shadow() int {
+	x := 1
+	if true {
+		goto L
+		x := 2
+	L:
+		return x
+	}
+}
+
 func main() {}

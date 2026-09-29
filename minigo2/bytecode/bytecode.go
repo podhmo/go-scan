@@ -97,6 +97,7 @@ const (
 	// interface-boxing rules to the bound value.
 	OpCoerce       // A: local slot; pop typedef -> coerce cell(slot).Elem
 	OpCoerceTop    // pop typedef -> coerce stack top in place (return values)
+	OpCoerceN      // A: count; pop A typedefs + value -> element-wise coerce for *Tuple
 	OpCoerceGlobal // A: const idx of name; pop typedef -> coerce package-global cell
 
 	// special forms (quoted Go)

@@ -232,4 +232,86 @@ func ConstraintBad() int {
 	return 0
 }
 
+// --- review fixes ---
+
+// SliceElemBox: literal elements coerce to the element type — []any
+// boxes a typed nil (non-nil), []*int keeps it (nil).
+func SliceElemBox() int {
+	as := []any{(*int)(nil)}
+	if as[0] == nil {
+		return -1
+	}
+	ps := []*int{nil}
+	if ps[0] != nil {
+		return -2
+	}
+	return 1
+}
+
+// SliceAlias: `var y any = xs` must not rewrite xs's elements — the
+// caller's slice keeps its concrete element type.
+func SliceAlias() int {
+	xs := []*int{nil}
+	var y any = xs
+	_ = y
+	if xs[0] != nil {
+		return -1 // boxing the slice must not unbox its elements
+	}
+	return 1
+}
+
+// VarargZero: a missing variadic rest binds []T(nil), not T's zero.
+func VarargZero() int {
+	return varargLen() + varargLen(1, 2, 3)
+}
+
+func varargLen(xs ...int) int {
+	return len(xs) + len(append(xs, 1))
+}
+
+// MapMissZero: m[k] for a missing key (or nil map) yields the element
+// type's zero, not an untyped nil.
+func MapMissZero() int {
+	m := make(map[string]int)
+	v := m["nope"]
+	if v != 0 {
+		return -1
+	}
+	var nm map[string]int
+	v2, ok := nm["nope"]
+	if ok || v2 != 0 {
+		return -2
+	}
+	return 1
+}
+
+// NamedZero: named scalar types zero as their underlying literal.
+type Str string
+type Boo bool
+
+func NamedZero() int {
+	var s Str
+	var b Boo
+	if s+Str("x") != "x" {
+		return -1
+	}
+	if b {
+		return -2
+	}
+	return 1
+}
+
+// MultiReturnBox: `return pair()` under (any, int) results boxes the
+// first element into the interface slot (typed nil -> non-nil).
+func innerPair() (*int, int) { return nil, 3 }
+func outerPair() (any, int)  { return innerPair() }
+
+func MultiReturnBox() int {
+	a, b := outerPair()
+	if a == nil || b != 3 {
+		return -1
+	}
+	return 1
+}
+
 func main() {}

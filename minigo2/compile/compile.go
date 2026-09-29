@@ -27,8 +27,9 @@ import (
 // fscope is the static scope model of one function while compiling.
 type fscope struct {
 	parent    *fscope
-	blocks    []map[string]int // name -> local slot
-	blockIDs  []int            // unique id per open block, for goto scoping
+	blocks    []map[string]int       // name -> local slot
+	blockIDs  []int                  // unique id per open block, for goto scoping
+	declPos   []map[string]token.Pos // name -> declaring position (goto scoping)
 	nextID    int
 	typeDecls map[string]bool // names bound by local `type` decls (not vars)
 	nlocals   int
@@ -44,39 +45,47 @@ func (s *fscope) pushBlock() {
 	s.nextID++
 	s.blocks = append(s.blocks, map[string]int{})
 	s.blockIDs = append(s.blockIDs, s.nextID)
+	s.declPos = append(s.declPos, map[string]token.Pos{})
 }
 func (s *fscope) popBlock() {
 	s.blocks = s.blocks[:len(s.blocks)-1]
 	s.blockIDs = s.blockIDs[:len(s.blockIDs)-1]
+	s.declPos = s.declPos[:len(s.declPos)-1]
 }
 
-// scopeSnapshot captures which blocks are open and which variable names
-// are visible — the two things Go's goto legality rules compare between
-// a goto and its target label.
-func (s *fscope) scopeSnapshot() (blocks map[int]bool, vars map[string]bool) {
+// scopeSnapshot captures which blocks are open and which variables are
+// visible — the two things Go's goto legality rules compare between a
+// goto and its target label. A variable is identified by its declaring
+// position, not its name: an inner `x :=` that shadows an outer one is a
+// different variable, so jumping over it is illegal even though the name
+// was already visible.
+func (s *fscope) scopeSnapshot() (blocks map[int]bool, vars map[string]token.Pos) {
 	blocks = map[int]bool{}
 	for _, id := range s.blockIDs {
 		blocks[id] = true
 	}
-	vars = map[string]bool{}
-	for _, b := range s.blocks {
-		for n := range b {
+	vars = map[string]token.Pos{}
+	for i := len(s.declPos) - 1; i >= 0; i-- {
+		for n, dpos := range s.declPos[i] {
 			if s.typeDecls[n] || strings.HasPrefix(n, "$") {
 				continue // type decls and internal slots are not variable decls
 			}
-			vars[n] = true
+			if _, seen := vars[n]; !seen {
+				vars[n] = dpos
+			}
 		}
 	}
 	return blocks, vars
 }
 
-func (s *fscope) declare(name string) int {
+func (s *fscope) declare(name string, pos token.Pos) int {
 	slot := s.nlocals
 	s.nlocals++
 	if len(s.blocks) == 0 {
 		s.pushBlock()
 	}
 	s.blocks[len(s.blocks)-1][name] = slot
+	s.declPos[len(s.declPos)-1][name] = pos
 	return slot
 }
 
@@ -150,8 +159,8 @@ type ctrlCtx struct {
 type labelInfo struct {
 	name   string
 	ip     int
-	blocks map[int]bool    // blocks open at the label
-	vars   map[string]bool // variable names in scope at the label
+	blocks map[int]bool         // blocks open at the label
+	vars   map[string]token.Pos // variables in scope at the label
 }
 
 // pendingGoto is a goto emitted before its label was defined; resolved at
@@ -160,8 +169,8 @@ type pendingGoto struct {
 	ins    int
 	name   string
 	pos    token.Pos
-	blocks map[int]bool    // blocks open at the goto
-	vars   map[string]bool // variable names in scope at the goto
+	blocks map[int]bool         // blocks open at the goto
+	vars   map[string]token.Pos // variables in scope at the goto
 }
 
 // compiler holds the state for one chunk under construction.
@@ -267,7 +276,13 @@ func Func(fn *runtime.Function) error {
 			}
 			recvType = fn.Decl.Recv.List[0].Type
 		}
-		slot := c.fs.declare(recv)
+		rpos := token.NoPos
+		if len(fn.Decl.Recv.List[0].Names) > 0 {
+			rpos = fn.Decl.Recv.List[0].Names[0].Pos()
+		} else if recvType != nil {
+			rpos = recvType.Pos()
+		}
+		slot := c.fs.declare(recv, rpos)
 		nparams++
 		if recvType != nil {
 			coerces = append(coerces, paramCoerce{slot: slot, typ: recvType})
@@ -280,7 +295,7 @@ func Func(fn *runtime.Function) error {
 				names = []*ast.Ident{{Name: fmt.Sprintf("$arg%d", nparams)}}
 			}
 			for _, n := range names {
-				slot := c.fs.declare(n.Name)
+				slot := c.fs.declare(n.Name, n.Pos())
 				coerces = append(coerces, paramCoerce{slot: slot, typ: field.Type})
 				nparams++
 			}
@@ -302,7 +317,7 @@ func Func(fn *runtime.Function) error {
 		nresults = countResults(fn.Decl.Type.Results)
 		for _, field := range fn.Decl.Type.Results.List {
 			for _, n := range field.Names {
-				slot := c.fs.declare(n.Name)
+				slot := c.fs.declare(n.Name, n.Pos())
 				c.ch.NamedSlots = append(c.ch.NamedSlots, slot)
 				c.emit(bytecode.OpNil, 0, 0, n.Pos())
 				c.emit(bytecode.OpNewLocal, slot, 0, n.Pos())
@@ -425,7 +440,7 @@ func InitFunc(pkg *runtime.Package) (*bytecode.Chunk, error) {
 
 	// iota is a real identifier in const specs; bind it as a hidden local
 	// (declared last wins — it shadows nothing here).
-	iotaSlot := c.fs.declare("iota")
+	iotaSlot := c.fs.declare("iota", token.NoPos)
 	c.emit(bytecode.OpConst, c.constIdx(int64(0)), 0, 0)
 	c.emit(bytecode.OpNewLocal, iotaSlot, 0, 0)
 
@@ -649,7 +664,7 @@ func (c *compiler) bindLocal(name string, pos token.Pos, _ bool) int {
 		c.emit(bytecode.OpPop, 0, 0, pos)
 		return -1
 	}
-	slot := c.fs.declare(name)
+	slot := c.fs.declare(name, pos)
 	c.emit(bytecode.OpNewLocal, slot, 0, pos)
 	return slot
 }
@@ -725,7 +740,7 @@ func (c *compiler) localTypeDecl(ts *ast.TypeSpec) {
 	}
 	c.fs.typeDecls[ts.Name.Name] = true
 	c.emit(bytecode.OpConst, c.constIdx(td), 0, ts.Pos())
-	slot := c.fs.declare(ts.Name.Name)
+	slot := c.fs.declare(ts.Name.Name, ts.Pos())
 	c.emit(bytecode.OpNewLocal, slot, 0, ts.Pos())
 }
 
@@ -855,7 +870,7 @@ func (c *compiler) storeTarget(lhs ast.Expr, isDefine bool) {
 			return
 		}
 		if isDefine && !c.fs.inCurrentBlock(t.Name) {
-			slot := c.fs.declare(t.Name)
+			slot := c.fs.declare(t.Name, t.Pos())
 			c.emit(bytecode.OpNewLocal, slot, 0, t.Pos())
 		} else {
 			c.setRef(t.Name, t.Pos())
@@ -936,7 +951,7 @@ func (c *compiler) rangeStmt(st *ast.RangeStmt) {
 	c.fs.pushBlock()
 	c.expr(st.X)
 	c.emit(bytecode.OpIter, 0, 0, st.X.Pos())
-	itSlot := c.fs.declare("$it")
+	itSlot := c.fs.declare("$it", token.NoPos)
 	c.emit(bytecode.OpNewLocal, itSlot, 0, st.X.Pos())
 
 	nvars := 0
@@ -986,7 +1001,7 @@ func (c *compiler) switchStmt(st *ast.SwitchStmt) {
 	tagSlot := -1
 	if st.Tag != nil {
 		c.expr(st.Tag)
-		tagSlot = c.fs.declare("$tag")
+		tagSlot = c.fs.declare("$tag", token.NoPos)
 		c.emit(bytecode.OpNewLocal, tagSlot, 0, st.Tag.Pos())
 	}
 	cc := &ctrlCtx{labels: c.takeLabels()}
@@ -1098,9 +1113,9 @@ func (c *compiler) selectStmt(st *ast.SelectStmt) {
 		switch comm := clause.Comm.(type) {
 		case *ast.SendStmt:
 			sc.send = true
-			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp), token.NoPos)
 			tmp++
-			sc.valSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			sc.valSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp), token.NoPos)
 			tmp++
 			c.expr(comm.Chan)
 			c.emit(bytecode.OpSetLocal, sc.chanSlot, 0, comm.Chan.Pos())
@@ -1112,7 +1127,7 @@ func (c *compiler) selectStmt(st *ast.SelectStmt) {
 				c.trap(clause.Comm.Pos(), "unsupported select case %T", clause.Comm)
 				continue
 			}
-			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp), token.NoPos)
 			tmp++
 			c.expr(recv.X)
 			c.emit(bytecode.OpSetLocal, sc.chanSlot, 0, recv.X.Pos())
@@ -1218,13 +1233,24 @@ func (c *compiler) returnStmt(st *ast.ReturnStmt) {
 		c.emit(bytecode.OpReturn, -1, 0, st.Pos()) // -1: use named result slots
 		return
 	}
-	for i, r := range st.Results {
-		c.expr(r)
-		// `return e` coerces e to the declared result type — `return nil`
-		// under a *T result yields a typed nil, under any an IfaceNil.
-		if i < len(c.results) && c.results[i] != nil {
-			c.typeExpr(c.results[i])
-			c.emit(bytecode.OpCoerceTop, 0, 0, r.Pos())
+	if len(st.Results) == 1 && len(c.results) > 1 {
+		// `return pair()`: one expr produces N results — push every
+		// declared result type and coerce the tuple element-wise, so an
+		// `any` slot still boxes a typed nil into an IfaceNil.
+		c.expr(st.Results[0])
+		for _, rt := range c.results {
+			c.typeExpr(rt)
+		}
+		c.emit(bytecode.OpCoerceN, len(c.results), 0, st.Results[0].Pos())
+	} else {
+		for i, r := range st.Results {
+			c.expr(r)
+			// `return e` coerces e to the declared result type — `return nil`
+			// under a *T result yields a typed nil, under any an IfaceNil.
+			if i < len(c.results) && c.results[i] != nil {
+				c.typeExpr(c.results[i])
+				c.emit(bytecode.OpCoerceTop, 0, 0, r.Pos())
+			}
 		}
 	}
 	c.emit(bytecode.OpReturn, len(st.Results), 0, st.Pos())
@@ -1373,14 +1399,17 @@ func (c *compiler) resolveGotos() {
 // (a label's open blocks must all be open at the goto) and jumping OVER a
 // variable declaration (every var visible at the label must already be
 // visible at the goto). Returns "" when the jump is legal.
-func gotoViolation(li *labelInfo, gotoBlocks map[int]bool, gotoVars map[string]bool) string {
+func gotoViolation(li *labelInfo, gotoBlocks map[int]bool, gotoVars map[string]token.Pos) string {
 	for id := range li.blocks {
 		if !gotoBlocks[id] {
 			return fmt.Sprintf("goto %s jumps into a block", li.name)
 		}
 	}
-	for n := range li.vars {
-		if !gotoVars[n] {
+	for n, lp := range li.vars {
+		// the declaration the name resolves to at the label must be the
+		// same one visible at the goto — a different decl (or none) means
+		// the jump skips that variable's declaration
+		if gp, ok := gotoVars[n]; !ok || gp != lp {
 			return fmt.Sprintf("goto %s jumps over declaration of %s", li.name, n)
 		}
 	}
@@ -1421,7 +1450,7 @@ func (c *compiler) typeSwitchStmt(st *ast.TypeSwitchStmt) {
 		return
 	}
 	c.expr(subj)
-	tagSlot := c.fs.declare("$tsubj")
+	tagSlot := c.fs.declare("$tsubj", token.NoPos)
 	c.emit(bytecode.OpNewLocal, tagSlot, 0, subj.Pos())
 	cc := &ctrlCtx{labels: c.takeLabels()}
 	c.ctrl = append(c.ctrl, cc)
@@ -1465,7 +1494,7 @@ func (c *compiler) typeSwitchStmt(st *ast.TypeSwitchStmt) {
 		pendingFalls = nil
 		c.fs.pushBlock()
 		if varName != "" && varName != "_" {
-			slot := c.fs.declare(varName)
+			slot := c.fs.declare(varName, clause.Pos())
 			c.emit(bytecode.OpNewLocal, slot, 0, clause.Pos())
 		} else {
 			c.emit(bytecode.OpPop, 0, 0, clause.Pos())
@@ -1490,7 +1519,7 @@ func (c *compiler) typeSwitchStmt(st *ast.TypeSwitchStmt) {
 		c.fs.pushBlock()
 		if varName != "" && varName != "_" {
 			// default binds the un-narrowed subject value
-			slot := c.fs.declare(varName)
+			slot := c.fs.declare(varName, st.Pos())
 			c.emit(bytecode.OpLocal, tagSlot, 0, st.Pos())
 			c.emit(bytecode.OpNewLocal, slot, 0, st.Pos())
 		}
@@ -1969,7 +1998,9 @@ func (c *compiler) typeExpr(e ast.Expr) {
 		}
 		c.emit(bytecode.OpInstantiate, len(t.Indices), 0, e.Pos())
 	case *ast.Ellipsis:
-		c.typeExpr(t.Elt)
+		// ...T binds as []T: a variadic param's declared type IS a slice,
+		// so a missing rest coerces to TypedNil{slice}, not the elem zero
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindSlice, Anon: &ast.ArrayType{Lbrack: t.Pos(), Elt: t.Elt}, Pkg: c.pkg, File: c.file}), 0, e.Pos())
 	case *ast.ChanType:
 		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
 	default:
@@ -1992,7 +2023,7 @@ func (c *compiler) funcLit(x *ast.FuncLit) {
 				names = []*ast.Ident{{Name: fmt.Sprintf("$arg%d", nparams)}}
 			}
 			for _, n := range names {
-				slot := ic.fs.declare(n.Name)
+				slot := ic.fs.declare(n.Name, n.Pos())
 				coerces = append(coerces, paramCoerce{slot: slot, typ: field.Type})
 				nparams++
 			}
@@ -2006,7 +2037,7 @@ func (c *compiler) funcLit(x *ast.FuncLit) {
 	if x.Type.Results != nil {
 		for _, field := range x.Type.Results.List {
 			for _, n := range field.Names {
-				slot := ic.fs.declare(n.Name)
+				slot := ic.fs.declare(n.Name, n.Pos())
 				ic.ch.NamedSlots = append(ic.ch.NamedSlots, slot)
 				ic.emit(bytecode.OpNil, 0, 0, n.Pos())
 				ic.emit(bytecode.OpNewLocal, slot, 0, n.Pos())

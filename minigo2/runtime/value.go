@@ -76,9 +76,31 @@ func Zero(td *TypeDef) Value {
 		return int64(0)
 	}
 	if td.Kind == KindNamedBasic {
-		return int64(0) // named basic approximates via int64 storage
+		// `type S string` zeros as the underlying literal: the declared
+		// name is the new name, so read the underlying ident instead.
+		if id, ok := td.Anon.(*ast.Ident); ok {
+			if z, ok := basicZero(id.Name); ok {
+				return z
+			}
+		}
+		return int64(0) // unresolvable underlying approximates via int64
 	}
 	return NIL
+}
+
+func basicZero(name string) (Value, bool) {
+	switch name {
+	case "string":
+		return "", true
+	case "bool":
+		return false, true
+	case "float32", "float64":
+		return float64(0), true
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune", "uintptr":
+		return int64(0), true
+	}
+	return nil, false
 }
 
 // Cell is a mutable slot. Every declared variable is a cell, which makes

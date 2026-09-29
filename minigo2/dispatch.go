@@ -66,7 +66,10 @@ func (e *Engine) typeMethods(td *runtime.TypeDef) (map[string]bool, error) {
 // underlying implements the Hooks.Underlying hook: a KindAlias typedef
 // resolves through its aliased expression to the real typedef.
 func (e *Engine) underlying(td *runtime.TypeDef) (*runtime.TypeDef, error) {
-	for td != nil && td.Kind == runtime.KindAlias && td.Anon != nil {
+	// aliases and named basics both peel to their underlying typedef —
+	// `type S string` bottoms out at the builtin "string" typedef so a
+	// zero value picks the right literal kind.
+	for td != nil && (td.Kind == runtime.KindAlias || td.Kind == runtime.KindNamedBasic) && td.Anon != nil {
 		next, err := e.resolveTypeRef(td, td.Anon)
 		if err != nil || next == nil || next == td {
 			return nil, err

@@ -44,6 +44,7 @@ type Engine struct {
 	mu    sync.Mutex
 	pkgs  map[string]*runtime.Package // by import path
 	byDir map[string]*runtime.Package // synthetic packages by dir
+	binds map[string]*runtime.Package // host-bound packages (sessions inherit)
 }
 
 // Option configures an Engine.
@@ -103,6 +104,7 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 		fset:     token.NewFileSet(),
 		pkgs:     map[string]*runtime.Package{},
 		byDir:    map[string]*runtime.Package{},
+		binds:    map[string]*runtime.Package{},
 		specials: map[runtime.SymbolID]runtime.SpecialFunc{},
 	}
 	for _, o := range opts {
@@ -154,10 +156,19 @@ func (e *Engine) NewSession() *Engine {
 		out:        e.out,
 		pkgs:       map[string]*runtime.Package{},
 		byDir:      map[string]*runtime.Package{},
+		binds:      map[string]*runtime.Package{},
 	}
 	s.builtins = builtins(s)
 	s.vmm = s.newVM()
 	s.installStdlib()
+	// sessions inherit the parent's host bindings: a script importing a
+	// custom bound package must resolve identically in the new session
+	e.mu.Lock()
+	for path, p := range e.binds {
+		s.binds[path] = p
+		s.pkgs[path] = p
+	}
+	e.mu.Unlock()
 	return s
 }
 
@@ -347,6 +358,7 @@ func (e *Engine) Bind(importPath string, symbols map[string]runtime.Value) {
 	}
 	e.mu.Lock()
 	e.pkgs[importPath] = p
+	e.binds[importPath] = p
 	e.mu.Unlock()
 }
 

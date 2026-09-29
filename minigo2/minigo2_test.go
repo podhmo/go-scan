@@ -472,6 +472,12 @@ func TestDeclTypes(t *testing.T) {
 		{"InferCalls", int64(42)},
 		{"GenericZero", int64(1)},
 		{"ConstraintOK", int64(42)},
+		{"SliceElemBox", int64(1)},
+		{"SliceAlias", int64(1)},
+		{"VarargZero", int64(8)}, // 0+1 from empty rest; 3+4 from 3 elems
+		{"MapMissZero", int64(1)},
+		{"NamedZero", int64(1)},
+		{"MultiReturnBox", int64(1)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/decltypes", c.fn)
@@ -506,6 +512,28 @@ func TestGotoViolations(t *testing.T) {
 	_, err = e.Run(context.Background(), "./testdata/gotoviol", "OverDecl")
 	if err == nil || !strings.Contains(err.Error(), "jumps over declaration") {
 		t.Fatalf("OverDecl: expected over-decl trap, got %v", err)
+	}
+	_, err = e.Run(context.Background(), "./testdata/gotoviol", "Shadow")
+	if err == nil || !strings.Contains(err.Error(), "jumps over declaration of x") {
+		t.Fatalf("Shadow: expected over-decl trap, got %v", err)
+	}
+}
+
+// TestSessionInheritsBinds: user-bound host packages must resolve in a
+// NewSession the same as on the parent engine.
+func TestSessionInheritsBinds(t *testing.T) {
+	e := newEngine(t)
+	e.Bind("myhost/lib", map[string]runtime.Value{
+		"Magic": &runtime.BuiltinFunc{
+			Name: "Magic",
+			Fn: func(_ runtime.VMCaller, _ []runtime.Value) (runtime.Value, error) {
+				return int64(42), nil
+			},
+		},
+	})
+	got := run(t, e.NewSession(), "./testdata/sessbind", "Main")
+	if diff := cmp.Diff(int64(42), got); diff != "" {
+		t.Fatalf("Main mismatch (-want +got):\n%s", diff)
 	}
 }
 

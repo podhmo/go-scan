@@ -559,4 +559,143 @@ func AliasBindOK() int {
 	return 1
 }
 
+// StructNamedBad: `type A Sq` does not accept a Sq value — both sides
+// are named types even though the storage is shared.
+type SqA Sq
+type SqO Sq
+
+func StructNamedBad() int {
+	var s Sq
+	var a SqA = s // cannot use Sq as SqA
+	_ = a
+	return 0
+}
+
+// StructAliasOK: `type A = Sq` binds a Sq value — aliases are the same
+// type, so the bind keeps the shared declared identity.
+type SqAlias = Sq
+
+func StructAliasOK() int {
+	var s Sq
+	s.Side = 3
+	var a SqAlias = s
+	return a.Side // 3
+}
+
+// AnonStructOK: an unnamed struct literal binds a named struct type
+// when the field sets match (unnamed -> named is assignable in Go).
+func AnonStructOK() int {
+	var a SqA = struct{ Side int }{Side: 4}
+	return a.Side // 4
+}
+
+// PtrElemBad / PtrElemOK: a named pointer binds only its own pointee
+// type (`var p P = &v` checks v's declared type against P's element).
+type PSq *Sq
+
+func PtrElemBad() int {
+	var o SqO
+	var p PSq = &o // cannot use *SqO as PSq
+	_ = p
+	return 0
+}
+
+func PtrElemOK() int {
+	var s Sq
+	var p PSq = &s
+	p.Side = 7
+	return s.Side // 7 — &s aliases s's own cell
+}
+
+// BoxStoreOK / BoxStoreBad: `*p = v` through a composite-literal box
+// coerces to the pointee's declared type like a `var x T` store.
+func BoxStoreOK() int {
+	p := &Sq{Side: 1}
+	*p = Sq{Side: 5}
+	return p.Side // 5
+}
+
+func BoxStoreBad() int {
+	p := &Sq{Side: 1}
+	var o SqO
+	*p = o // cannot use SqO as Sq
+	return 0
+}
+
+// MapRebindBad: two different named map types do not re-bind.
+type M4 map[string]int
+
+func MapRebindBad() int {
+	var m2 M2 = M2{"a": 1}
+	var m4 M4 = m2 // cannot use M2 as M4
+	_ = m4
+	return 0
+}
+
+// MapAliasOK: an alias binds the same named map (identity, not shape).
+type M2A = M2
+
+func MapAliasOK() int {
+	var m2 M2 = M2{"a": 9}
+	var a M2A = m2
+	return a["a"] // 9
+}
+
+// SliceRebindBad / SliceElemTyped: named slices tag like named maps —
+// rebinds check identity and element stores coerce to the element type.
+type S3 []int
+type S4 []int
+type EI int
+type SE []EI
+
+func SliceRebindBad() int {
+	var s3 S3 = S3{1}
+	var s4 S4 = s3 // cannot use S3 as S4
+	_ = s4
+	return 0
+}
+
+func SliceElemTyped() int {
+	var s SE = SE{EI(1)}
+	s[0] = EI(7)
+	var a any = s[0]
+	if v, ok := a.(EI); !ok {
+		return -1
+	} else {
+		return int(v) // 7
+	}
+}
+
+// ChanElemTyped: a send coerces to the channel's declared element type.
+type CE chan EI
+
+func ChanElemTyped() int {
+	var ch CE = make(CE)
+	ch <- EI(3)
+	x := <-ch
+	var a any = x
+	v, ok := a.(EI)
+	if !ok {
+		return -1
+	}
+	return int(v) // 3
+}
+
+// ConstTyped: a typed const keeps its declared type (`const k T = v`
+// coerces like `var x T = v`), at package level and locally.
+const KC Celsius = 40
+
+func ConstTyped() int {
+	var a any = KC
+	if _, ok := a.(Celsius); !ok {
+		return -1
+	}
+	const k Str = "hi"
+	var b any = k
+	if _, ok := b.(Str); !ok {
+		return -2
+	}
+	return int(KC/10) + len(k) // 6
+}
+
 func main() {}

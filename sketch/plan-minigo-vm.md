@@ -1455,8 +1455,5 @@ adding multi-line input to the REPL:
   v1 minigo passes `minigo_range_func_test.go`. Recorded in TODO.md —
   needs a yield-callback bridge plus early-`break` plumbing (`yield`
   must return false).
-- Renumbering note: sections 26–28 were written in merge order; the
-  round-10 work predates them in branch order, which is why its notes
-  were originally titled "round-7b".
 
 ## (end)

@@ -3,10 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	goruntime "runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 // Sprintf runs the real fmt.Sprintf via intrinsics — no GOROOT parse.
@@ -53,5 +55,64 @@ func Prints() int {
 	fmt.Println("hello", 42)
 	return 0
 }
+
+// SortSearch finds the first index satisfying the predicate.
+func SortSearch() int {
+	return sort.Search(10, func(i int) bool { return i*i >= 30 }) // 6
+}
+
+// SortStableByLen: equal-length elements keep their input order.
+func SortStableByLen() string {
+	s := []string{"bb", "a", "cc", "d"}
+	sort.SliceStable(s, func(i, j int) bool { return len(s[i]) < len(s[j]) })
+	return s[0] + s[1] + s[2] + s[3] // "adbbcc" — bb stays before cc
+}
+
+// SortStableFuncByLen exercises slices.SortStableFunc with a script cmp.
+func SortStableFuncByLen() string {
+	s := []string{"bb", "a", "cc", "d"}
+	slices.SortStableFunc(s, func(a, b string) int { return len(a) - len(b) })
+	return s[0] + s[1] + s[2] + s[3] // "adbbcc"
+}
+
+// BinarySearchHit exercises the (index, found) tuple.
+func BinarySearchHit() int {
+	i, ok := slices.BinarySearch([]int{1, 3, 5, 7}, 5)
+	if !ok {
+		return -1
+	}
+	return i // 2
+}
+
+// BinarySearchMiss returns the insertion point when absent.
+func BinarySearchMiss() int {
+	i, ok := slices.BinarySearch([]int{1, 3, 5, 7}, 4)
+	if ok {
+		return -1
+	}
+	return i // 2
+}
+
+// BinarySearchFunc uses a script comparator.
+func BinarySearchFunc() int {
+	i, ok := slices.BinarySearchFunc([]string{"a", "bb", "ccc"}, "zzzz",
+		func(x, t string) int { return len(x) - len(t) })
+	if ok {
+		return -1
+	}
+	return i // 3
+}
+
+// RuntimeGOOS reports the host GOOS via intrinsics — non-empty everywhere.
+func RuntimeGOOS() bool { return goruntime.GOOS != "" }
+
+// RuntimeGoroutines is pinned to 1: the VM is single-threaded by design.
+func RuntimeGoroutines() int { return goruntime.NumGoroutine() }
+
+// UnsafeSizeofInt approximates unsafe.Sizeof over the boxed value.
+func UnsafeSizeofInt() int { return int(unsafe.Sizeof(int64(0))) } // 8
+
+// UnsafeSizeofSlice reports the 3-word slice header approximation.
+func UnsafeSizeofSlice() int { return int(unsafe.Sizeof([]int{})) } // 24
 
 func main() {}

@@ -1098,4 +1098,68 @@ traps, never compile errors, so the total-function invariant holds.
   spell `*target` the way Go requires; the current binding-of-first-
   cause is documented rather than re-engineered.
 
+## 25. Round-6 notes: host stub package, ResolveSymbol, REPL, unsafe/runtime intrinsics
+
+### `minigo.dev/host` resolves through the same intrinsic table as the in-repo stub
+
+§11's gopls-friendly pattern lands as `minigo2/host`: a stub package
+whose bodies are `panic("minigo intrinsic")`, so real Go tooling can
+type-check scripts while the interpreter never runs them.
+`installStdlib` binds one host table under both `minigo.dev/host` and
+the in-repo import path — the `pkgs` check in `loadPath` makes bound
+paths win before the resolver is consulted, so the stub's panic bodies
+are unreachable in either spelling. `host.Exit` always errors (an
+interpreted program cannot terminate its host); the env/argv/wd helpers
+bind only when the engine is unrestricted, on the same condition as
+`os.Getenv`/`os.Args`.
+
+### `SpecialContext.ResolveSymbol` — index-level laziness for quoters
+
+The §12.5 interface sketched `Resolve`/`ResolveType`/`ResolveSymbol`;
+only `ResolveSymbol` landed because it is the one needing no evaluation:
+`pkg.Sym` maps through the caller file's import table straight to
+`SymbolID{path, name}` (no `Materialize` call — quoting
+`huge.ConvertFoo` does not initialize `huge`), a bare identifier maps to
+a member of the caller's package, and locals/upvals error out.
+`Resolve`/`ResolveType` remain unimplemented: `Eval`/`Call` cover the
+evaluated cases and no consumer is driving type-level queries yet.
+
+### REPL: persistent globals by hoisting, not by replay
+
+`engine.NewREPL()` keeps a scratch `*runtime.Package` (`<repl>`) on a
+session engine. Each line classifies as declarations (imports and
+func/type decls accumulate; var/const names are *hoisted* into
+`pkg.Globals` as cells and their initializers run as a step) or
+statements (a generated `func __stepN() any`). `reload()` re-parses the
+accumulated source and swaps Files/Index/Scopes/Imports while keeping
+`Globals` and `State` — the `__init__` once is already consumed, so
+re-indexing is free and values persist. Divergences worth noting:
+
+- `x := e` inside a line rewrites to `=` against the hoisted global —
+  re-declaration updates rather than shadows, matching Python-REPL
+  intuition, not Go scoping.
+- `var x T` without a value lowers to `x = *new(T)`; `var`/`const` in
+  statement position hoist the same way, so block scope does not exist
+  at the prompt.
+- The step must always end in an explicit `return`: declaring `any`
+  makes the implicit `OpReturn` pop a result, which underflows on
+  statement-only input — `return nil` is appended when missing.
+- Blank imports added mid-session need an explicit `EnsureReady` — the
+  synthetic `__init__` ran once, before the import existed.
+- Input is line-oriented only (no brace continuation yet).
+
+`cmd/minigo` grew `run --entry F` and `repl` subcommands; the bare
+`minigo <ref> [func]` shorthand is unchanged. `--entry` is extracted
+manually because `flag` stops parsing at the first positional argument.
+
+### `unsafe`/`runtime` intrinsics are host approximations by design
+
+The §11 intrinsic table gained `unsafe` (`Sizeof`/`Alignof` over the
+boxed 64-bit representation — `Offsetof` errors since selector results
+are not values) and `runtime` (`GOOS`/`GOARCH`/`Version`/`NumCPU`/
+`GOMAXPROCS` pass through, `NumGoroutine` pins to 1 under the
+single-threaded model, `GC` no-ops). `sort.Search`/`SliceStable` and
+`slices.BinarySearch`/`BinarySearchFunc`/`SortStableFunc` close out the
+ordering surface; `(index, found)` returns as a `*runtime.Tuple`.
+
 ## (end)

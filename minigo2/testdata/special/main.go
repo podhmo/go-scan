@@ -1,6 +1,10 @@
 package main
 
-import "example.com/dsl"
+import (
+	"example.com/dsl"
+	greet "github.com/podhmo/go-scan/minigo2/testdata/greet"
+	"github.com/podhmo/go-scan/minigo2/testdata/lazyboom"
+)
 
 // dsl is a host-bound package; dsl.Twice/Show/Skipped are registered
 // special forms — the calls compile to OpSpecialCall with quoted args.
@@ -19,6 +23,17 @@ func Lazy() int {
 	boom := func() int { panic("boom") }
 	// args stay quoted: the handler skips Eval, so boom never runs
 	return dsl.Skipped(boom()) // 42
+}
+
+// ResolveSymbol maps quoted exprs to canonical SymbolIDs through the
+// file's import table — without materializing the target package, so
+// lazyboom's panicking init must NOT run here.
+func SymPkg() string   { return dsl.SymOf(lazyboom.Get) }
+func SymGreet() string { return dsl.SymOf(greet.Hello) }
+func SymSelf() string  { return dsl.SymOf(TwiceIt) }
+func SymLocal() string {
+	boom := func() int { panic("boom") }
+	return dsl.SymOf(boom) // local var: resolution must fail
 }
 
 func main() {}

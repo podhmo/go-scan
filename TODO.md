@@ -161,16 +161,16 @@ For more ambitious, long-term features, see [sketch/near-future.md](./docs/near-
 
 Skeleton landed: lazy per-package loading, per-function compile, struct/method/closure/multi-return. Unsupported constructs compile to `OpTrap` instead of failing.
 
-- [ ] **`defer` / `recover` semantics**: map to Go panic unwinding through the VM (currently `OpTrap`).
-- [ ] **`go`, `chan`, `select`**: goroutine/channel model or a documented single-thread approximation (currently `OpTrap`).
+- [x] **`defer` / `recover` semantics**: defers run LIFO through the VM's frame teardown on both normal return and panic unwind; `recover()` is visible only inside deferred calls and can mutate named results. Script `*Panic` is recoverable, `*Trap` is not.
+- [x] **`go`, `chan`, `select`**: documented single-thread approximation — `go f()` runs synchronously, channels are unbounded queues (sends never block), select picks the first ready case in source order. Operations that would block forever (recv on empty open channel, select without ready case or default) trap instead of deadlocking.
 - [ ] **Interfaces**: method sets, dynamic dispatch, `any`/`interface{}` values (types and asserts).
 - [ ] **Generics**: type-parameter binding at instantiation sites (currently `OpTrap` via type-list decls).
 - [ ] **Type assertions / type switches**: `x.(T)` and `switch x.(type)` (currently `OpTrap`).
 - [ ] **Special forms (`SPECIAL_CALL`)**: quoted-call dispatch by canonical `SymbolID` before package materialization; `SpecialContext` API (`Resolve`/`ResolveType`/`Eval`/`Format`); partial-argument evaluation.
-- [ ] **Full init-order analysis**: current topo sort only covers direct identifiers in spec exprs; transitive deps through function bodies (`var x = f()` where `f` reads `var y`) still use source order.
+- [x] **Full init-order analysis**: the topo sort now follows transitive deps through function bodies (`var x = f()` waits on every package-level name `f` transitively reads).
 - [ ] **`&s.f`, `x[i]++`, compound assign on non-idents**: reference/store paths for field/index expressions.
-- [ ] **`LazyInit` mode**: currently `Member` triggers full `EnsureReady`; a mode that answers type/signature queries without running initializers.
-- [ ] **`AllowedRoots` option**: restrict directory entry points (`Run`/`Package` with a filesystem path) to a set of roots, for hosted/multi-tenant use. Currently a directory ref can read and execute any Go source tree the process can reach — by design, but it is a documented limitation for embedding.
-- [ ] **Stdlib acceleration**: intrinsic/native bindings (and generated binding stubs) for common stdlib functions so interpreted code is not forced to parse GOROOT sources.
-- [ ] **`OP_EVAL_AST` migration bridge**: run interpreter-visible AST fragments under the VM for an incremental transition from `minigo`.
-- [ ] **Conformance harness**: golden-file comparison of `minigo` vs `minigo2` outputs over the existing `minigo/testdata` corpus.
+- [x] **`LazyInit` mode**: `WithInitMode(LazyInit)` lets `Member` answer function/type queries without running initializers; var/const still require Ready.
+- [x] **`AllowedRoots` option**: `WithAllowedRoots(roots...)` restricts located directories to the given roots (checked in `Locate`/`LocateDir`).
+- [x] **Stdlib acceleration**: intrinsic bindings for fmt/errors/strings/strconv/sort/slices/maps/os/time are installed into every engine via `Bind`; host values are boxed as `*runtime.GoValue` with reflective method dispatch.
+- [x] **`OP_EVAL_AST` migration bridge**: `OpEvalAST` keeps an AST fragment as a chunk constant and compiles it via `compile.Expr` on first execution; `Engine.EvalExpr` is the public entry point.
+- [x] **Conformance harness**: `conformance_test.go` runs the shared-subset corpus under both engines and diffs normalized results (known v1 divergences documented).

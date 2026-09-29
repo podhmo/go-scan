@@ -2,11 +2,16 @@ package minigo2_test
 
 import (
 	"context"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/minigo2"
+	"github.com/podhmo/go-scan/minigo2/index"
 	"github.com/podhmo/go-scan/minigo2/runtime"
 )
 
@@ -129,11 +134,157 @@ func TestTrapOnCall(t *testing.T) {
 		t.Fatalf("Good: got %v", got)
 	}
 	_, err := e.Run(context.Background(), "./testdata/traponcall", "Bad")
-	if err == nil || !strings.Contains(err.Error(), "defer") {
-		t.Fatalf("Bad: expected defer trap, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "fallthrough") {
+		t.Fatalf("Bad: expected fallthrough trap, got %v", err)
 	}
 	_, err = e.Run(context.Background(), "./testdata/traponcall", "Channy")
-	if err == nil || !strings.Contains(err.Error(), "channel") {
-		t.Fatalf("Channy: expected channel trap, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "type assert") {
+		t.Fatalf("Channy: expected type-assert trap, got %v", err)
+	}
+}
+
+func TestDeferRecover(t *testing.T) {
+	e := newEngine(t)
+	cases := []struct {
+		fn   string
+		want runtime.Value
+	}{
+		{"DeferOrder", int64(321)},        // defers run LIFO
+		{"DeferArgCaptured", int64(1)},    // args evaluated at defer time
+		{"NamedResultDefer", int64(15)},   // defer mutates named result
+		{"RecoverValue", "boom"},          // defer+recover captures panic
+		{"RecoverOutsideDefer", int64(1)}, // recover outside defer is nil
+		{"StillPanic", runtime.NIL},       // recovered panic returns normally
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/deferchan", c.fn)
+		if diff := cmp.Diff(c.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+	// a panic raised inside a defer propagates
+	_, err := e.Run(context.Background(), "./testdata/deferchan", "ReraiseReplace")
+	if err == nil || !strings.Contains(err.Error(), "second") {
+		t.Fatalf("ReraiseReplace: expected 'second' panic, got %v", err)
+	}
+}
+
+func TestChanSelect(t *testing.T) {
+	e := newEngine(t)
+	cases := []struct {
+		fn   string
+		want runtime.Value
+	}{
+		{"ChanQueue", int64(321)},     // FIFO send/receive
+		{"ChanCommaOk", int64(1)},     // comma-ok on non-empty
+		{"ChanClosedRecv", int64(42)}, // closed empty recv -> nil,false
+		{"ChanRange", int64(60)},      // range drains the queue
+		{"GoSync", int64(12)},         // go f() runs synchronously
+		{"GoChanRoundtrip", int64(42)},
+		{"SelectRecv", int64(5)},
+		{"SelectDefault", int64(9)},
+		{"SelectCommaOk", int64(3)},
+		{"SelectSend", int64(11)},
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/deferchan", c.fn)
+		if diff := cmp.Diff(c.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+}
+
+func TestInitOrderThroughFunc(t *testing.T) {
+	e := newEngine(t)
+	// var x = f() where f reads var y declared later: y must initialize first
+	if got := run(t, e, "./testdata/initorder", "Answer"); got != int64(14) {
+		t.Fatalf("Answer: got %v, want 14", got)
+	}
+}
+
+func TestStdlibIntrinsics(t *testing.T) {
+	e := newEngine(t)
+	cases := []struct {
+		fn   string
+		want runtime.Value
+	}{
+		{"Sprintf", "hi 7"},        // real fmt.Sprintf without GOROOT parse
+		{"StrconvAtoi", int64(42)}, // (val, err) tuple
+		{"StringsJoin", "a,b,c"},
+		{"ErrorsNew", "oops"},
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/intrins", c.fn)
+		if diff := cmp.Diff(c.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+}
+
+func TestEvalExpr(t *testing.T) {
+	e := newEngine(t)
+	pkg, err := e.Package(context.Background(), "./testdata/t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	expr, err := parser.ParseExprFrom(fset, "eval.go", "Global + 2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.EvalExpr(context.Background(), pkg, nil, expr)
+	if err != nil {
+		t.Fatalf("EvalExpr: %v", err)
+	}
+	if diff := cmp.Diff(int64(12), got); diff != "" {
+		t.Errorf("EvalExpr mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestAllowedRoots(t *testing.T) {
+	// Roots pinned to ./testdata: t1 lives inside and must run, /tmp refuses.
+	td, err := filepath.Abs("./testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := minigo2.NewEngine("..", minigo2.WithAllowedRoots(td))
+	if _, err := e.Run(context.Background(), "./testdata/t1", "Answer"); err != nil {
+		t.Fatalf("inside allowed root should run: %v", err)
+	}
+	outside := filepath.Dir(os.TempDir())
+	if strings.HasPrefix(td, outside+string(filepath.Separator)) || td == outside {
+		outside = "/"
+	}
+	if _, err := e.Run(context.Background(), outside, "main"); err == nil ||
+		!strings.Contains(err.Error(), "outside the allowed roots") {
+		t.Fatalf("expected outside-root rejection, got %v", err)
+	}
+}
+
+func TestLazyInitMode(t *testing.T) {
+	// LazyInit answers function/type queries without running initializers:
+	// lazyboom's panicking init must NOT run when we only ask for its Func.
+	e := minigo2.NewEngine("..", minigo2.WithInitMode(minigo2.LazyInit))
+	pkg, err := e.Package(context.Background(), "./testdata/lazyboom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := func(p *runtime.Package, d *index.Decl) (runtime.Value, error) {
+		return runtime.NIL, nil
+	}
+	if _, err := pkg.Member("Get", stub); err != nil {
+		t.Fatalf("Member(Get): %v", err)
+	}
+	if pkg.State == runtime.Ready {
+		t.Fatal("LazyInit Member must not initialize the package")
+	}
+	// GoCompatibleInit (default) surfaces the panic at member touch.
+	e2 := newEngine(t)
+	pkg2, err := e2.Package(context.Background(), "./testdata/lazyboom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pkg2.Member("Get", stub); err == nil || !strings.Contains(err.Error(), "BOOM") {
+		t.Fatalf("eager mode should surface init panic, got %v", err)
 	}
 }

@@ -2,7 +2,12 @@
 // the compiled unit (Chunk) produced per function.
 package bytecode
 
-import "go/token"
+import (
+	"go/ast"
+	"go/token"
+
+	"github.com/podhmo/go-scan/minigo2/syntax"
+)
 
 // Op is a VM instruction kind.
 type Op uint8
@@ -35,6 +40,7 @@ const (
 	OpSelect   // A: const idx of field/method name; pop base -> push base.name
 	OpSetField // A: const idx of name; pop value, pop base -> base.name = value
 	OpIndex    // pop index, pop base -> push base[index]
+	OpIndexOK  // pop index, pop base -> push Tuple{value, ok} (comma-ok map access)
 	OpSetIndex // pop value, pop index, pop base -> base[index] = value
 	OpSlice    // pop hi, pop lo, pop base -> base[lo:hi] (Nil bounds = absent)
 	OpDeref    // pop cell -> push cell.Elem
@@ -43,10 +49,13 @@ const (
 
 	// calls and literals
 	OpCall          // A: argc; pop args, pop callee -> call -> push result(s)
+	OpDefer         // A: argc; pop args, pop callee -> register on frame defer list
+	OpGo            // A: argc; pop args, pop callee -> run synchronously (single-threaded approximation)
 	OpPack          // pop A values -> push Tuple
 	OpUnpack        // pop Tuple -> push A values (multi-assign)
 	OpMakeComposite // A: nelems, B: flags(1=kv pairs); pop elems, pop *TypeDef -> push composite
 	OpMakeClosure   // A: const idx of *Function; captures per fn.UpvalDescs -> push Closure
+	OpEvalAST       // A: const idx of *ASTFragment; compile fragment at run time -> push result
 
 	// arithmetic
 	OpBinary // A: BinOp
@@ -58,6 +67,13 @@ const (
 	OpJumpTrue  // pop cond; if truthy ip = A
 	OpIter      // pop value -> push *Iterator (range over slice/map/int/string)
 	OpRangeNext // A: exit ip; B: iterator local slot; C: nvars; pushes C values or exits
+
+	// channels (single-threaded approximation)
+	OpSend    // pop value, pop chan -> append to channel queue (trap if it would block)
+	OpRecv    // pop chan -> push received value (trap if it would block)
+	OpRecvOK  // pop chan -> push Tuple{value, ok} (non-blocking only for closed channels)
+	OpSelSend // pop value, pop chan -> if sendable: send + push true, else push false
+	OpSelRecv // A: nBinds; pop chan -> if ready: push payload + true, else push false
 
 	// failure / flow
 	OpPanic  // pop value -> unwind with *Panic
@@ -113,6 +129,14 @@ type Instruction struct {
 type UpvalDesc struct {
 	FromParentUpval bool
 	Index           int
+}
+
+// ASTFragment is a not-yet-compiled AST expression kept as a chunk constant;
+// OpEvalAST compiles and runs it under the VM at run time (the OP_EVAL_AST
+// migration bridge — the basis for special-form partial evaluation).
+type ASTFragment struct {
+	Expr ast.Expr
+	File *syntax.File
 }
 
 // Chunk is compiled code for one function.

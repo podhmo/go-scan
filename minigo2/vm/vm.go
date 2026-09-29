@@ -5,6 +5,7 @@ package vm
 
 import (
 	"fmt"
+	"go/ast"
 	"go/token"
 	"reflect"
 	"unicode/utf8"
@@ -22,11 +23,27 @@ type Hooks struct {
 	// Materialize builds the runtime value for a package-level decl
 	// (function, type, var, const) on first access.
 	Materialize func(pkg *runtime.Package, d *index.Decl) (runtime.Value, error)
+	// CompileExpr compiles a single expression into a chunk — used by
+	// OpEvalAST (the migration bridge; expressions see globals, file
+	// imports and builtins but not the caller's locals).
+	CompileExpr func(pkg *runtime.Package, file *syntax.File, e ast.Expr) (*bytecode.Chunk, error)
 }
 
 // VM is a stack machine. It is safe for sequential use from one goroutine.
 type VM struct {
 	H Hooks
+
+	// frames is the live call stack (innermost last); recover() consults it.
+	frames []*frame
+	// inflight is the script panic currently being propagated, visible to
+	// recover() only while a frame's defers are running.
+	inflight *runtime.Panic
+}
+
+type deferredCall struct {
+	fn   runtime.Value
+	args []runtime.Value
+	pos  token.Pos
 }
 
 type frame struct {
@@ -36,6 +53,11 @@ type frame struct {
 	upvals []*runtime.Cell
 	stack  []runtime.Value
 	ip     int
+
+	defers   []deferredCall // LIFO
+	deferred bool           // frame created for a deferred call
+	retNamed bool           // gather named result slots after defers run
+	results  []runtime.Value
 }
 
 func (f *frame) push(v runtime.Value) { f.stack = append(f.stack, v) }
@@ -59,12 +81,20 @@ func (f *frame) trap(format string, args ...any) {
 
 // Call invokes a function-like value: Function, Closure, BoundMethod,
 // BuiltinFunc, TypeDef (conversion), or Cell wrapping any of those.
+// It is the engine boundary: script panics and traps unwind as Go panics
+// and are converted to errors here.
 func (v *VM) Call(callee runtime.Value, args []runtime.Value) (result runtime.Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			result, err = nil, asError(r)
 		}
 	}()
+	return v.call(callee, args)
+}
+
+// call is Call without the boundary: script *Panic / *Trap propagate as Go
+// panics through intermediate frames so defers and recover() see them.
+func (v *VM) call(callee runtime.Value, args []runtime.Value) (runtime.Value, error) {
 	for {
 		switch c := callee.(type) {
 		case *runtime.BuiltinFunc:
@@ -89,6 +119,19 @@ func (v *VM) Call(callee runtime.Value, args []runtime.Value) (result runtime.Va
 		return runtime.NIL, nil
 	}
 	return fr.stack[len(fr.stack)-1], nil
+}
+
+// Recover implements the recover() builtin for VMCaller: it returns the
+// in-flight panic value only when the innermost frame is a deferred
+// function running during unwind — matching Go's restriction that recover
+// works only when called directly by a deferred function.
+func (v *VM) Recover() runtime.Value {
+	if n := len(v.frames); n > 0 && v.frames[n-1].deferred && v.inflight != nil {
+		val := v.inflight.Value
+		v.inflight = nil
+		return val
+	}
+	return runtime.NIL
 }
 
 func asError(r any) error {
@@ -149,7 +192,115 @@ func (v *VM) prepFrame(callee runtime.Value, args []runtime.Value) (*frame, erro
 	return fr, nil
 }
 
+// exec runs a frame to completion: the instruction loop first, then the
+// frame's defers during unwind — mirroring Go, where deferred calls run on
+// normal return and during panic unwinding alike. A script *Panic is
+// catchable by recover() inside a deferred function; a *Trap (and any host
+// panic) bypasses recover and re-panics after defers drain.
 func (v *VM) exec(f *frame) {
+	v.frames = append(v.frames, f)
+	defer func() {
+		r := recover()
+		v.frames = v.frames[:len(v.frames)-1]
+		v.unwind(f, r)
+	}()
+	v.loop(f)
+}
+
+// unwind runs the frame's defers and resolves the outcome of r, the value
+// caught during frame teardown (nil on normal return).
+func (v *VM) unwind(f *frame, r any) {
+	if r != nil {
+		v.trace(f, r)
+	}
+	var p *runtime.Panic
+	if sp, ok := r.(*runtime.Panic); ok {
+		p = sp
+	}
+	// v.inflight is visible to recover() only while this frame's defers run.
+	saved := v.inflight
+	v.inflight = p
+	v.runDefers(f)
+	p = v.inflight
+	v.inflight = saved
+	switch {
+	case p != nil:
+		panic(p) // still panicking, or a deferred call panicked
+	case r != nil:
+		if _, ok := r.(*runtime.Panic); !ok {
+			panic(r) // Trap/host panic: recover() must not swallow it
+		}
+		fallthrough // script panic recovered by a deferred function
+	default:
+		f.stack = []runtime.Value{f.finalResult()}
+	}
+}
+
+// finalResult computes the frame's return value after its defers ran, so a
+// deferred function can still mutate named results (Go semantics). Named
+// slots are gathered whenever the function declares named results — even on
+// panic unwind, where no OpReturn ever ran (a recover()ing defer can set
+// them). Unnamed results come from the values OpReturn collected.
+func (f *frame) finalResult() runtime.Value {
+	results := f.results
+	if len(f.ch.NamedSlots) > 0 {
+		results = make([]runtime.Value, len(f.ch.NamedSlots))
+		for i, s := range f.ch.NamedSlots {
+			results[i] = f.locals[s].Elem
+		}
+	}
+	switch len(results) {
+	case 0:
+		return runtime.NIL
+	case 1:
+		return results[0]
+	default:
+		return &runtime.Tuple{Elems: results}
+	}
+}
+
+// trace appends a "name at file:line" entry to an unwinding Trap/Panic.
+func (v *VM) trace(f *frame, r any) {
+	entry := f.fn.Name
+	if pos := f.pos(); pos.IsValid() && f.fn.Pkg != nil && f.fn.Pkg.Fset != nil {
+		entry = fmt.Sprintf("%s at %s", f.fn.Name, f.fn.Pkg.Fset.Position(pos))
+	}
+	switch e := r.(type) {
+	case *runtime.Trap:
+		e.Frames = append(e.Frames, entry)
+	case *runtime.Panic:
+		e.Frames = append(e.Frames, entry)
+	}
+}
+
+// runDefers drains the frame's defer list LIFO. As in Go, a script panic
+// inside a deferred call supersedes the panic being unwound but the
+// remaining defers still run; a Trap/host panic aborts the rest.
+func (v *VM) runDefers(f *frame) {
+	for len(f.defers) > 0 {
+		d := f.defers[len(f.defers)-1]
+		f.defers = f.defers[:len(f.defers)-1]
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if p, ok := r.(*runtime.Panic); ok {
+						v.inflight = p
+						return
+					}
+					panic(r)
+				}
+			}()
+			fr, err := v.prepFrame(d.fn, d.args)
+			if err != nil {
+				panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
+			}
+			fr.deferred = true
+			v.exec(fr)
+		}()
+	}
+}
+
+func (v *VM) loop(f *frame) {
 	code := f.ch.Code
 	consts := f.ch.Consts
 	for f.ip < len(code) {
@@ -219,6 +370,10 @@ func (v *VM) exec(f *frame) {
 			idx := f.pop()
 			base := f.pop()
 			f.push(v.index(f, base, idx))
+		case bytecode.OpIndexOK:
+			idx := f.pop()
+			base := f.pop()
+			f.push(v.indexOK(f, base, idx))
 		case bytecode.OpSetIndex:
 			val := f.pop()
 			idx := f.pop()
@@ -253,7 +408,43 @@ func (v *VM) exec(f *frame) {
 				args[i] = f.pop()
 			}
 			fn := f.pop()
-			r, err := v.Call(fn, args)
+			r, err := v.call(fn, args)
+			if err != nil {
+				panic(&runtime.Trap{Pos: ins.Pos, Reason: err.Error()})
+			}
+			f.push(r)
+		case bytecode.OpDefer:
+			// callee + args are evaluated now (Go semantics); the call itself
+			// runs at frame teardown, LIFO.
+			argc := int(ins.A)
+			args := make([]runtime.Value, argc)
+			for i := argc - 1; i >= 0; i-- {
+				args[i] = f.pop()
+			}
+			fn := f.pop()
+			f.defers = append(f.defers, deferredCall{fn: fn, args: args, pos: ins.Pos})
+		case bytecode.OpGo:
+			// single-threaded approximation: `go f(x)` runs f synchronously;
+			// its result is discarded and a panic propagates immediately.
+			argc := int(ins.A)
+			args := make([]runtime.Value, argc)
+			for i := argc - 1; i >= 0; i-- {
+				args[i] = f.pop()
+			}
+			fn := f.pop()
+			if _, err := v.call(fn, args); err != nil {
+				panic(&runtime.Trap{Pos: ins.Pos, Reason: err.Error()})
+			}
+		case bytecode.OpEvalAST:
+			frag := consts[ins.A].(*bytecode.ASTFragment)
+			if v.H.CompileExpr == nil {
+				f.trap("OpEvalAST: no CompileExpr hook")
+			}
+			ch, err := v.H.CompileExpr(f.fn.Pkg, frag.File, frag.Expr)
+			if err != nil {
+				panic(&runtime.Trap{Pos: ins.Pos, Reason: err.Error()})
+			}
+			r, err := v.call(&runtime.Function{Pkg: f.fn.Pkg, File: frag.File, Name: "<eval>", Chunk: ch}, nil)
 			if err != nil {
 				panic(&runtime.Trap{Pos: ins.Pos, Reason: err.Error()})
 			}
@@ -319,35 +510,68 @@ func (v *VM) exec(f *frame) {
 			if !iterNext(f, it, int(ins.C)) {
 				f.ip = int(ins.A)
 			}
+		case bytecode.OpSend:
+			val := f.pop()
+			chv := f.pop()
+			ch := asChan(f, chv)
+			if ch.Closed {
+				f.trap("send on closed channel")
+			}
+			ch.Elems = append(ch.Elems, val)
+		case bytecode.OpRecv:
+			f.push(recvChan(f, f.pop()))
+		case bytecode.OpRecvOK:
+			f.push(recvChanOK(f, f.pop()))
+		case bytecode.OpSelSend:
+			val := f.pop()
+			chv := f.pop()
+			if ch, ok := chv.(*runtime.Chan); ok && !ch.Closed {
+				ch.Elems = append(ch.Elems, val)
+				f.push(true)
+			} else {
+				f.push(false)
+			}
+		case bytecode.OpSelRecv:
+			chv := f.pop()
+			ch, ok := chv.(*runtime.Chan)
+			if !ok || (len(ch.Elems) == 0 && !ch.Closed) {
+				f.push(false)
+				break
+			}
+			switch int(ins.A) {
+			case 0:
+				f.push(runtime.NIL)
+			case 1:
+				f.push(popChan(ch))
+			default:
+				okv := len(ch.Elems) > 0
+				f.push(&runtime.Tuple{Elems: []runtime.Value{popChan(ch), okv}})
+			}
+			f.push(true)
 		case bytecode.OpPanic:
 			panic(&runtime.Panic{Value: f.pop()})
 		case bytecode.OpTrap:
 			panic(&runtime.Trap{Pos: ins.Pos, Reason: fmt.Sprint(consts[ins.A])})
 		case bytecode.OpReturn:
-			var results []runtime.Value
 			n := int(ins.A)
-			if n < 0 {
-				// bare return: gather named result cells
-				results = make([]runtime.Value, len(f.ch.NamedSlots))
-				for i, s := range f.ch.NamedSlots {
-					results[i] = f.locals[s].Elem
-				}
-				n = len(results)
-			} else {
-				results = make([]runtime.Value, n)
+			switch {
+			case n < 0:
+				// bare return: gather named result slots after defers run
+				f.retNamed = true
+			case n > 0 && len(f.ch.NamedSlots) == n:
+				// explicit return stores into the named result slots first,
+				// so deferred calls can still mutate them before teardown
 				for i := n - 1; i >= 0; i-- {
-					results[i] = f.pop()
+					f.locals[f.ch.NamedSlots[i]].Elem = f.pop()
+				}
+				f.retNamed = true
+			default:
+				f.results = make([]runtime.Value, n)
+				for i := n - 1; i >= 0; i-- {
+					f.results[i] = f.pop()
 				}
 			}
-			switch len(results) {
-			case 0:
-				f.push(runtime.NIL)
-			case 1:
-				f.push(results[0])
-			default:
-				f.push(&runtime.Tuple{Elems: results})
-			}
-			return
+			f.ip = len(code)
 		default:
 			f.trap("unknown opcode %d", ins.Op)
 		}
@@ -508,10 +732,64 @@ func (v *VM) selectMember(f *frame, base runtime.Value, name string) runtime.Val
 		f.trap("select %s on slice", name)
 	case *runtime.Map:
 		f.trap("select %s on map", name)
+	case *runtime.GoValue:
+		// host value (stdlib intrinsic result): reflect its method set
+		m := reflect.ValueOf(b.V).MethodByName(name)
+		if !m.IsValid() {
+			f.trap("no method %s on host value %T", name, b.V)
+		}
+		return &runtime.BuiltinFunc{Name: name, Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			in := make([]reflect.Value, len(args))
+			for i, a := range args {
+				in[i] = reflect.ValueOf(a)
+			}
+			out := m.Call(in)
+			switch len(out) {
+			case 0:
+				return runtime.NIL, nil
+			case 1:
+				return goValueOf(out[0]), nil
+			default:
+				el := make([]runtime.Value, len(out))
+				for i, o := range out {
+					el[i] = goValueOf(o)
+				}
+				return &runtime.Tuple{Elems: el}, nil
+			}
+		}}
 	default:
 		f.trap("select %s on %T", name, base)
 	}
 	return nil
+}
+
+// goValueOf adapts a reflect result to a runtime value: script-native types
+// pass through, everything else stays boxed as a host GoValue. Value is
+// `any`, so the pass-through list names the concrete runtime types.
+func goValueOf(rv reflect.Value) runtime.Value {
+	x := rv.Interface()
+	switch v := x.(type) {
+	case nil:
+		return runtime.NIL
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case string:
+		return v
+	case bool:
+		return v
+	case float64:
+		return v
+	case runtime.Nil, *runtime.Tuple, *runtime.Cell, *runtime.Slice,
+		*runtime.Map, *runtime.Struct, *runtime.Function, *runtime.Closure,
+		*runtime.BoundMethod, *runtime.BuiltinFunc, *runtime.GoValue,
+		*runtime.Chan, *runtime.TypeDef, *runtime.Iterator, *runtime.Package,
+		*runtime.ImportRef:
+		return v
+	default:
+		return &runtime.GoValue{V: x}
+	}
 }
 
 func (v *VM) structMember(f *frame, s *runtime.Struct, name string, recv runtime.Value) runtime.Value {
@@ -587,6 +865,22 @@ func (v *VM) index(f *frame, base, idx runtime.Value) runtime.Value {
 		f.trap("index on %T", base)
 		return nil
 	}
+}
+
+// indexOK implements the comma-ok form `v, ok := m[k]`: for maps ok is
+// whether the key is present; other indexables always report ok.
+func (v *VM) indexOK(f *frame, base, idx runtime.Value) runtime.Value {
+	if c, ok := base.(*runtime.Cell); ok {
+		return v.indexOK(f, c.Elem, idx)
+	}
+	if m, ok := base.(*runtime.Map); ok {
+		val, found := m.Pairs[idx]
+		if !found {
+			val = runtime.NIL
+		}
+		return &runtime.Tuple{Elems: []runtime.Value{val, found}}
+	}
+	return &runtime.Tuple{Elems: []runtime.Value{v.index(f, base, idx), true}}
 }
 
 func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
@@ -729,6 +1023,56 @@ func valueCopy(v runtime.Value) runtime.Value {
 	return v
 }
 
+// channels — single-threaded approximation. Sends append to an unbounded
+// queue (never block); a receive on an empty open channel would block
+// forever, so it traps rather than deadlocking the interpreter.
+
+func asChan(f *frame, v runtime.Value) *runtime.Chan {
+	switch x := v.(type) {
+	case *runtime.Chan:
+		return x
+	case *runtime.Cell:
+		return asChan(f, x.Elem)
+	default:
+		f.trap("channel operation on %T", v)
+		return nil
+	}
+}
+
+// popChan removes and returns the front element, or NIL on an empty closed
+// channel (approximating the zero value).
+func popChan(ch *runtime.Chan) runtime.Value {
+	if len(ch.Elems) == 0 {
+		return runtime.NIL
+	}
+	v := ch.Elems[0]
+	ch.Elems = ch.Elems[1:]
+	return v
+}
+
+func recvChan(f *frame, v runtime.Value) runtime.Value {
+	ch := asChan(f, v)
+	if len(ch.Elems) == 0 {
+		if ch.Closed {
+			return runtime.NIL
+		}
+		f.trap("channel receive would block (single-threaded approximation)")
+	}
+	return popChan(ch)
+}
+
+func recvChanOK(f *frame, v runtime.Value) runtime.Value {
+	ch := asChan(f, v)
+	if len(ch.Elems) > 0 {
+		return &runtime.Tuple{Elems: []runtime.Value{popChan(ch), true}}
+	}
+	if ch.Closed {
+		return &runtime.Tuple{Elems: []runtime.Value{runtime.NIL, false}}
+	}
+	f.trap("channel receive would block (single-threaded approximation)")
+	return nil
+}
+
 // iterators
 
 func newIterator(f *frame, coll runtime.Value) *runtime.Iterator {
@@ -743,6 +1087,8 @@ func newIterator(f *frame, coll runtime.Value) *runtime.Iterator {
 			it.Elems = append(it.Elems, c.Pairs[k])
 		}
 		return it
+	case *runtime.Chan:
+		return &runtime.Iterator{Kind: 'c', Chan: c}
 	case int64:
 		return &runtime.Iterator{Kind: 'i', Limit: int(c)}
 	case string:
@@ -792,6 +1138,15 @@ func iterNext(f *frame, it *runtime.Iterator, nvars int) bool {
 		r, size := utf8.DecodeRuneInString(it.String[it.Idx:])
 		push(int64(it.Idx), int64(r))
 		it.Idx += size
+		return true
+	case 'c':
+		// range over a channel drains the queue (approximation of "until
+		// closed" — sends already ran synchronously).
+		if len(it.Chan.Elems) == 0 {
+			return false
+		}
+		v := popChan(it.Chan)
+		push(v, v)
 		return true
 	}
 	return false

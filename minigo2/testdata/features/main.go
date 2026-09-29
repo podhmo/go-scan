@@ -191,6 +191,22 @@ func TypeSwitchBind() string {
 	}
 }
 
+func NilAssert() int {
+	var x any // nil interface: no dynamic type
+	if _, ok := x.(any); ok {
+		return -1
+	}
+	if _, ok := x.(int); ok {
+		return -2
+	}
+	switch x.(type) {
+	case nil:
+		return 1
+	default:
+		return -3
+	}
+}
+
 func AssertPanic() int {
 	n := 0
 	func() {

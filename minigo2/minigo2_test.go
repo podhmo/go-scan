@@ -365,6 +365,7 @@ func TestFeatures(t *testing.T) {
 		{"TypeSwitch", int64(120)},
 		{"TypeSwitchBind", "hey!"},
 		{"AssertPanic", int64(99)},
+		{"NilAssert", int64(1)},
 		// generics
 		{"GenericFns", int64(42)},
 		{"GenericConvert", int64(42)},

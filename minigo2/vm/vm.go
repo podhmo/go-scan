@@ -1602,6 +1602,11 @@ func (v *VM) typeAssertOK(f *frame, x, tdv runtime.Value) runtime.Value {
 // engine hooks; concrete typedefs match by descriptor identity (or name
 // for builtins / primitives).
 func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
+	if x == nil || x == runtime.NIL {
+		// nil has no dynamic type: every assert fails, including .(any).
+		// (`case nil:` in a type switch is matched by BinEql, not here.)
+		return false
+	}
 	if td.Kind == runtime.KindInterface {
 		return v.satisfiesIface(f, td, x)
 	}

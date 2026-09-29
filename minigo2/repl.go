@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
+	"go/scanner"
 	"go/token"
 	"strings"
 
@@ -448,6 +449,62 @@ func (r *REPL) reload() error {
 // Display renders a runtime value for REPL output.
 func (r *REPL) Display(v runtime.Value) any {
 	return display(v)
+}
+
+// IncompleteInput reports whether a REPL fragment needs more input: either
+// a (), [] or {} group is still open, or the fragment ends on a token where
+// Go would not insert a semicolon (a trailing operator, comma, or dot). It
+// is a tokenization heuristic for driving a continuation prompt, not a
+// parser — a "complete" fragment can still fail to parse or evaluate.
+//
+// Consequences for an interactive loop: `func f() {`, `x := []int{` and
+// `x := 1 +` all read as incomplete; `} else {` keeps `else` attached to
+// its `if` only when both arrive inside the same unclosed buffer (as in Go
+// source, `else` must share a line with the closing `}`). Unterminated
+// raw strings and /* */ comments read as incomplete — they are the two
+// constructs Go legitimately continues across lines. Every other
+// degenerate fragment (comment-only input, unterminated '"' or rune
+// literals, illegal characters, negative depth) reads as complete so its
+// error surfaces through EvalLine instead of waiting forever.
+func IncompleteInput(src string) bool {
+	var s scanner.Scanner
+	fset := token.NewFileSet()
+	file := fset.AddFile("repl-input.go", -1, len(src))
+	var scanErr, continueErr bool
+	s.Init(file, []byte(src), func(_ token.Position, msg string) {
+		scanErr = true
+		// The two errors a later line can fix: an open ` raw string and
+		// an open /* comment. '"' strings and rune literals cannot span
+		// lines, so their "not terminated" errors stay non-continuable.
+		if strings.Contains(msg, "raw string literal not terminated") ||
+			strings.Contains(msg, "comment not terminated") {
+			continueErr = true
+		}
+	}, 0)
+	depth := 0
+	last := token.ILLEGAL
+	for {
+		_, tok, _ := s.Scan()
+		if tok == token.EOF {
+			break
+		}
+		switch tok {
+		case token.LPAREN, token.LBRACK, token.LBRACE:
+			depth++
+		case token.RPAREN, token.RBRACK, token.RBRACE:
+			depth--
+		}
+		last = tok
+	}
+	if depth > 0 || continueErr {
+		return true
+	}
+	if scanErr || last == token.ILLEGAL {
+		return false
+	}
+	// A fragment ending where Go inserts a semicolon (or with an explicit
+	// `;`) is complete; anything else may continue on the next line.
+	return last != token.SEMICOLON
 }
 
 // formatNode prints a single AST node.

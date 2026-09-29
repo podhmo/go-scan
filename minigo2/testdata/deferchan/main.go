@@ -169,4 +169,66 @@ func SelectSend() int {
 	return <-ch
 }
 
+// DeferBuiltinClose: a deferred builtin (close) runs at teardown —
+// deferred callees are not limited to compiled functions.
+func DeferBuiltinClose() int {
+	ch := make(chan int)
+	defer close(ch)
+	ch <- 7
+	return len(ch) + 1 // closed but still queued: len 1 -> 2
+}
+
+// DeferBuiltinRecover: `defer recover()` is a deferred builtin and still
+// catches the unwinding panic.
+func DeferBuiltinRecover() (r int) {
+	defer recover()
+	r = 3
+	panic("swallowed")
+}
+
+// SelectConsumeBare: `case <-ch` consumes the queued value like any
+// other receive — a non-binding receive must not leave it queued.
+func SelectConsumeBare() int {
+	ch := make(chan int)
+	ch <- 1
+	ch <- 2
+	select {
+	case <-ch:
+	}
+	return <-ch // the select consumed 1 -> 2
+}
+
+// SelectEvalOrder: every case's channel operand is evaluated once on
+// entry, in source order — even operands of cases that do not win.
+func SelectEvalOrder() int {
+	seen := 0
+	mkch := func(n int) chan int {
+		seen += n
+		c := make(chan int)
+		c <- n
+		return c
+	}
+	select {
+	case <-mkch(1):
+	case <-mkch(10):
+	}
+	return seen // 11
+}
+
+// SelectSendEvalOrder: a send case's channel and value operands are also
+// evaluated on entry, before the winning case runs.
+func SelectSendEvalOrder() int {
+	seen := 0
+	val := func() int { seen = 7; return 1 }
+	sch := make(chan int)
+	rch := make(chan int)
+	rch <- 9
+	select {
+	case <-rch:
+	case sch <- val():
+	}
+	_ = sch
+	return seen // 7
+}
+
 func main() {}

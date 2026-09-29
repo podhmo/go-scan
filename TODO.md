@@ -169,8 +169,14 @@ Skeleton landed: lazy per-package loading, per-function compile, struct/method/c
 - [ ] **Special forms (`SPECIAL_CALL`)**: quoted-call dispatch by canonical `SymbolID` before package materialization; `SpecialContext` API (`Resolve`/`ResolveType`/`Eval`/`Format`); partial-argument evaluation.
 - [x] **Full init-order analysis**: the topo sort now follows transitive deps through function bodies (`var x = f()` waits on every package-level name `f` transitively reads).
 - [ ] **`&s.f`, `x[i]++`, compound assign on non-idents**: reference/store paths for field/index expressions.
+- [ ] **Spread calls**: `f(args...)` argument spreading at call sites (currently `OpTrap`).
+- [ ] **`fallthrough`**: switch clause fall-through (currently `OpTrap`).
+- [ ] **Labels / `goto`**: labeled statements and goto/branch-to-label (currently `OpTrap`).
 - [x] **`LazyInit` mode**: `WithInitMode(LazyInit)` lets `Member` answer function/type queries without running initializers; var/const still require Ready.
 - [x] **`AllowedRoots` option**: `WithAllowedRoots(roots...)` restricts located directories to the given roots (checked in `Locate`/`LocateDir`).
 - [x] **Stdlib acceleration**: intrinsic bindings for fmt/errors/strings/strconv/sort/slices/maps/os/time are installed into every engine via `Bind`; host values are boxed as `*runtime.GoValue` with reflective method dispatch.
 - [x] **`OP_EVAL_AST` migration bridge**: `OpEvalAST` keeps an AST fragment as a chunk constant and compiles it via `compile.Expr` on first execution; `Engine.EvalExpr` is the public entry point.
 - [x] **Conformance harness**: `conformance_test.go` runs the shared-subset corpus under both engines and diffs normalized results (known v1 divergences documented).
+- [ ] **Real concurrency semantics**: the channel/select model is a documented single-thread approximation (`go` runs synchronously, queues are unbounded, would-block operations trap). True goroutine interleaving, blocking send/recv, buffered `make(chan, n)`, `sync` primitives are all out of scope for it.
+- [ ] **Intrinsic coverage + element types**: the stdlib surface is a starter set (fmt/errors/strings/strconv/sort/slices/maps/os/time); ordering helpers only sort int64/float64/string elements, and anything missing falls through to GOROOT source interpretation.
+- [ ] **Restricted-mode host-surface policy**: under `AllowedRoots`, `os.Getenv`/`os.Args` are unbound and `os.Exit` always traps — but there is no general policy for other host-touching intrinsics (e.g. `time.Sleep`, fmt output destination, any future file/network I/O).

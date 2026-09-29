@@ -155,6 +155,8 @@ func TestDeferRecover(t *testing.T) {
 		{"RecoverValue", "boom"},          // defer+recover captures panic
 		{"RecoverOutsideDefer", int64(1)}, // recover outside defer is nil
 		{"StillPanic", runtime.NIL},       // recovered panic returns normally
+		{"DeferBuiltinClose", int64(2)},   // deferred builtin runs at teardown
+		{"DeferBuiltinRecover", int64(3)}, // defer recover() catches the panic
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/deferchan", c.fn)
@@ -185,6 +187,9 @@ func TestChanSelect(t *testing.T) {
 		{"SelectDefault", int64(9)},
 		{"SelectCommaOk", int64(3)},
 		{"SelectSend", int64(11)},
+		{"SelectConsumeBare", int64(2)},   // bare case <-ch consumes
+		{"SelectEvalOrder", int64(11)},    // all operands eval on entry
+		{"SelectSendEvalOrder", int64(7)}, // send chan+value eval too
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/deferchan", c.fn)
@@ -212,6 +217,8 @@ func TestStdlibIntrinsics(t *testing.T) {
 		{"StrconvAtoi", int64(42)}, // (val, err) tuple
 		{"StringsJoin", "a,b,c"},
 		{"ErrorsNew", "oops"},
+		{"SortIntsInPlace", int64(123)}, // sort mutates the slice
+		{"SlicesSortInPlace", "abc"},    // slices.Sort mutates too
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/intrins", c.fn)
@@ -286,5 +293,43 @@ func TestLazyInitMode(t *testing.T) {
 	}
 	if _, err := pkg2.Member("Get", stub); err == nil || !strings.Contains(err.Error(), "BOOM") {
 		t.Fatalf("eager mode should surface init panic, got %v", err)
+	}
+}
+
+func TestInitFailureSurfaces(t *testing.T) {
+	// An initializer that panics after registering some globals must not
+	// leave partial state answerable: Member returns the init error.
+	e := newEngine(t)
+	pkg, err := e.Package(context.Background(), "./testdata/initfail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := func(p *runtime.Package, d *index.Decl) (runtime.Value, error) {
+		return runtime.NIL, nil
+	}
+	if _, err := pkg.Member("Good", stub); err == nil ||
+		!strings.Contains(err.Error(), "init went wrong") {
+		t.Fatalf("partial init state must surface the failure, got %v", err)
+	}
+	if _, err := e.Run(context.Background(), "./testdata/initfail", "Use"); err == nil ||
+		!strings.Contains(err.Error(), "init went wrong") {
+		t.Fatalf("Run on a failed package must surface the init error, got %v", err)
+	}
+}
+
+func TestOsHostSurface(t *testing.T) {
+	// Restricted engines (AllowedRoots set) do not get os.Getenv/os.Args.
+	td, err := filepath.Abs("./testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := minigo2.NewEngine("..", minigo2.WithAllowedRoots(td))
+	if _, err := e.Run(context.Background(), "./testdata/hostenv", "Read"); err == nil {
+		t.Fatal("os.Getenv must be unbound under AllowedRoots")
+	}
+	// os.Exit never terminates the host, in any mode.
+	if _, err := newEngine(t).Run(context.Background(), "./testdata/hostenv", "Exit"); err == nil ||
+		!strings.Contains(err.Error(), "cannot terminate the host") {
+		t.Fatalf("os.Exit must trap, got %v", err)
 	}
 }

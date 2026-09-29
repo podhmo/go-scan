@@ -132,6 +132,14 @@ func (p *Package) EnsureReady() error {
 // index (functions/types are materialized on demand via materialize).
 // materialize is engine-provided and builds *Function / *TypeDef objects.
 func (p *Package) Member(name string, materialize func(*Package, *index.Decl) (Value, error)) (Value, error) {
+	// A failed initialization must not go unnoticed: globals registered
+	// before the failure are partial state, so surface the error instead.
+	if p.State == Failed {
+		if p.initErr != nil {
+			return nil, p.initErr
+		}
+		return nil, fmt.Errorf("package %s failed to load", p.Name)
+	}
 	if v, ok := p.Globals.Get(name); ok {
 		return v, nil
 	}

@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -29,6 +31,20 @@ func ErrorsNew() string {
 		return "no error"
 	}
 	return err.Error()
+}
+
+// SortIntsInPlace: sort.Ints mutates the caller's slice, not a copy.
+func SortIntsInPlace() int {
+	s := []int{3, 1, 2}
+	sort.Ints(s)
+	return s[0]*100 + s[1]*10 + s[2] // 123
+}
+
+// SlicesSortInPlace: slices.Sort mutates the caller's slice.
+func SlicesSortInPlace() string {
+	s := []string{"b", "a", "c"}
+	slices.Sort(s)
+	return s[0] + s[1] + s[2] // "abc"
 }
 
 func main() {}

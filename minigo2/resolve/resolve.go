@@ -30,6 +30,8 @@ type BuildConfig struct {
 }
 
 // checkDir verifies dir against AllowedRoots (no-op when unrestricted).
+// Both sides are resolved through EvalSymlinks so a symlink inside a root
+// pointing outside it cannot bypass the check.
 func (cfg BuildConfig) checkDir(dir string) error {
 	if len(cfg.AllowedRoots) == 0 {
 		return nil
@@ -38,10 +40,16 @@ func (cfg BuildConfig) checkDir(dir string) error {
 	if err != nil {
 		return err
 	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
 	for _, root := range cfg.AllowedRoots {
 		r, err := filepath.Abs(root)
 		if err != nil {
 			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(r); err == nil {
+			r = resolved
 		}
 		if abs == r || strings.HasPrefix(abs, r+string(filepath.Separator)) {
 			return nil

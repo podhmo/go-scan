@@ -70,12 +70,12 @@ func (e *Engine) installStdlib() {
 		"FormatInt": h.fn2("strconv.FormatInt", func(a []any) (any, error) { return strconv.FormatInt(int64Of(a[0]), intOf(a[1])), nil }),
 	})
 	e.Bind("sort", map[string]runtime.Value{
-		"Ints":    h.fn("sort.Ints", func(a []any) (any, error) { sort.Ints(intSlice(a[0])); return nil, nil }),
-		"Strings": h.fn("sort.Strings", func(a []any) (any, error) { sort.Strings(strSlice(a[0])); return nil, nil }),
+		"Ints":    h.sortInPlace("sort.Ints"),
+		"Strings": h.sortInPlace("sort.Strings"),
 		"Slice":   h.sortSlice,
 	})
 	e.Bind("slices", map[string]runtime.Value{
-		"Sort": h.fn("slices.Sort", func(a []any) (any, error) { sortSliceAny(a[0]); return nil, nil }),
+		"Sort": h.sortInPlace("slices.Sort"),
 		"Contains": h.fn2("slices.Contains", func(a []any) (any, error) {
 			return slices.Contains(anySlice(a[0]), a[1]), nil
 		}),
@@ -84,11 +84,19 @@ func (e *Engine) installStdlib() {
 		"Keys":   h.fn("maps.Keys", func(a []any) (any, error) { return mapKeys(a[0]), nil }),
 		"Values": h.fn("maps.Values", func(a []any) (any, error) { return mapValues(a[0]), nil }),
 	})
-	e.Bind("os", map[string]runtime.Value{
-		"Getenv": h.fn("os.Getenv", func(a []any) (any, error) { return os.Getenv(str(a[0])), nil }),
-		"Args":   h.fn("os.Args", func(a []any) (any, error) { return strsSlice(os.Args), nil }),
-		"Exit":   h.fn("os.Exit", func(a []any) (any, error) { os.Exit(intOf(a[0])); return nil, nil }),
-	})
+	// os: an interpreted program must never observe or terminate the host
+	// process — Exit is always a trap; the environment/argv surface is only
+	// bound when the engine is unrestricted (no AllowedRoots).
+	ospkg := map[string]runtime.Value{
+		"Exit": h.fn("os.Exit", func(a []any) (any, error) {
+			return nil, errors.New("os.Exit is not supported: an interpreted program cannot terminate the host process")
+		}),
+	}
+	if len(e.cfg.AllowedRoots) == 0 {
+		ospkg["Getenv"] = h.fn("os.Getenv", func(a []any) (any, error) { return os.Getenv(str(a[0])), nil })
+		ospkg["Args"] = h.fn("os.Args", func(a []any) (any, error) { return strsSlice(os.Args), nil })
+	}
+	e.Bind("os", ospkg)
 	e.Bind("time", map[string]runtime.Value{
 		"Sleep": h.fn("time.Sleep", func(a []any) (any, error) { time.Sleep(durOf(a[0])); return nil, nil }),
 		"Now":   h.fn("time.Now", func(a []any) (any, error) { return time.Now(), nil }),
@@ -147,6 +155,44 @@ func (h *hostHelpers) arity(name string, n int, f func([]any) (any, error)) *run
 		}
 		return scriptVal(r), nil
 	}}
+}
+
+// sortInPlace sorts a *runtime.Slice's elements directly — going through
+// goNative would sort a fresh copy and leave the script's slice untouched.
+func (h *hostHelpers) sortInPlace(name string) *runtime.BuiltinFunc {
+	return &runtime.BuiltinFunc{Name: name, Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s needs 1 arg, got %d", name, len(args))
+		}
+		s, ok := args[0].(*runtime.Slice)
+		if !ok {
+			return nil, fmt.Errorf("%s: arg must be a slice, got %T", name, args[0])
+		}
+		sortScript(s.Elems)
+		return runtime.NIL, nil
+	}}
+}
+
+// sortScript orders int64/float64/string elements ascending — the element
+// sets sort.Ints, sort.Strings, and slices.Sort support.
+func sortScript(el []runtime.Value) {
+	sort.Slice(el, func(i, j int) bool {
+		switch a := el[i].(type) {
+		case int64:
+			if b, ok := el[j].(int64); ok {
+				return a < b
+			}
+		case float64:
+			if b, ok := el[j].(float64); ok {
+				return a < b
+			}
+		case string:
+			if b, ok := el[j].(string); ok {
+				return a < b
+			}
+		}
+		return false
+	})
 }
 
 // sortSlice implements sort.Slice: the less function is a script callable.
@@ -281,17 +327,6 @@ func strSlice(v any) []string {
 	return nil
 }
 
-func intSlice(v any) []int {
-	if s, ok := v.(*runtime.Slice); ok {
-		out := make([]int, len(s.Elems))
-		for i, e := range s.Elems {
-			out[i] = intOf(goNative(e))
-		}
-		return out
-	}
-	return nil
-}
-
 func anySlice(v any) []any {
 	if s, ok := v.(*runtime.Slice); ok {
 		out := make([]any, len(s.Elems))
@@ -336,22 +371,4 @@ func mapValues(v any) *runtime.Slice {
 		return &runtime.Slice{Elems: slices.Collect(maps.Values(m))}
 	}
 	return &runtime.Slice{}
-}
-
-func sortSliceAny(v any) {
-	if s, ok := v.(*runtime.Slice); ok {
-		slices.SortFunc(s.Elems, func(a, b runtime.Value) int {
-			fa, aok := a.(int64)
-			fb, bok := b.(int64)
-			if aok && bok {
-				return int(fa - fb)
-			}
-			sa, sok := a.(string)
-			sb, sbok := b.(string)
-			if sok && sbok {
-				return strings.Compare(sa, sb)
-			}
-			return 0
-		})
-	}
 }

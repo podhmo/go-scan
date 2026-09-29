@@ -302,13 +302,17 @@ func (e *Engine) bootstrap(p *runtime.Package) error {
 	return err
 }
 
-// bindCompiles attaches the compile hook to every *runtime.Function found in
-// chunk constants (init functions, function literals).
+// bindCompiles attaches the compile hook to *runtime.Function constants
+// that still need lazy compilation. Function-literal protos carry their
+// chunk already (eager compile) and have no Decl — hooking them would
+// re-run compile.Func on a nil Decl.
 func bindCompiles(p *runtime.Package, ch *bytecode.Chunk) {
 	for _, cv := range ch.Consts {
 		if fn, ok := cv.(*runtime.Function); ok {
 			fn.Pkg = p
-			fn.Compile = compile.Func
+			if fn.Decl != nil && fn.Chunk == nil {
+				fn.Compile = compile.Func
+			}
 		}
 	}
 }

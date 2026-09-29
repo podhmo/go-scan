@@ -290,14 +290,62 @@ func (v *VM) runDefers(f *frame) {
 					panic(r)
 				}
 			}()
-			fr, err := v.prepFrame(d.fn, d.args)
-			if err != nil {
-				panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
-			}
-			fr.deferred = true
-			v.exec(fr)
+			v.invokeDeferred(d)
 		}()
 	}
+}
+
+// invokeDeferred runs one deferred call. Callees without a bytecode frame
+// (BuiltinFunc, TypeDef conversion, Cell-wrapped values) still run at
+// teardown; a sentinel frame marked deferred is pushed for them so
+// recover() still sees the call as a deferred function — matching Go,
+// where `defer recover()` catches the panic being unwound.
+func (v *VM) invokeDeferred(d deferredCall) {
+	callee := d.fn
+	for {
+		switch c := callee.(type) {
+		case *runtime.BuiltinFunc:
+			v.pushDeferredSentinel(c.Name)
+			defer v.framesPop()
+			if _, err := c.Fn(v, d.args); err != nil {
+				panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
+			}
+			return
+		case *runtime.TypeDef:
+			v.pushDeferredSentinel(c.Name)
+			defer v.framesPop()
+			if _, err := convert(c, firstArg(d.args)); err != nil {
+				panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
+			}
+			return
+		case *runtime.Cell:
+			callee = c.Elem
+			continue
+		}
+		break
+	}
+	fr, err := v.prepFrame(callee, d.args)
+	if err != nil {
+		panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
+	}
+	fr.deferred = true
+	v.exec(fr)
+}
+
+// pushDeferredSentinel records a deferred host call on the frame stack so
+// Recover() treats it as the innermost deferred function. It is not a real
+// frame: no chunk, no locals — only the deferred flag matters.
+func (v *VM) pushDeferredSentinel(name string) {
+	v.frames = append(v.frames, &frame{fn: &runtime.Function{Name: name}, deferred: true})
+}
+
+func (v *VM) framesPop() { v.frames = v.frames[:len(v.frames)-1] }
+
+func firstArg(args []runtime.Value) runtime.Value {
+	if len(args) == 0 {
+		return runtime.NIL
+	}
+	return args[0]
 }
 
 func (v *VM) loop(f *frame) {
@@ -540,6 +588,7 @@ func (v *VM) loop(f *frame) {
 			}
 			switch int(ins.A) {
 			case 0:
+				popChan(ch) // a bare `case <-ch` still consumes the value
 				f.push(runtime.NIL)
 			case 1:
 				f.push(popChan(ch))

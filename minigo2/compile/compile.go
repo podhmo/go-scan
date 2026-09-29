@@ -736,58 +736,89 @@ func (c *compiler) switchStmt(st *ast.SwitchStmt) {
 	c.fs.popBlock()
 }
 
-// selectStmt compiles select using the single-threaded approximation: every
-// case's channel operand (and send value) is evaluated eagerly in source
-// order — as the Go spec requires — then the first ready case runs. Send
-// cases are ready on an open channel (sends never block); receive cases are
-// ready on a non-empty or closed channel. With no ready case, `default`
-// runs; without a default the select would block forever, so it traps.
+// selectStmt compiles select using the single-threaded approximation. The
+// Go spec evaluates every case's channel operand (and a send case's value)
+// exactly once, in source order, on entry — so operands are evaluated into
+// temp slots first, then the first ready case runs. Send cases are ready on
+// an open channel (sends never block); receive cases are ready on a
+// non-empty or closed channel. With no ready case, `default` runs; without
+// a default the select would block forever, so it traps.
 func (c *compiler) selectStmt(st *ast.SelectStmt) {
 	c.fs.pushBlock()
 	cc := &ctrlCtx{}
 	c.ctrl = append(c.ctrl, cc)
 
+	type selCase struct {
+		body     []ast.Stmt
+		pos      token.Pos
+		chanSlot int
+		valSlot  int // send cases only
+		nrecv    int // receive arity: 0, 1, or 2
+		lhs      []ast.Expr
+		define   bool
+		send     bool
+	}
+	var cases []selCase
 	var defaultBody []ast.Stmt
-	var exits []int
+	tmp := 0
 	for _, s := range st.Body.List {
 		clause := s.(*ast.CommClause)
 		if clause.Comm == nil {
 			defaultBody = clause.Body
 			continue
 		}
-		var jReady int
-		var bind func()
+		sc := selCase{body: clause.Body, pos: clause.Pos(), chanSlot: -1, valSlot: -1}
 		switch comm := clause.Comm.(type) {
 		case *ast.SendStmt:
+			sc.send = true
+			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			tmp++
+			sc.valSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			tmp++
 			c.expr(comm.Chan)
+			c.emit(bytecode.OpSetLocal, sc.chanSlot, 0, comm.Chan.Pos())
 			c.expr(comm.Value)
-			c.emit(bytecode.OpSelSend, 0, 0, comm.Pos())
-			jReady = c.emit(bytecode.OpJumpTrue, 0, 0, comm.Pos())
+			c.emit(bytecode.OpSetLocal, sc.valSlot, 0, comm.Value.Pos())
 		default:
 			recv, lhs, define := selectRecv(clause.Comm)
 			if recv == nil {
 				c.trap(clause.Comm.Pos(), "unsupported select case %T", clause.Comm)
 				continue
 			}
+			sc.chanSlot = c.fs.declare(fmt.Sprintf("$sel%d", tmp))
+			tmp++
 			c.expr(recv.X)
-			c.emit(bytecode.OpSelRecv, len(lhs), 0, recv.Pos())
-			jReady = c.emit(bytecode.OpJumpTrue, 0, 0, recv.Pos())
-			l := lhs
-			d := define
-			bind = func() { c.bindRecv(l, d) }
+			c.emit(bytecode.OpSetLocal, sc.chanSlot, 0, recv.X.Pos())
+			sc.nrecv = len(lhs)
+			sc.lhs = lhs
+			sc.define = define
 		}
-		jNext := c.emit(bytecode.OpJump, 0, 0, clause.Pos())
+		cases = append(cases, sc)
+	}
+
+	var exits []int
+	for _, sc := range cases {
+		if sc.send {
+			c.emit(bytecode.OpLocal, sc.chanSlot, 0, sc.pos)
+			c.emit(bytecode.OpLocal, sc.valSlot, 0, sc.pos)
+			c.emit(bytecode.OpSelSend, 0, 0, sc.pos)
+		} else {
+			c.emit(bytecode.OpLocal, sc.chanSlot, 0, sc.pos)
+			c.emit(bytecode.OpSelRecv, sc.nrecv, 0, sc.pos)
+		}
+		jReady := c.emit(bytecode.OpJumpTrue, 0, 0, sc.pos)
+		jNext := c.emit(bytecode.OpJump, 0, 0, sc.pos)
 		bodyStart := len(c.ch.Code)
 		c.patchA(jReady, bodyStart)
 		c.fs.pushBlock()
-		if bind != nil {
-			bind()
+		if !sc.send {
+			c.bindRecv(sc.lhs, sc.define)
 		}
-		for _, bs := range clause.Body {
+		for _, bs := range sc.body {
 			c.stmt(bs)
 		}
 		c.fs.popBlock()
-		exits = append(exits, c.emit(bytecode.OpJump, 0, 0, clause.Pos()))
+		exits = append(exits, c.emit(bytecode.OpJump, 0, 0, sc.pos))
 		c.patchA(jNext, len(c.ch.Code))
 	}
 	if defaultBody != nil {

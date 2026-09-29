@@ -92,6 +92,11 @@ type Package struct {
 	// local name (alias or basename).
 	Scopes map[*syntax.File]map[string]*ImportRef
 
+	// FileByName maps an absolute source path to its file — used to recover
+	// per-declaration file context from instruction positions (the synthetic
+	// __init__ chunk mixes decls from several files).
+	FileByName map[string]*syntax.File
+
 	initOnce sync.Once
 	initErr  error
 	// Bootstrap builds and runs the package initializer (var/const decls +

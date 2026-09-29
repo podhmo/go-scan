@@ -211,6 +211,10 @@ func (e *Engine) buildPackage(meta *resolve.PackageMeta) (*runtime.Package, erro
 		files = append(files, sf)
 	}
 	p.Files = files
+	p.FileByName = map[string]*syntax.File{}
+	for _, sf := range files {
+		p.FileByName[sf.Name] = sf
+	}
 
 	ix, err := index.Build(files)
 	if err != nil {
@@ -307,9 +311,10 @@ func (e *Engine) typeDefOf(pkg *runtime.Package, d *index.Decl) (runtime.Value, 
 	if info, ok := pkg.Index.Types[d.Name]; ok && len(info.Methods) > 0 {
 		td.Methods = map[string]*runtime.Function{}
 		for name, md := range info.Methods {
+			_, ptrRecv := md.Func.Recv.List[0].Type.(*ast.StarExpr)
 			td.Methods[name] = &runtime.Function{
 				Pkg: pkg, File: md.File, Decl: md.Func, Name: d.Name + "." + name,
-				Compile: compile.Func,
+				PtrRecv: ptrRecv, Compile: compile.Func,
 			}
 		}
 	}

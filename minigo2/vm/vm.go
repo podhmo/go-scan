@@ -6,11 +6,13 @@ package vm
 import (
 	"fmt"
 	"go/token"
+	"reflect"
 	"unicode/utf8"
 
 	"github.com/podhmo/go-scan/minigo2/bytecode"
 	"github.com/podhmo/go-scan/minigo2/index"
 	"github.com/podhmo/go-scan/minigo2/runtime"
+	"github.com/podhmo/go-scan/minigo2/syntax"
 )
 
 // Hooks are the engine-provided services the VM needs.
@@ -139,7 +141,7 @@ func (v *VM) prepFrame(callee runtime.Value, args []runtime.Value) (*frame, erro
 			fr.locals[i] = &runtime.Cell{Elem: rest}
 			break
 		}
-		fr.locals[i] = &runtime.Cell{Elem: a}
+		fr.locals[i] = &runtime.Cell{Elem: valueCopy(a)}
 	}
 	for i := n; i < ch.NLocals; i++ {
 		fr.locals[i] = &runtime.Cell{Elem: runtime.NIL}
@@ -170,13 +172,13 @@ func (v *VM) exec(f *frame) {
 		case bytecode.OpPop:
 			f.pop()
 		case bytecode.OpNewLocal:
-			f.locals[ins.A] = &runtime.Cell{Elem: f.pop()}
+			f.locals[ins.A] = &runtime.Cell{Elem: valueCopy(f.pop())}
 		case bytecode.OpRenewVar:
 			f.locals[ins.A] = &runtime.Cell{Elem: f.locals[ins.A].Elem}
 		case bytecode.OpLocal:
 			f.push(f.locals[ins.A].Elem)
 		case bytecode.OpSetLocal:
-			f.locals[ins.A].Elem = f.pop()
+			f.locals[ins.A].Elem = valueCopy(f.pop())
 		case bytecode.OpLocalRef:
 			f.push(f.locals[ins.A])
 		case bytecode.OpUpval:
@@ -186,10 +188,10 @@ func (v *VM) exec(f *frame) {
 		case bytecode.OpGlobal:
 			f.push(v.resolveGlobal(f, consts[ins.A].(string)))
 		case bytecode.OpNewGlobal:
-			f.fn.Pkg.Globals.Set(consts[ins.A].(string), &runtime.Cell{Elem: f.pop()})
+			f.fn.Pkg.Globals.Set(consts[ins.A].(string), &runtime.Cell{Elem: valueCopy(f.pop())})
 		case bytecode.OpSetGlobal:
 			name := consts[ins.A].(string)
-			val := f.pop()
+			val := valueCopy(f.pop())
 			if old, ok := f.fn.Pkg.Globals.Get(name); ok {
 				if c, isCell := old.(*runtime.Cell); isCell {
 					c.Elem = val
@@ -352,13 +354,27 @@ func (v *VM) exec(f *frame) {
 	}
 }
 
+// fileOf returns the source file an instruction belongs to, via its
+// position (precise for __init__, which mixes decls from several files),
+// falling back to the function's own file.
+func fileOf(f *frame, pkg *runtime.Package) *syntax.File {
+	if pos := f.pos(); pos.IsValid() && pkg.Fset != nil {
+		name := pkg.Fset.PositionFor(pos, false).Filename
+		if sf, ok := pkg.FileByName[name]; ok {
+			return sf
+		}
+	}
+	return f.fn.File
+}
+
 // resolveGlobal resolves a name in file scope order: imports, package
 // globals (including lazily materialized decls), dot imports, builtins.
 func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
 	pkg := f.fn.Pkg
+	file := fileOf(f, pkg)
 	// 1. file imports
-	if f.fn.File != nil {
-		if ref, ok := pkg.Scopes[f.fn.File][name]; ok {
+	if file != nil {
+		if ref, ok := pkg.Scopes[file][name]; ok {
 			return ref
 		}
 	}
@@ -379,9 +395,9 @@ func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
 			return mv
 		}
 	}
-	// 3. dot imports (indexed, not initialized)
-	if f.fn.File != nil {
-		for _, ref := range pkg.Scopes[f.fn.File] {
+	// 3. dot imports (indexed, not initialized; exported names only)
+	if file != nil && token.IsExported(name) {
+		for _, ref := range pkg.Scopes[file] {
 			if ref.Alias != "." {
 				continue
 			}
@@ -423,6 +439,9 @@ func lookupDecl(pkg *runtime.Package, name string) (*index.Decl, bool) {
 func (v *VM) selectMember(f *frame, base runtime.Value, name string) runtime.Value {
 	switch b := base.(type) {
 	case *runtime.ImportRef:
+		if !token.IsExported(name) {
+			f.trap("cannot refer to unexported name %s.%s", b.Path, name)
+		}
 		p, err := b.Materialize()
 		if err != nil {
 			f.trap("import %s: %s", b.Path, err)
@@ -431,12 +450,22 @@ func (v *VM) selectMember(f *frame, base runtime.Value, name string) runtime.Val
 		if err != nil {
 			f.trap("%s", err)
 		}
-		p.Globals.Set(name, mv)
+		if c, isCell := mv.(*runtime.Cell); isCell {
+			mv = c.Elem
+		} else {
+			p.Globals.Set(name, mv)
+		}
 		return mv
 	case *runtime.Package:
+		if !token.IsExported(name) {
+			f.trap("cannot refer to unexported name %s.%s", b.Path, name)
+		}
 		mv, err := b.Member(name, v.H.Materialize)
 		if err != nil {
 			f.trap("%s", err)
+		}
+		if c, isCell := mv.(*runtime.Cell); isCell {
+			mv = c.Elem
 		}
 		return mv
 	case *runtime.Struct:
@@ -474,7 +503,20 @@ func (v *VM) structMember(f *frame, s *runtime.Struct, name string, recv runtime
 		if err := m.EnsureCompiled(); err != nil {
 			f.trap("%s", err)
 		}
-		return &runtime.BoundMethod{Recv: recv, Fn: m}
+		r := recv
+		if m.PtrRecv {
+			// pointer receiver needs an addressable cell
+			if _, isCell := r.(*runtime.Cell); !isCell {
+				r = &runtime.Cell{Elem: r}
+			}
+		} else {
+			// value receiver operates on a copy
+			if c, isCell := r.(*runtime.Cell); isCell {
+				r = c.Elem
+			}
+			r = valueCopy(r)
+		}
+		return &runtime.BoundMethod{Recv: r, Fn: m}
 	}
 	f.trap("%s has no field or method %s", def.Name, name)
 	return nil
@@ -536,6 +578,9 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 		}
 		b.Elems[i] = val
 	case *runtime.Map:
+		if idx != nil && !reflect.TypeOf(idx).Comparable() {
+			f.trap("map key %T is not comparable", idx)
+		}
 		if _, exists := b.Pairs[idx]; !exists {
 			b.Order = append(b.Order, idx)
 		}
@@ -651,6 +696,17 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 	return nil
 }
 
+// valueCopy implements Go assignment semantics: structs copy by value;
+// slices, maps and pointers share.
+func valueCopy(v runtime.Value) runtime.Value {
+	if s, ok := v.(*runtime.Struct); ok {
+		cp := &runtime.Struct{Def: s.Def, Fields: make([]runtime.Value, len(s.Fields))}
+		copy(cp.Fields, s.Fields)
+		return cp
+	}
+	return v
+}
+
 // iterators
 
 func newIterator(f *frame, coll runtime.Value) *runtime.Iterator {
@@ -680,8 +736,10 @@ func iterNext(f *frame, it *runtime.Iterator, nvars int) bool {
 	push := func(key, val runtime.Value) {
 		if nvars == 2 {
 			f.push(key)
+			f.push(val)
+			return
 		}
-		f.push(val)
+		f.push(key) // single-var range yields index/key
 	}
 	switch it.Kind {
 	case 's':

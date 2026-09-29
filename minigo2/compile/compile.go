@@ -58,6 +58,17 @@ func (s *fscope) lookupLocal(name string) (int, bool) {
 	return 0, false
 }
 
+// inCurrentBlock reports whether name is declared in the innermost block —
+// `x := 1` on an existing same-block name is a redefinition (assignment),
+// while an outer-block name is shadowed by a fresh cell.
+func (s *fscope) inCurrentBlock(name string) bool {
+	if len(s.blocks) == 0 {
+		return false
+	}
+	_, ok := s.blocks[len(s.blocks)-1][name]
+	return ok
+}
+
 // find reports how name is reachable inside this function's frame:
 // a local slot (isUpval=false) or an upvalue index (isUpval=true).
 func (s *fscope) find(name string) (isUpval bool, idx int, ok bool) {
@@ -97,6 +108,7 @@ func (s *fscope) capture(name string) bool {
 type ctrlCtx struct {
 	isLoop     bool
 	continueIP int   // -1 until post position is known
+	continues  []int // continue jumps to patch once continueIP is known
 	breaks     []int // instruction indices to patch to construct end
 }
 
@@ -254,6 +266,8 @@ func InitFunc(pkg *runtime.Package) (*bytecode.Chunk, error) {
 	c.emit(bytecode.OpConst, c.constIdx(int64(0)), 0, 0)
 	c.emit(bytecode.OpNewLocal, iotaSlot, 0, 0)
 
+	// One representative decl per spec, in source order.
+	var specReps []*index.Decl
 	seen := map[*ast.ValueSpec]bool{}
 	for _, d := range pkg.Index.Decls {
 		if d.Kind != index.ConstDecl && d.Kind != index.VarDecl {
@@ -264,11 +278,15 @@ func InitFunc(pkg *runtime.Package) (*bytecode.Chunk, error) {
 			continue
 		}
 		seen[vs] = true
+		specReps = append(specReps, d)
+	}
+	// Go initializes vars/consts in dependency order, not textual order.
+	for _, d := range orderSpecs(pkg.Index, specReps) {
 		if d.Kind == index.ConstDecl {
 			c.emit(bytecode.OpConst, c.constIdx(int64(d.Idx)), 0, d.Pos)
 			c.emit(bytecode.OpSetLocal, iotaSlot, 0, d.Pos)
 		}
-		c.valueSpec(vs, d)
+		c.valueSpec(d.Spec.(*ast.ValueSpec), d)
 	}
 	for _, d := range pkg.Index.Inits {
 		fv := &runtime.Function{Pkg: pkg, File: d.File, Decl: d.Func, Name: "init"}
@@ -475,7 +493,7 @@ func (c *compiler) storeTarget(lhs ast.Expr, isDefine bool) {
 			c.emit(bytecode.OpPop, 0, 0, t.Pos())
 			return
 		}
-		if isDefine {
+		if isDefine && !c.fs.inCurrentBlock(t.Name) {
 			slot := c.fs.declare(t.Name)
 			c.emit(bytecode.OpNewLocal, slot, 0, t.Pos())
 		} else {
@@ -536,6 +554,10 @@ func (c *compiler) forStmt(st *ast.ForStmt) {
 	lc.continueIP = len(c.ch.Code)
 	if st.Post != nil {
 		c.stmt(st.Post)
+	}
+	// continues inside the body were emitted before post's position existed
+	for _, ci := range lc.continues {
+		c.patchA(ci, lc.continueIP)
 	}
 	c.emit(bytecode.OpJump, condIP, 0, st.Pos())
 	end := len(c.ch.Code)
@@ -684,10 +706,16 @@ func (c *compiler) branchStmt(st *ast.BranchStmt) {
 		c.trap(st.Pos(), "break outside loop/switch")
 	case token.CONTINUE:
 		for i := len(c.ctrl) - 1; i >= 0; i-- {
-			if c.ctrl[i].isLoop {
-				c.emit(bytecode.OpJump, c.ctrl[i].continueIP, 0, st.Pos())
-				return
+			cc := c.ctrl[i]
+			if !cc.isLoop {
+				continue
 			}
+			if cc.continueIP >= 0 {
+				c.emit(bytecode.OpJump, cc.continueIP, 0, st.Pos())
+			} else {
+				cc.continues = append(cc.continues, c.emit(bytecode.OpJump, 0, 0, st.Pos()))
+			}
+			return
 		}
 		c.trap(st.Pos(), "continue outside loop")
 	case token.FALLTHROUGH:
@@ -1015,7 +1043,7 @@ func (c *compiler) typeExpr(e ast.Expr) {
 // closure creation.
 func (c *compiler) funcLit(x *ast.FuncLit) {
 	inner := &runtime.Function{Pkg: c.pkg, File: c.file, Name: "<funclit>"}
-	ic := &compiler{pkg: c.pkg, fs: newFScope(c.fs), ch: &bytecode.Chunk{Name: "<funclit>"}}
+	ic := &compiler{pkg: c.pkg, file: c.file, fs: newFScope(c.fs), ch: &bytecode.Chunk{Name: "<funclit>"}}
 	ic.fs.pushBlock()
 	nparams := 0
 	if x.Type.Params != nil {
@@ -1081,4 +1109,90 @@ func literalValue(l *ast.BasicLit) (any, error) {
 		return int64(r[0]), nil
 	}
 	return nil, fmt.Errorf("unsupported literal kind %s", l.Kind)
+}
+
+// orderSpecs sorts var/const specs in dependency order (Go spec: package-level
+// initialization proceeds in dependency order, with source order as the
+// tie-breaker). A spec depends on every package-level name free in its value
+// expressions. Cyclic leftovers keep source order.
+//
+// Note: dependencies through function bodies (var x = f() where f reads
+// var y) are not yet analyzed — that needs transitive function deps.
+func orderSpecs(ix *index.Index, reps []*index.Decl) []*index.Decl {
+	declared := map[string]bool{}
+	for n := range ix.Vars {
+		declared[n] = true
+	}
+	for n := range ix.Consts {
+		declared[n] = true
+	}
+
+	specOf := map[*ast.ValueSpec]*index.Decl{}
+	for _, d := range reps {
+		specOf[d.Spec.(*ast.ValueSpec)] = d
+	}
+
+	// spec -> specs it depends on (a spec provides its names)
+	providedBy := map[string]*ast.ValueSpec{}
+	for _, d := range reps {
+		vs := d.Spec.(*ast.ValueSpec)
+		for _, n := range vs.Names {
+			providedBy[n.Name] = vs
+		}
+	}
+
+	deps := map[*ast.ValueSpec]map[*ast.ValueSpec]bool{}
+	for _, d := range reps {
+		vs := d.Spec.(*ast.ValueSpec)
+		vals := vs.Values
+		if len(vals) == 0 {
+			vals = d.Inherited
+		}
+		ds := map[*ast.ValueSpec]bool{}
+		for _, e := range vals {
+			ast.Inspect(e, func(n ast.Node) bool {
+				id, ok := n.(*ast.Ident)
+				if !ok || !declared[id.Name] {
+					return true
+				}
+				if dep := providedBy[id.Name]; dep != nil && dep != vs {
+					ds[dep] = true
+				}
+				return true
+			})
+		}
+		deps[vs] = ds
+	}
+
+	// stable Kahn: repeatedly emit the first spec whose deps are all done
+	var out []*index.Decl
+	done := map[*ast.ValueSpec]bool{}
+	remaining := reps
+	for len(remaining) > 0 {
+		progress := false
+		var next []*index.Decl
+		for _, d := range remaining {
+			vs := d.Spec.(*ast.ValueSpec)
+			ready := true
+			for dep := range deps[vs] {
+				if !done[dep] {
+					ready = false
+					break
+				}
+			}
+			if ready {
+				out = append(out, d)
+				done[vs] = true
+				progress = true
+			} else {
+				next = append(next, d)
+			}
+		}
+		if !progress {
+			out = append(out, next...) // cycle: keep source order
+			break
+		}
+		remaining = next
+	}
+	return out
 }

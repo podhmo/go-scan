@@ -72,6 +72,27 @@ func TestLazyImport(t *testing.T) {
 	}
 }
 
+func TestDepOrderAndFixes(t *testing.T) {
+	e := newEngine(t)
+	cases := []struct {
+		fn   string
+		want any
+	}{
+		{"Dep", int64(2)},          // var B = A+1 before var A — dep order
+		{"ImportInit", "hi x"},     // import inside a package-level init expr
+		{"ForContinue", int64(25)}, // 1+3+5+7+9
+		{"RangeOne", int64(12)},    // single-var range yields indexes 0,1,2
+		{"Redefine", int64(56)},    // x,y := keeps existing x binding
+		{"StructCopy", int64(1)},   // b := a copies struct value
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/deporder", c.fn)
+		if got != c.want {
+			t.Errorf("%s: got %v (%T), want %v (%T)", c.fn, got, got, c.want, c.want)
+		}
+	}
+}
+
 func TestTrapOnCall(t *testing.T) {
 	e := newEngine(t)
 	// invariant: unsupported constructs compile fine, trap only when called

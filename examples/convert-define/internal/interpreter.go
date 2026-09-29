@@ -13,6 +13,7 @@ import (
 	goscan "github.com/podhmo/go-scan"
 	"github.com/podhmo/go-scan/examples/convert/model"
 	"github.com/podhmo/go-scan/minigo2"
+	"github.com/podhmo/go-scan/minigo2/resolve"
 	"github.com/podhmo/go-scan/minigo2/runtime"
 	"github.com/podhmo/go-scan/scanner"
 )
@@ -26,7 +27,12 @@ const definePkgPath = "github.com/podhmo/go-scan/examples/convert-define/define"
 type Runner struct {
 	scanner *goscan.Scanner
 	pkg     *runtime.Package // the loaded define file's package
-	Info    *model.ParsedInfo
+
+	// resolver, when non-nil, is installed on the minigo2 engine — a test
+	// hook for observing (or stubbing) package resolution.
+	resolver resolve.Resolver
+
+	Info *model.ParsedInfo
 }
 
 // NewRunner creates a new interpreter runner.
@@ -75,6 +81,9 @@ func (r *Runner) Run(ctx context.Context, filename string) error {
 	// LoadFile takes the named file as the whole package — DSL files guarded
 	// by //go:build codegen do not need their tag mirrored anywhere.
 	engine := minigo2.NewEngine(filepath.Dir(abs), minigo2.WithOutput(os.Stdout))
+	if r.resolver != nil {
+		engine.WithResolver(r.resolver)
+	}
 	engine.RegisterSpecial(runtime.SymbolID{PackagePath: definePkgPath, Name: "Convert"}, r.handleConvert)
 	engine.RegisterSpecial(runtime.SymbolID{PackagePath: definePkgPath, Name: "Rule"}, r.handleRule)
 

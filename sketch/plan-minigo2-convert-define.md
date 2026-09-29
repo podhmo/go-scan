@@ -69,5 +69,14 @@ and `dst *destination.DstUser` type expressions are resolved to `scanner.TypeInf
 - `SpecialContext.Resolve` / `ResolveType` — still unimplemented; convert-define is now
   the first real consumer that would exercise them (it currently does alias→path +
   scanner itself).
-- If `ResolveSymbol` lands on `SpecialContext`, convert-define's `importPathOf` helper
-  can be reduced to `ctx.ResolveSymbol`.
+- If `ResolveSymbol` lands on `SpecialContext` (in flight on PR #1006), convert-define's
+  `importPath` helper can be reduced to `ctx.ResolveSymbol`.
+
+## Verification
+
+`internal/plan_test.go` (`TestConvertDefineSatisfiesPlan`) is the executable form of
+the condition table: a spying `resolve.Resolver` on the real `Runner` proves zero
+`Locate`/`LocateDir` calls, an aliased `d` import still dispatches as `SPECIAL_CALL`,
+a dead `if false` branch never fires its special, and the `//go:build codegen` file
+loads via `LoadFile`. `migration_guard_test.go` (`TestNoMinigoV1Dependency`) keeps v1
+`minigo` out of the module's imports for good.

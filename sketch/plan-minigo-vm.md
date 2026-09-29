@@ -1261,4 +1261,57 @@ pay off against a real tool.
   flight on the parallel round-6 PR) can collapse the `Scopes` alias
   lookup when it lands.
 
+## 27. Round-8 notes: verifying convert-define against the plan
+
+This round turned the §12 claims about convert-define into executable
+acceptance tests on the tool itself
+(`examples/convert-define/internal/plan_test.go` —
+`TestConvertDefineSatisfiesPlan`, plus the module-wide
+`migration_guard_test.go` — `TestNoMinigoV1Dependency`). The assertions
+that now pass:
+
+- **Zero resolver traffic end-to-end.** A spying `resolve.Resolver`
+  installed on the real `Runner` records **no** `Locate`/`LocateDir`
+  calls for a full define run — `define` (special target),
+  `convutil`/`source`/`destination` (quoted args), and `bogus`
+  (dead-branch arg) are never materialized, not even to `Indexed`.
+- **Alias-agnostic dispatch.** `import d ".../define"` still compiles
+  `d.Rule`/`d.Convert` to `SPECIAL_CALL` — canonicalization happens
+  per-file from the import table, so the local name is irrelevant.
+- **Reachability, not existence.** `if false { define.Rule(bogus.Nope) }`
+  never fires: the compiler emits `SPECIAL_CALL` behind a conditional
+  jump (compile stays total; no dead-code analysis), and `bogus` is
+  touched by neither the interpreter nor the host scanner.
+- **Source-level dependency guard.** v1 `minigo` and `minigo2` share the
+  `github.com/podhmo/go-scan` module, so "no v1 dependency" cannot be
+  expressed in `go.mod` — `TestNoMinigoV1Dependency` scans every `.go`
+  file's imports instead (and asserts `minigo2` is actually imported, so
+  the check can't pass on a tree that uses neither).
+
+### Out-of-plan observations
+
+- **Host-side observability needs a seam.** §12.5 narrows what a special
+  handler sees (`SpecialContext`), but nothing addresses the reverse —
+  how a *host* observes its own engine. A tool that builds the engine
+  internally (`Runner.Run`) cannot attach a spy from outside;
+  convert-define now keeps an unexported `resolver` field as the test
+  hook rather than widening `NewRunner`'s public API. Expect other
+  consumers to need the same pattern (or an `Option`-style engine seam).
+- **`LoadFile` is lazier than the plan promised.** §12.2 only claims the
+  *special's* package is never located; in fact the *entry* package
+  isn't either — `LoadFile` parses the named file and checks
+  `BuildConfig.CheckDir` directly, so a fully-quoted DSL run issues zero
+  resolver calls total, not just zero for the quoted packages.
+- **Quoted args can name packages the host never reads.** The `bogus`
+  fixture is real on disk and the DSL file stays statically valid Go
+  (§12.1's property), yet neither engine nor scanner touches it —
+  laziness extends past "not parsed by the runtime" to "never read by
+  anyone". This also means the *dead-branch* form is a valid idiom for
+  host-only annotation calls.
+- **Specials registered for canonical paths ignore local names — a
+  feature to test per consumer.** The plan assumed alias-tolerance; the
+  first real consumer confirms it, but each new special-form host should
+  keep an aliased-import case in its own acceptance suite, since the
+  dispatch table is populated per tool, not per engine.
+
 ## (end)

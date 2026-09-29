@@ -1,0 +1,129 @@
+// Package bytecode defines the instruction set of the minigo2 stack VM and
+// the compiled unit (Chunk) produced per function.
+package bytecode
+
+import "go/token"
+
+// Op is a VM instruction kind.
+type Op uint8
+
+const (
+	OpNop Op = iota
+
+	// values / stack
+	OpConst    // push Consts[A]
+	OpNil      // push Nil
+	OpDup      // push a copy of stack top
+	OpSwap     // swap top two stack slots
+	OpRot3     // rotate top three: a,b,c -> b,c,a
+	OpPop      // discard top
+	OpNewLocal // pop -> new cell at slot A (variable declaration)
+	OpRenewVar // replace cell at slot A with a fresh cell (per-iteration loop var)
+	OpLocal    // push cell(slot A).Elem
+	OpSetLocal // pop -> cell(slot A).Elem
+	OpLocalRef // push the cell at slot A itself (address-of)
+	OpUpval    // push cell(upval A).Elem
+	OpSetUpval // pop -> cell(upval A).Elem
+
+	// global / package scope
+	OpGlobal    // push resolve(name Consts[A]): file imports -> pkg env -> builtins
+	OpNewGlobal // pop -> pkg.Globals[name] = &Cell{v} (var decl)
+	OpSetGlobal // pop -> pkg.Globals[name] (cell-aware store)
+	OpGlobalRef // push the package cell for name (address-of a package var)
+
+	// composite access
+	OpSelect   // A: const idx of field/method name; pop base -> push base.name
+	OpSetField // A: const idx of name; pop value, pop base -> base.name = value
+	OpIndex    // pop index, pop base -> push base[index]
+	OpSetIndex // pop value, pop index, pop base -> base[index] = value
+	OpSlice    // pop hi, pop lo, pop base -> base[lo:hi] (Nil bounds = absent)
+	OpDeref    // pop cell -> push cell.Elem
+	OpSetInd   // pop value, pop cell -> cell.Elem = value (*p = v)
+	OpBox      // pop value -> push &Cell{value} (address-of composite literal)
+
+	// calls and literals
+	OpCall          // A: argc; pop args, pop callee -> call -> push result(s)
+	OpPack          // pop A values -> push Tuple
+	OpUnpack        // pop Tuple -> push A values (multi-assign)
+	OpMakeComposite // A: nelems, B: flags(1=kv pairs); pop elems, pop *TypeDef -> push composite
+	OpMakeClosure   // A: const idx of *Function; captures per fn.UpvalDescs -> push Closure
+
+	// arithmetic
+	OpBinary // A: BinOp
+	OpUnary  // A: UnOp
+
+	// control
+	OpJump      // ip = A
+	OpJumpFalse // pop cond; if !truthy ip = A
+	OpJumpTrue  // pop cond; if truthy ip = A
+	OpIter      // pop value -> push *Iterator (range over slice/map/int/string)
+	OpRangeNext // A: exit ip; B: iterator local slot; C: nvars; pushes C values or exits
+
+	// failure / flow
+	OpPanic  // pop value -> unwind with *Panic
+	OpTrap   // unwind with *Trap{reason Consts[A]} — never catchable
+	OpReturn // A: nresults — pop n -> tear down frame
+)
+
+// BinOp is an OpBinary sub-op.
+type BinOp uint8
+
+const (
+	BinAdd    BinOp = iota // +
+	BinSub                 // -
+	BinMul                 // *
+	BinQuo                 // /
+	BinRem                 // %
+	BinAnd                 // &
+	BinOr                  // |
+	BinXor                 // ^
+	BinAndNot              // &^
+	BinShl                 // <<
+	BinShr                 // >>
+	BinLAnd                // &&
+	BinLOr                 // ||
+	BinEql                 // ==
+	BinNeq                 // !=
+	BinLss                 // <
+	BinLeq                 // <=
+	BinGtr                 // >
+	BinGeq                 // >=
+)
+
+// UnOp is an OpUnary sub-op.
+type UnOp uint8
+
+const (
+	UnPos UnOp = iota // +x
+	UnNeg             // -x
+	UnNot             // !x
+	UnXor             // ^x
+)
+
+// Instruction is one fixed-width bytecode instruction.
+type Instruction struct {
+	Op   Op
+	A, B int32
+	C    int32 // third operand; -1 when unused
+	Pos  token.Pos
+}
+
+// UpvalDesc describes how one free variable of a function is supplied:
+// either a slot index in the parent frame's locals or the parent's upvalues.
+type UpvalDesc struct {
+	FromParentUpval bool
+	Index           int
+}
+
+// Chunk is compiled code for one function.
+type Chunk struct {
+	Name       string
+	Code       []Instruction
+	Consts     []any
+	NLocals    int // number of cell slots
+	NParams    int // parameter slots (first N of NLocals; methods: slot 0 = receiver)
+	NResults   int
+	NamedSlots []int // local slots of named results, for bare `return`; nil when none
+	Upvals     []UpvalDesc
+	IsVararg   bool
+}

@@ -2706,12 +2706,23 @@ func (e *Evaluator) evalTypeConversion(call *ast.CallExpr, typeObj object.Object
 	case *object.Type:
 		typeName := t.Name
 		switch typeName {
-		case "int", "uint", "uint64": // For now, treat uint as int.
+		case "int", "int8", "int16", "int32", "int64",
+			"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+			"byte", "rune": // For now, treat all integer types as int.
 			switch input := arg.(type) {
 			case *object.Integer:
 				return input // It's already an integer, no-op.
 			case *object.Float:
 				return &object.Integer{Value: int64(input.Value)}
+			default:
+				return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeName)
+			}
+		case "float32", "float64":
+			switch input := arg.(type) {
+			case *object.Float:
+				return input // It's already a float, no-op.
+			case *object.Integer:
+				return &object.Float{Value: float64(input.Value)}
 			default:
 				return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeName)
 			}

@@ -2,6 +2,7 @@ package minigo2_test
 
 import (
 	"context"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/podhmo/go-scan/minigo2"
 	"github.com/podhmo/go-scan/minigo2/index"
+	"github.com/podhmo/go-scan/minigo2/resolve"
 	"github.com/podhmo/go-scan/minigo2/runtime"
 )
 
@@ -619,5 +621,140 @@ func TestResultAs(t *testing.T) {
 	}
 	if n != 304 {
 		t.Fatalf("As: got %d", n)
+	}
+}
+
+// ---- file-level entries + the convert-define shape (plan §12) ----
+
+// spyResolver counts Locate/LocateDir calls to prove laziness claims: a
+// package the engine materializes always shows up as a resolver hit.
+type spyResolver struct {
+	inner   resolve.Resolver
+	located []string
+	dirs    []string
+}
+
+func (s *spyResolver) Locate(ctx context.Context, fromDir, importPath string) (*resolve.PackageMeta, error) {
+	s.located = append(s.located, importPath)
+	return s.inner.Locate(ctx, fromDir, importPath)
+}
+
+func (s *spyResolver) LocateDir(ctx context.Context, dir string) (*resolve.PackageMeta, error) {
+	s.dirs = append(s.dirs, dir)
+	return s.inner.LocateDir(ctx, dir)
+}
+
+func TestLoadFile(t *testing.T) {
+	ctx := context.Background()
+	e := newEngine(t)
+
+	// defs.go carries //go:build codegen: directory-mode loading filters it
+	// out; LoadFile takes the named file regardless.
+	pkg, err := e.LoadFile(ctx, "./testdata/dslfile/defs.go")
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(pkg.Files) != 1 {
+		t.Fatalf("single-file package: got %d files", len(pkg.Files))
+	}
+	if got := pkg.Files[0].AST.Name.Name; got != "main" {
+		t.Errorf("package name: got %q, want main", got)
+	}
+	// the untagged sibling other.go is not part of the package
+	if _, err := e.Call(ctx, pkg, "OtherOnly"); err == nil {
+		t.Errorf("OtherOnly must be absent: only defs.go makes the package")
+	}
+	pkg2, err := e.LoadFile(ctx, "./testdata/dslfile/defs.go")
+	if err != nil || pkg2 != pkg {
+		t.Errorf("LoadFile must cache by path: %v", err)
+	}
+}
+
+// TestSpecialFormsConvertDefineStyle is the §12 acceptance test: a
+// convert-define-shaped DSL file runs through SPECIAL_CALL with every
+// import quoted — none of example.com/{define,convutil,source,destination}
+// exists on disk, so any materialization attempt fails the run.
+func TestSpecialFormsConvertDefineStyle(t *testing.T) {
+	ctx := context.Background()
+
+	res, err := resolve.NewGoScanResolver("..", resolve.BuildConfig{})
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	spy := &spyResolver{inner: res}
+	e := minigo2.NewEngine("..").WithResolver(spy)
+
+	importPathOf := func(ctx runtime.SpecialContext, name string) string {
+		return ctx.Package().Scopes[ctx.File()][name].Path
+	}
+	typeExpr := func(ctx runtime.SpecialContext, expr ast.Expr) string {
+		if star, ok := expr.(*ast.StarExpr); ok {
+			expr = star.X
+		}
+		sel := expr.(*ast.SelectorExpr)
+		return importPathOf(ctx, sel.X.(*ast.Ident).Name) + "." + sel.Sel.Name
+	}
+
+	var records []string
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/define", Name: "Rule"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			sel := call.Call.Args[0].(*ast.SelectorExpr)
+			records = append(records, "Rule "+importPathOf(ctx, sel.X.(*ast.Ident).Name)+"."+sel.Sel.Name)
+			return runtime.NIL, nil
+		})
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/define", Name: "Convert"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			fn := call.Call.Args[0].(*ast.FuncLit)
+			dst := fn.Type.Params.List[1].Type
+			src := fn.Type.Params.List[2].Type
+			records = append(records, "Convert "+typeExpr(ctx, dst)+" <- "+typeExpr(ctx, src))
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				ce, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := ce.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "Map", "Convert", "Compute":
+					var args []string
+					for _, a := range ce.Args {
+						args = append(args, ctx.Format(a))
+					}
+					records = append(records, "  "+sel.Sel.Name+"("+strings.Join(args, ", ")+")")
+				}
+				return true
+			})
+			return runtime.NIL, nil
+		})
+
+	pkg, err := e.LoadFile(ctx, "./testdata/dslfile/defs.go")
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if _, err := e.Call(ctx, pkg, "main"); err != nil {
+		t.Fatalf("main: %v", err)
+	}
+
+	want := []string{
+		"Rule example.com/convutil.TimeToString",
+		"Convert example.com/destination.DstUser <- example.com/source.SrcUser",
+		"  Map(dst.UserID, src.ID)",
+		"  Convert(dst.Contact, src.ContactInfo, convutil.ConvertContact)",
+		"  Compute(dst.FullName, convutil.MakeFullName(src.FirstName, src.LastName))",
+	}
+	if diff := cmp.Diff(want, records); diff != "" {
+		t.Errorf("records mismatch (-want +got):\n%s", diff)
+	}
+	// the laziness claim: quoting an import never locates the package —
+	// define (special), convutil/source/destination (quoted args) never hit
+	// the resolver at all.
+	if len(spy.located) != 0 {
+		t.Errorf("materialized packages: %v", spy.located)
+	}
+	if len(spy.dirs) != 0 {
+		t.Errorf("directories located: %v", spy.dirs)
 	}
 }

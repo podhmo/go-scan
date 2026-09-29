@@ -1214,7 +1214,54 @@ typed-nil holes instead of bare `NIL`.
   operand returned the bare underlying value; results re-tag like
   `binaryOp`.
 
-## 26. Round-7 notes: declared tags beyond basics
+## 26. Round-7 notes: file-level entries and the first special-form consumer
+
+This round surveyed and executed the `convert-define` migration
+(`sketch/plan-minigo2-convert-define.md`), which made minigo2's §12 claims
+pay off against a real tool.
+
+### File-level entry points (out-of-plan addition)
+
+- The plan's entry model is directory packages (`minigo run ./app`), and
+  `resolve.ReadPackageFiles` filters with `go/build` match rules — a DSL
+  file guarded by `//go:build codegen` is *invisible* to `Run` unless its
+  tag is mirrored into `BuildConfig.Tags`, which is brittle when DSL and
+  non-DSL files share a directory. `Engine.LoadFile`/`Engine.RunFile`
+  therefore make the **named file** the whole package — a direct port of
+  v1's `LoadFile`+`Eval` semantics. The package gets a synthetic path
+  (`"<file>"+abs`) and its own cache (`e.files`) so sibling files are not
+  leaked into a later `Package(dir)` — `byDir` stays directory-pure.
+- `resolve.BuildConfig.CheckDir` is exported so `LoadFile` keeps honoring
+  `AllowedRoots` (an entry point must still live inside the roots).
+
+### What the migration actually needed (and did not need)
+
+- **The `goscan.Scanner` stays host-side.** convert-define resolves
+  `pkg.Type`/`pkg.Func` into `scanner.TypeInfo`/`scanner.FunctionInfo` to
+  build `model.ParsedInfo`; minigo2's resolver is locator-level
+  (`PackageMeta`) by design and never produces `scanner` types. The plan's
+  `ctx.ResolveType` is *not* required — the handler maps the file-local
+  alias to a path via `ctx.Package().Scopes[ctx.File()]` and asks its own
+  scanner.
+- **Registration order is free.** `trySpecial` consults `p.Specials`, the
+  shared `e.specials` map reference — specials registered after a package
+  is parsed still dispatch correctly.
+- **Interior calls are data.** `c.Map`/`c.Convert`/`c.Compute` inside the
+  quoted `*ast.FuncLit` are never compiled — the whole literal stays AST —
+  so `(*Config).Map` needs no method special form. §12.7's recommendation
+  holds in practice.
+- **Laziness is load-bearing.** A spy resolver wrapped around the engine
+  proves zero `Locate`/`LocateDir` calls for a define-style run: `define`
+  (special target) and `convutil`/`source`/`destination` (quoted args) are
+  never materialized — not even to `Indexed`. The same run also covers the
+  DSL-package-never-parsed claim even when the DSL file is the only
+  package on disk.
+- **`Resolve`/`ResolveType` on `SpecialContext` remain unimplemented** —
+  convert-define is their first real consumer shape; `ResolveSymbol` (in
+  flight on the parallel round-6 PR) can collapse the `Scopes` alias
+  lookup when it lands.
+
+## 27. Round-7b notes: declared tags beyond basics
 
 The round-6 residuals turned out mostly tractable: every runtime value
 that *can* carry a declared type now does — `Struct.Def` (already did),

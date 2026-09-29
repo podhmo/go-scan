@@ -18,6 +18,12 @@ func TestRunREPLMultiLine(t *testing.T) {
 		"2,",
 		"}",
 		"x[1]",
+		"s := `a", // multi-line raw string literal
+		"b`",
+		"s",
+		"/* hi", // multi-line block comment
+		"there */",
+		"7",
 		":exit",
 	}, "\n") + "\n")
 	var out bytes.Buffer
@@ -25,7 +31,7 @@ func TestRunREPLMultiLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{".. ", "42", "2"} {
+	for _, want := range []string{".. ", "42", "2", "a\nb", "7"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q\n---\n%s", want, got)
 		}

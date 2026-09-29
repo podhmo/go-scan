@@ -460,15 +460,27 @@ func (r *REPL) Display(v runtime.Value) any {
 // Consequences for an interactive loop: `func f() {`, `x := []int{` and
 // `x := 1 +` all read as incomplete; `} else {` keeps `else` attached to
 // its `if` only when both arrive inside the same unclosed buffer (as in Go
-// source, `else` must share a line with the closing `}`). Comment-only and
-// unterminated-token fragments read as complete so their errors surface
-// through EvalLine instead of waiting forever.
+// source, `else` must share a line with the closing `}`). Unterminated
+// raw strings and /* */ comments read as incomplete — they are the two
+// constructs Go legitimately continues across lines. Every other
+// degenerate fragment (comment-only input, unterminated '"' or rune
+// literals, illegal characters, negative depth) reads as complete so its
+// error surfaces through EvalLine instead of waiting forever.
 func IncompleteInput(src string) bool {
 	var s scanner.Scanner
 	fset := token.NewFileSet()
 	file := fset.AddFile("repl-input.go", -1, len(src))
-	var scanErr bool
-	s.Init(file, []byte(src), func(token.Position, string) { scanErr = true }, 0)
+	var scanErr, continueErr bool
+	s.Init(file, []byte(src), func(_ token.Position, msg string) {
+		scanErr = true
+		// The two errors a later line can fix: an open ` raw string and
+		// an open /* comment. '"' strings and rune literals cannot span
+		// lines, so their "not terminated" errors stay non-continuable.
+		if strings.Contains(msg, "raw string literal not terminated") ||
+			strings.Contains(msg, "comment not terminated") {
+			continueErr = true
+		}
+	}, 0)
 	depth := 0
 	last := token.ILLEGAL
 	for {
@@ -484,7 +496,7 @@ func IncompleteInput(src string) bool {
 		}
 		last = tok
 	}
-	if depth > 0 {
+	if depth > 0 || continueErr {
 		return true
 	}
 	if scanErr || last == token.ILLEGAL {

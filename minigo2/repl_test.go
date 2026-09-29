@@ -211,6 +211,12 @@ func TestIncompleteInput(t *testing.T) {
 		{"x +", true}, // also a parse error, but waits for the operand
 		{"// note", false},
 		{"", false},
+		{"x := `abc", true}, // raw strings legitimately span lines
+		{"x := `abc\ndef`", false},
+		{"/* note", true}, // so do block comments
+		{"/* note\nmore */", false},
+		{"x := \"abc", false}, // '"' strings cannot span lines: error now
+		{"x := 'a", false},    // rune literals likewise
 	}
 	for _, c := range cases {
 		if got := IncompleteInput(c.src); got != c.want {

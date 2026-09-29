@@ -1437,13 +1437,15 @@ adding multi-line input to the REPL:
   end-of-fragment inserts a semicolon, so an `else` typed on the next
   line can never re-attach. The REPL inherits this rule for free by
   evaluating the buffer as soon as it reads complete.
-- **Degenerate fragments must read as "complete"** or the loop waits
-  forever: comment-only lines (zero tokens), unterminated
-  strings/comments (scan error), and negative paren depth all evaluate
-  immediately so their errors surface through `EvalLine`. The cost is
-  that a genuinely mistyped line like `x +` also waits for
-  continuation — there is no abort-fragment escape yet (noted in
-  TODO.md).
+- **Two "scan errors" are continuations, not errors**: an unterminated
+  raw string (`` ` ``) and an unterminated `/*` comment are the only
+  constructs Go legitimately continues across lines, so
+  `IncompleteInput` reads them as incomplete; every other degenerate
+  fragment (comment-only input, unterminated `"` or rune literals,
+  negative depth) reads as complete so its error surfaces through
+  `EvalLine` instead of waiting forever. The cost is that a genuinely
+  mistyped line like `x +` also waits for continuation — there is no
+  abort-fragment escape yet (noted in TODO.md).
 - **EOF mid-fragment surfaces the parse error** rather than silently
   dropping the buffer — piped input can't keep the REPL waiting on a
   half-typed decl.

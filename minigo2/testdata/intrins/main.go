@@ -233,6 +233,21 @@ func JsonMarshal() string {
 	return string(b) // {"x":1,"ys":["a","b"]}
 }
 
+// JPoint feeds JsonMarshalStruct.
+type JPoint struct {
+	X int
+	Y string
+}
+
+// JsonMarshalStruct converts a script struct to JSON through its field names.
+func JsonMarshalStruct() string {
+	b, err := json.Marshal(JPoint{X: 1, Y: "a"})
+	if err != nil {
+		return "err"
+	}
+	return string(b) // {"X":1,"Y":"a"}
+}
+
 // JsonUnmarshal decodes into the runtime value tree: map[string]any lands
 // as a script map, numbers as float64.
 func JsonUnmarshal() string {

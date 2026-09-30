@@ -262,6 +262,7 @@ func TestStdlibIntrinsics(t *testing.T) {
 		{"PathJoin", "a/b/c.txt"},
 		{"PathSplit", "/a/b/|c.txt"},
 		{"JsonMarshal", `{"x":1,"ys":["a","b"]}`},
+		{"JsonMarshalStruct", `{"X":1,"Y":"a"}`},
 		{"JsonUnmarshal", "ok"},
 	}
 	for _, c := range cases {

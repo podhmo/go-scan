@@ -331,10 +331,22 @@ func (e *Engine) installStdlib() {
 		"DecodedLen":     h.fn("hex.DecodedLen", func(a []any) (any, error) { return int64(hex.DecodedLen(intOf(a[0]))), nil }),
 	})
 	e.Bind("encoding/json", map[string]runtime.Value{
-		"Marshal": h.fn("json.Marshal", func(a []any) (any, error) { return retErr2(json.Marshal(goJSON(a[0]))) }),
-		"MarshalIndent": h.fn3("json.MarshalIndent", func(a []any) (any, error) {
-			return retErr2(json.MarshalIndent(goJSON(a[0]), str(a[1]), str(a[2])))
-		}),
+		// Marshal/MarshalIndent take raw runtime args — h.fn's goNative
+		// would stringify *runtime.Struct before goJSON can field-map it.
+		"Marshal": &runtime.BuiltinFunc{Name: "json.Marshal", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("json.Marshal needs 1 arg, got %d", len(args))
+			}
+			b, err := json.Marshal(goJSON(args[0]))
+			return &runtime.Tuple{Elems: []runtime.Value{scriptVal(b), errVal(err)}}, nil
+		}},
+		"MarshalIndent": &runtime.BuiltinFunc{Name: "json.MarshalIndent", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			if len(args) != 3 {
+				return nil, fmt.Errorf("json.MarshalIndent needs 3 args, got %d", len(args))
+			}
+			b, err := json.MarshalIndent(goJSON(args[0]), str(goNative(args[1])), str(goNative(args[2])))
+			return &runtime.Tuple{Elems: []runtime.Value{scriptVal(b), errVal(err)}}, nil
+		}},
 		// Script-shaped: stdlib Unmarshal takes a *T target; here it decodes
 		// into the runtime value tree (maps/slices/scalars) and returns it.
 		"Unmarshal": h.fn("json.Unmarshal", func(a []any) (any, error) {

@@ -108,6 +108,8 @@ func TestConversions(t *testing.T) {
 			{"WrapAssertSameOK", int64(1)},
 			{"WrapAssertOtherBad", int64(1)},
 			{"WrapAssertNamedArgBad", int64(1)},
+			{"WrapAssertByteOK", int64(1)},
+			{"WrapAssertRuneOK", int64(1)},
 		}
 		for _, c := range cases {
 			got := run(t, e, "./testdata/conversions", c.fn)

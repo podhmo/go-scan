@@ -634,3 +634,21 @@ func WrapAssertNamedArgBad() int {
 	}
 	return 1
 }
+
+func WrapAssertByteOK() int {
+	w := Wrap[byte]{1}
+	var i any = w
+	if _, ok := i.(Wrap[uint8]); !ok { // byte ≡ uint8
+		return -1
+	}
+	return 1
+}
+
+func WrapAssertRuneOK() int {
+	w := Wrap[rune]{1}
+	var i any = w
+	if _, ok := i.(Wrap[int32]); !ok { // rune ≡ int32
+		return -1
+	}
+	return 1
+}

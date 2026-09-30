@@ -2353,12 +2353,24 @@ func sameTypeDef(a, b *runtime.TypeDef) bool {
 		return false
 	}
 	if a.Name != "" || b.Name != "" {
-		return a.Name != "" && a.Name == b.Name && a.Pkg == b.Pkg && bindsEq(a.Binds, b.Binds)
+		return a.Name != "" && canonBasicName(a.Name) == canonBasicName(b.Name) && a.Pkg == b.Pkg && bindsEq(a.Binds, b.Binds)
 	}
 	if a.Anon != nil && b.Anon != nil {
 		return typeExprNameCtx(a.Anon, a.File, a.Pkg) == typeExprNameCtx(b.Anon, b.File, b.Pkg)
 	}
 	return false
+}
+
+// canonBasicName folds predeclared aliases: byte is uint8 and rune is int32
+// — an alias spelled at a call site and its canonical name are the same type.
+func canonBasicName(n string) string {
+	switch n {
+	case "byte":
+		return "uint8"
+	case "rune":
+		return "int32"
+	}
+	return n
 }
 
 // bindsEq compares generic instantiation bindings: `Wrap[int]` and

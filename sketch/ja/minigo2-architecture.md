@@ -109,7 +109,7 @@ minigo run ./app --entry F
 
 - **`Bind(path, symbols)`**: 実パッケージを `map[string]runtime.Value` で登録（`State: Ready`、ソース不要）。stdlib の intrinsic（`fmt`/`strings`/`sort`/`os` 等）は `installStdlib` がここに流し込む。
 - **`host` パッケージ（`minigo.dev/host`）**: stub 本体が `panic("minigo intrinsic")`。エディタからは普通の Go パッケージに見え、実行時は intrinsic テーブルが横取りする。`WithHostPolicy` でシンボル単位の公開を制御できる。
-- **`WrapFunc(name, fn)`**: 実 Go 関数を `*BuiltinFunc` にする reflect アダプタ（marshal-by-copy、末尾 `error` は呼出エラー、複数戻り値は `*Tuple`）。`gen-intrinsics` が生成する `install.go` が `e.Bind` にこれを並べる。
+- **`WrapFunc(name, fn)`**: 実 Go 関数を `*BuiltinFunc` にする reflect アダプタ（marshal-by-copy、末尾 `error` は呼出エラー、複数戻り値は `*Tuple`）。引数は assignable/convertible ならそのまま、`[]T`/`map[K]V` パラメータには `[]any`/`map[any]any` から要素ごと変換する。`gen-intrinsics` が生成する `install.go` が `e.Bind` にこれを並べる。
 - **`ValueOf(x)`**: ホスト値を runtime 値に変換する marshal ヘルパー。注意点: `runtime.Value` は `any` エイリアスなので `case runtime.Value:` は全マッチしてしまう — 具象型を列挙する必要がある。
 
 ## 型システムの近似
@@ -128,7 +128,7 @@ minigo run ./app --entry F
 | `minigo run <ref> [--entry F]` | パッケージの関数を実行（`minigo <ref> [F]` 短縮形） |
 | `minigo repl` | 持続セッション REPL。`:reset`/`:exit`。未完了入力行は `IncompleteInput` で `.. ` 継続 |
 | `minigo vet <ref> [--special path.Sym]...` | `panic("minigo intrinsic")` 本体を持つメンバへの未登録呼出を静的に報告（位置つき、検出時 exit 1） |
-| `minigo gen-intrinsics -output <dir> <pkg>...` | `<path>/install.go` に `Bind` テーブル生成（関数→WrapFunc、var/const→ValueOf、型→boxed reflect.Type。ジェネリック関数とメソッドはスキップ） |
+| `minigo gen-intrinsics -output <dir> <pkg>...` | `<path>/install.go` に `Bind` テーブル生成（関数→WrapFunc、var/const→ValueOf、型→合成 `*TypeDef`（KindNamedBasic＋仮想 Package）なので `var x pkg.T` でホスト値を型付き宣言できる。ジェネリックとメソッドはスキップ） |
 
 ## 既知の近似・限界（重要なもの）
 

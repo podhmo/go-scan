@@ -1507,8 +1507,11 @@ Instead the loop body drives it from inside:
   answers: named types through `Resolve`, composite forms
   (`[]T`/`map[K]V`/`*T`/`chan T`/`struct{}`/`interface{}`/`func`)
   producing the same `Anon`-spec typedef literals the compiler emits,
-  `T[Args]` through the generic `instantiate` path. A quoter can now ask
-  `ctx.ResolveType(param.Type)` and get a `*TypeDef` — the
+  `T[Args]` through the generic `instantiate` path. A bare ident
+  inside a generic instantiation resolves through `fn.Binds` first —
+  a type parameter is not a global symbol, so `ResolveType(T)` in a
+  `Func[T any]` call would otherwise trap `undefined: T`. A quoter can
+  now ask `ctx.ResolveType(param.Type)` and get a `*TypeDef` — the
   convert-define alias/scanner dance collapses to the call the plan
   wanted.
 
@@ -1544,8 +1547,23 @@ panics are recovered into errors. The generator emits
   the first draft returned `int` unboxed and downstream coercion
   ("cannot use int as int") was the confusing symptom.
 - Vars/consts bind as `ValueOf` snapshots (no live reference); types
-  bind as boxed `reflect.Type`; generic functions and methods are
-  skipped — no single callable form exists.
+  bind as synthetic `*TypeDef{Name, KindNamedBasic, Pkg: &Package{Path}}`
+  — NOT boxed `reflect.Type` (the first draft), because a boxed type
+  can't be used in `var x pkg.T` declarations or conversions. A
+  named-basic typedef with a non-builtin name passes `shapeOK`
+  unchecked, and host `GoValue`s pass the boundary coerce early, so
+  host-typed values flow through script variables correctly. Generic
+  functions, generic types, and methods are skipped.
+- `WrapFunc` marshals `[]T`/`map[K]V` parameters element-wise — a
+  script `[]string` arrives as `[]any` and would otherwise fail
+  `AssignableTo`. `ValueOf` guards `uint64 > MaxInt64` by keeping the
+  value boxed (`*GoValue`) instead of sign-flipping to negative.
+- `Vet` had to grow scope awareness: an identifier declared anywhere
+  inside a function (`vetstub := ...`) shadows the import alias for
+  that function — the checker now collects per-function declared names
+  (unioned with nested `FuncLit` sets) and skips shadowed selector
+  bases. Over-approximating shadowing trades a rare missed finding for
+  never reporting a local method call as a stub call.
 
 ### `FindSymbolInPackage` stays unbuilt — on purpose this round
 

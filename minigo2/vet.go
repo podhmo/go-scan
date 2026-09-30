@@ -37,7 +37,11 @@ func (r VetResult) String() string {
 // `panic("minigo intrinsic")`) and the symbol is neither a registered
 // special form nor a bound host symbol on this engine. Dot imports are not
 // tracked — a `Sym(...)` call into a dot-imported stub package is invisible
-// to the checker.
+// to the checker. Function-scoped shadowing is handled conservatively: a
+// name declared anywhere inside the enclosing function (even a nested
+// literal's params) hides the import binding for that whole function —
+// so a shadowed alias may miss a real finding but never reports a local
+// variable's method call as a stub call.
 func (e *Engine) Vet(ctx context.Context, ref string) ([]VetResult, error) {
 	p, err := e.Package(ctx, ref)
 	if err != nil {
@@ -52,43 +56,131 @@ func (e *Engine) Vet(ctx context.Context, ref string) ([]VetResult, error) {
 			}
 			imports[im.LocalName()] = im.Path
 		}
-		ast.Inspect(sf.AST, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+		for _, decl := range sf.AST.Decls {
+			var shadow map[string]bool
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				shadow = declaredNames(fd)
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			x, ok := sel.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			path, ok := imports[x.Name]
-			if !ok {
-				return true // method call or local value selector
-			}
-			name := sel.Sel.Name
-			if e.registeredVetSymbol(path, name) {
-				return true
-			}
-			if !e.stubMember(ctx, path, name) {
-				return true
-			}
-			out = append(out, VetResult{
-				Pos:      e.fset.Position(call.Lparen),
-				Call:     x.Name + "." + name,
-				Resolved: path + "." + name,
-			})
-			return true
-		})
+			e.scanStubCalls(ctx, decl, imports, shadow, &out)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Pos.Filename < out[j].Pos.Filename ||
 			(out[i].Pos.Filename == out[j].Pos.Filename && out[i].Pos.Line < out[j].Pos.Line)
 	})
 	return out, nil
+}
+
+// declaredNames collects every identifier a function subtree declares:
+// receiver/param/result names, := targets, local var/const/type names, and
+// range variables — including declarations inside nested function
+// literals, so the set over-approximates shadowing.
+func declaredNames(root ast.Node) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(root, func(n ast.Node) bool {
+		switch d := n.(type) {
+		case *ast.FuncType:
+			for _, fl := range []*ast.FieldList{d.Params, d.Results} {
+				if fl == nil {
+					continue
+				}
+				for _, fld := range fl.List {
+					for _, nm := range fld.Names {
+						out[nm.Name] = true
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			if d.Tok == token.DEFINE {
+				for _, lhs := range d.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok {
+						out[id.Name] = true
+					}
+				}
+			}
+		case *ast.GenDecl:
+			for _, sp := range d.Specs {
+				switch s := sp.(type) {
+				case *ast.ValueSpec:
+					for _, nm := range s.Names {
+						out[nm.Name] = true
+					}
+				case *ast.TypeSpec:
+					out[s.Name.Name] = true
+				}
+			}
+		case *ast.RangeStmt:
+			if d.Tok == token.DEFINE {
+				for _, e := range []ast.Expr{d.Key, d.Value} {
+					if id, ok := e.(*ast.Ident); ok {
+						out[id.Name] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	if fd, ok := root.(*ast.FuncDecl); ok && fd.Recv != nil {
+		for _, fld := range fd.Recv.List {
+			for _, nm := range fld.Names {
+				out[nm.Name] = true
+			}
+		}
+	}
+	return out
+}
+
+// scanStubCalls inspects one declaration subtree for `alias.Sym(...)` calls
+// that reach unregistered stub members, skipping selector bases hidden by
+// the shadow set.
+func (e *Engine) scanStubCalls(ctx context.Context, root ast.Node, imports map[string]string, shadow map[string]bool, out *[]VetResult) {
+	ast.Inspect(root, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.FuncLit); ok && root != lit {
+			// A nested function literal introduces its own scope: scan it
+			// with the union of its declared names and the outer set.
+			merged := map[string]bool{}
+			for k := range shadow {
+				merged[k] = true
+			}
+			for k := range declaredNames(lit) {
+				merged[k] = true
+			}
+			e.scanStubCalls(ctx, lit, imports, merged, out)
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		x, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if shadow[x.Name] {
+			return true // a function-local name hides the import binding
+		}
+		path, ok := imports[x.Name]
+		if !ok {
+			return true // method call or local value selector
+		}
+		name := sel.Sel.Name
+		if e.registeredVetSymbol(path, name) {
+			return true
+		}
+		if !e.stubMember(ctx, path, name) {
+			return true
+		}
+		*out = append(*out, VetResult{
+			Pos:      e.fset.Position(call.Lparen),
+			Call:     x.Name + "." + name,
+			Resolved: path + "." + name,
+		})
+		return true
+	})
 }
 
 // registeredVetSymbol reports whether path.Name is already intercepted:

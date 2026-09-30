@@ -19,3 +19,7 @@ func Version() string { return nat.Version }   // ValueOf-bound var/const
 func NonFunc() int    { return nat.NonFunc() } // binding a non-func errors at call
 
 func main() {}
+
+func Join() string { return nat.Join([]string{"a", "b"}, "-") }             // typed slice arg
+func Count() int   { return nat.Count(map[string]int{"k": 3}) }             // typed map arg
+func MkPoint() int { var p nat.Point = nat.MakePoint(); return nat.XOf(p) } // typed decl of host type

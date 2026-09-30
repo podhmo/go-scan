@@ -13,3 +13,14 @@ func main() {
 	_ = vetstub.Value  // not a call -> fine
 	_ = dsl.Cfg        // selector without call -> fine
 }
+
+func stubShadow() {
+	vetstub := localStub{} // local var shadows the import alias
+	vetstub.Unreg()        // method call on a local — must NOT be a finding
+	vetstub.Real()
+}
+
+type localStub struct{}
+
+func (localStub) Unreg() {}
+func (localStub) Real()  {}

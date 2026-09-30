@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,6 +452,7 @@ func TestFeatures(t *testing.T) {
 		{"SeqDefer", int64(9)},
 		{"SeqNamed", int64(6)},
 		{"SeqLabelBreak", int64(1)},
+		{"SeqGotoLoop", int64(9)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/features", c.fn)
@@ -558,6 +560,8 @@ func TestSpecialForms(t *testing.T) {
 		{"TypeBuiltin", "int"},
 		{"TypeSlice", int64(runtime.KindSlice)},
 		{"TypePtr", int64(runtime.KindPointer)},
+		{"TypeParamInt", "int"},
+		{"TypeParamInfer", "int"},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/special", c.fn)
@@ -934,16 +938,23 @@ func TestVet(t *testing.T) {
 	}
 }
 
+type natPoint struct{ X int }
+
 func TestNativeBindings(t *testing.T) {
 	e := newEngine(t)
 	e.Bind("example.com/nat", map[string]runtime.Value{
-		"Add":     minigo2.WrapFunc("nat.Add", func(a, b int) int { return a + b }),
-		"Upper":   minigo2.WrapFunc("nat.Upper", strings.ToUpper),
-		"Concat":  minigo2.WrapFunc("nat.Concat", func(parts ...string) string { return strings.Join(parts, "") }),
-		"Pair":    minigo2.WrapFunc("nat.Pair", func() (int, string) { return 7, "x" }),
-		"Shift":   minigo2.WrapFunc("nat.Shift", func(v uint) uint { return v << 1 }),
-		"NonFunc": minigo2.WrapFunc("nat.NonFunc", 42),
-		"Version": minigo2.ValueOf("v2"),
+		"Add":       minigo2.WrapFunc("nat.Add", func(a, b int) int { return a + b }),
+		"Upper":     minigo2.WrapFunc("nat.Upper", strings.ToUpper),
+		"Concat":    minigo2.WrapFunc("nat.Concat", func(parts ...string) string { return strings.Join(parts, "") }),
+		"Pair":      minigo2.WrapFunc("nat.Pair", func() (int, string) { return 7, "x" }),
+		"Shift":     minigo2.WrapFunc("nat.Shift", func(v uint) uint { return v << 1 }),
+		"NonFunc":   minigo2.WrapFunc("nat.NonFunc", 42),
+		"Version":   minigo2.ValueOf("v2"),
+		"Join":      minigo2.WrapFunc("nat.Join", strings.Join),
+		"Count":     minigo2.WrapFunc("nat.Count", func(m map[string]int) int { return m["k"] }),
+		"MakePoint": minigo2.WrapFunc("nat.MakePoint", func() natPoint { return natPoint{X: 5} }),
+		"XOf":       minigo2.WrapFunc("nat.XOf", func(p natPoint) int { return p.X }),
+		"Point":     &runtime.TypeDef{Name: "Point", Kind: runtime.KindNamedBasic, Pkg: &runtime.Package{Path: "example.com/nat", Name: "nat"}},
 	})
 	cases := []struct {
 		fn   string
@@ -955,6 +966,19 @@ func TestNativeBindings(t *testing.T) {
 		{"Pair", int64(7)},
 		{"Shift", int64(6)},
 		{"Version", "v2"},
+		{"Join", "a-b"},
+		{"Count", int64(3)},
+		{"MkPoint", int64(5)},
+	}
+	// uint64 above MaxInt64 keeps its exact value boxed rather than
+	// wrapping to a negative int64
+	if got := minigo2.ValueOf(uint64(math.MaxUint64)); true {
+		if _, ok := got.(*runtime.GoValue); !ok {
+			t.Errorf("ValueOf(MaxUint64) = %T, want *runtime.GoValue", got)
+		}
+	}
+	if got := minigo2.ValueOf(uint64(42)); got != int64(42) {
+		t.Errorf("ValueOf(42) = %v, want int64", got)
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/native", c.fn)

@@ -9,6 +9,7 @@ package minigo2
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 
 	"github.com/podhmo/go-scan/minigo2/runtime"
@@ -98,8 +99,10 @@ func packVariadic(ft reflect.Type, in []reflect.Value) []reflect.Value {
 }
 
 // toNative marshals one runtime value toward parameter type pt: nil fills
-// the zero value, assignable natives pass through, and convertible ones
-// convert (int64 to int, float64 to int, ...).
+// the zero value, assignable natives pass through, convertible ones
+// convert (int64 to int, float64 to int, ...), and slices/maps convert
+// element-wise — a script []T arrives as []any, so []string-style params
+// need their elements converted one at a time.
 func toNative(v runtime.Value, pt reflect.Type) (reflect.Value, error) {
 	x := goNative(v)
 	if x == nil {
@@ -112,10 +115,65 @@ func toNative(v runtime.Value, pt reflect.Type) (reflect.Value, error) {
 	if av.Type().ConvertibleTo(pt) {
 		return av.Convert(pt), nil
 	}
+	switch pt.Kind() {
+	case reflect.Slice:
+		if av.Kind() == reflect.Slice {
+			out := reflect.MakeSlice(pt, av.Len(), av.Len())
+			for i := 0; i < av.Len(); i++ {
+				ev, err := nativeElem(av.Index(i), pt.Elem())
+				if err != nil {
+					return reflect.Value{}, fmt.Errorf("index %d: %w", i, err)
+				}
+				out.Index(i).Set(ev)
+			}
+			return out, nil
+		}
+	case reflect.Map:
+		if av.Kind() == reflect.Map {
+			out := reflect.MakeMapWithSize(pt, av.Len())
+			iter := av.MapRange()
+			for iter.Next() {
+				kv, err := nativeElem(iter.Key(), pt.Key())
+				if err != nil {
+					return reflect.Value{}, fmt.Errorf("key: %w", err)
+				}
+				mv, err := nativeElem(iter.Value(), pt.Elem())
+				if err != nil {
+					return reflect.Value{}, fmt.Errorf("value: %w", err)
+				}
+				out.SetMapIndex(kv, mv)
+			}
+			return out, nil
+		}
+	}
 	if pt.Kind() == reflect.Interface && av.Type().Implements(pt) {
 		return av, nil
 	}
 	return reflect.Value{}, fmt.Errorf("cannot use %T as %s", x, pt)
+}
+
+// nativeElem converts one collection element — possibly interface-wrapped
+// ([]any members) — toward the declared element type.
+func nativeElem(av reflect.Value, pt reflect.Type) (reflect.Value, error) {
+	for av.Kind() == reflect.Interface {
+		if av.IsNil() {
+			return reflect.Zero(pt), nil
+		}
+		av = av.Elem()
+	}
+	if !av.IsValid() {
+		return reflect.Zero(pt), nil
+	}
+	if av.Type().AssignableTo(pt) {
+		return av, nil
+	}
+	if av.Type().ConvertibleTo(pt) {
+		return av.Convert(pt), nil
+	}
+	if pt.Kind() == reflect.Interface && av.Type().Implements(pt) {
+		return av, nil
+	}
+	return reflect.Value{}, fmt.Errorf("cannot use %s as %s", av.Type(), pt)
 }
 
 // ValueOf marshals a host Go value to its runtime counterpart: script-native
@@ -130,7 +188,11 @@ func ValueOf(x any) runtime.Value {
 	case int, int8, int16, int32, int64:
 		return reflect.ValueOf(x).Int()
 	case uint, uint8, uint16, uint32, uint64:
-		return int64(reflect.ValueOf(x).Uint())
+		u := reflect.ValueOf(x).Uint()
+		if u <= math.MaxInt64 {
+			return int64(u)
+		}
+		return &runtime.GoValue{V: x} // no script-wide uint64; keep the value exact
 	case float32, float64:
 		return reflect.ValueOf(x).Float()
 	case bool, string:

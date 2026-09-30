@@ -63,3 +63,9 @@ func TypeSlice() int      { return dsl.TypeKind([]Point) } // KindSlice
 func TypePtr() int        { return dsl.TypeKind(*Point) }  // KindPointer
 
 func main() {}
+
+// A type parameter inside a generic instantiation resolves through the
+// function's instantiation binds.
+func TypeParamOf[T any](v T) string { return dsl.TypeName(T) }
+func TypeParamInt() string          { return TypeParamOf[int](0) } // "int"
+func TypeParamInfer() string        { return TypeParamOf(1) }      // "int64"

@@ -3306,7 +3306,25 @@ func (s *specialCtx) Resolve(e ast.Expr) (runtime.Value, error) {
 func (s *specialCtx) ResolveType(e ast.Expr) (*runtime.TypeDef, error) {
 	pkg := s.f.fn.Pkg
 	switch t := e.(type) {
-	case *ast.Ident, *ast.SelectorExpr:
+	case *ast.Ident:
+		// Inside a generic instantiation a bare ident may name a type
+		// parameter: resolve it through the function's binds first.
+		if td, ok := s.f.fn.Binds[t.Name]; ok {
+			if td2, ok := td.(*runtime.TypeDef); ok {
+				return td2, nil
+			}
+			return nil, s.Errorf(e, "%s is bound to a non-type", t.Name)
+		}
+		mv, err := s.Resolve(e)
+		if err != nil {
+			return nil, err
+		}
+		td, ok := mv.(*runtime.TypeDef)
+		if !ok {
+			return nil, s.Errorf(e, "%s is not a type", s.Format(e))
+		}
+		return td, nil
+	case *ast.SelectorExpr:
 		mv, err := s.Resolve(e)
 		if err != nil {
 			return nil, err

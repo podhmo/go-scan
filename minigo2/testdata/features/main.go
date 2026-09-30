@@ -314,4 +314,283 @@ Loop:
 	return n // i=0: n=1; i=1: n=2; i=2: break
 }
 
+// ---- range-over-func (iter.Seq/Seq2-style producers, Go 1.23) ----
+
+func SeqIter() int {
+	seq := func(yield func(int) bool) {
+		if !yield(10) {
+			return
+		}
+		if !yield(20) {
+			return
+		}
+		if !yield(30) {
+			return
+		}
+	}
+	sum := 0
+	for v := range seq {
+		sum += v
+	}
+	return sum // 60
+}
+
+func SeqIter2() int {
+	seq := func(yield func(int, string) bool) {
+		if !yield(1, "a") {
+			return
+		}
+		if !yield(2, "b") {
+			return
+		}
+	}
+	sum := 0
+	for k, v := range seq {
+		sum += k
+		sum += len(v)
+	}
+	return sum // 1+1 + 2+1 = 5
+}
+
+func SeqBreak() int {
+	seq := func(yield func(int) bool) {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+	sum := 0
+	for v := range seq {
+		if v == 5 {
+			break
+		}
+		sum += v
+	}
+	return sum // 0+1+2+3+4 = 10 — the infinite producer stops on yield==false
+}
+
+func SeqContinue() int {
+	seq := func(yield func(int) bool) {
+		if !yield(10) {
+			return
+		}
+		if !yield(20) {
+			return
+		}
+		if !yield(30) {
+			return
+		}
+	}
+	sum := 0
+	for v := range seq {
+		if v == 20 {
+			continue
+		}
+		sum += v
+	}
+	return sum // 40
+}
+
+func SeqReturn() string {
+	seq := func(yield func(int) bool) {
+		if !yield(1) {
+			return
+		}
+		if !yield(2) {
+			return
+		}
+	}
+	for v := range seq {
+		if v == 2 {
+			return "early exit"
+		}
+	}
+	return "done"
+}
+
+func SeqGenerator() int {
+	upTo := func(n int) func(func(int) bool) {
+		return func(yield func(int) bool) {
+			for i := 0; i < n; i++ {
+				if !yield(i) {
+					return
+				}
+			}
+		}
+	}
+	sum := 0
+	for v := range upTo(5) {
+		sum += v
+	}
+	return sum // 0+1+2+3+4 = 10
+}
+
+func SeqNoVars() int {
+	seq := func(yield func(int) bool) {
+		yield(1)
+		yield(2)
+		yield(3)
+	}
+	n := 0
+	for range seq {
+		n++
+	}
+	return n // 3
+}
+
+func SeqNested() int {
+	outer := func(yield func(int) bool) {
+		if !yield(1) {
+			return
+		}
+		if !yield(2) {
+			return
+		}
+	}
+	inner := func(yield func(int) bool) {
+		if !yield(10) {
+			return
+		}
+		if !yield(20) {
+			return
+		}
+	}
+	sum := 0
+	for a := range outer {
+		for b := range inner {
+			sum += a * b
+		}
+	}
+	return sum // 1*(10+20) + 2*(10+20) = 90
+}
+
+func SeqBodyPanic() (r int) {
+	defer func() {
+		if x := recover(); x != nil {
+			r = 42
+		}
+	}()
+	seq := func(yield func(int) bool) {
+		if !yield(1) {
+			return
+		}
+		if !yield(2) {
+			return
+		}
+	}
+	for v := range seq {
+		if v == 2 {
+			panic("stop")
+		}
+	}
+	return -1
+}
+
+func SeqYieldAfterFalse() (r int) {
+	defer func() {
+		if x := recover(); x != nil {
+			r = 7
+		}
+	}()
+	seq := func(yield func(int) bool) {
+		yield(1) // body breaks -> false
+		yield(2) // must panic: iteration continued after yield returned false
+	}
+	for range seq {
+		break
+	}
+	return 0
+}
+
+func SeqDefer() int {
+	n := 0
+	seq := func(yield func(int) bool) {
+		defer func() { n += 9 }()
+		if !yield(1) {
+			return
+		}
+		yield(2)
+	}
+	for range seq {
+		break
+	}
+	return n // 9 — producer's defer ran when it returned after yield==false
+}
+
+type seqFunc func(yield func(int) bool)
+
+func SeqNamed() int {
+	var seq seqFunc = func(yield func(int) bool) {
+		yield(1)
+		yield(2)
+		yield(3)
+	}
+	sum := 0
+	for v := range seq {
+		sum += v
+	}
+	return sum // 6
+}
+
+func SeqLabelBreak() int {
+	sum := 0
+L:
+	for {
+		for v := range func(yield func(int) bool) {
+			if !yield(1) {
+				return
+			}
+			yield(2)
+		} {
+			sum += v
+			break L
+		}
+		sum += 100
+	}
+	return sum // 1 — the labeled break exits through the func-iter loop
+}
+
 func main() {}
+
+func SeqGotoLoop() int {
+	sum := 0
+	n := 0
+Top:
+	for v := range seqFunc(func(yield func(int) bool) {
+		for i := 1; i <= 3; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}) {
+		sum += v
+		n++
+		if n == 2 {
+			goto Top
+		}
+	}
+	return sum
+}
+
+// goto back to the for statement re-runs OpIter: a fresh iterator, same as
+// Go re-entering the range clause (producer called again).
+func SeqGotoLoop() int {
+	sum := 0
+	n := 0
+Top:
+	for v := range seqFunc(func(yield func(int) bool) {
+		for i := 1; i <= 3; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}) {
+		sum += v
+		n++
+		if n == 2 {
+			goto Top
+		}
+	}
+	return sum // 1+2 + 1+2+3 = 9
+}

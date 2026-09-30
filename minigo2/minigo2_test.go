@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -437,6 +438,21 @@ func TestFeatures(t *testing.T) {
 		{"GenericFns", int64(42)},
 		{"GenericConvert", int64(42)},
 		{"GenericType", int64(42)},
+		// range-over-func (iter.Seq/Seq2)
+		{"SeqIter", int64(60)},
+		{"SeqIter2", int64(5)},
+		{"SeqBreak", int64(10)},
+		{"SeqContinue", int64(40)},
+		{"SeqReturn", "early exit"},
+		{"SeqGenerator", int64(10)},
+		{"SeqNoVars", int64(3)},
+		{"SeqNested", int64(90)},
+		{"SeqBodyPanic", int64(42)},
+		{"SeqYieldAfterFalse", int64(7)},
+		{"SeqDefer", int64(9)},
+		{"SeqNamed", int64(6)},
+		{"SeqLabelBreak", int64(1)},
+		{"SeqGotoLoop", int64(9)},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/features", c.fn)
@@ -485,6 +501,44 @@ func TestSpecialForms(t *testing.T) {
 			}
 			return id.PackagePath + "::" + id.Name, nil
 		})
+	// Resolve maps a symbol expr to its value lazily — call it to prove
+	// the materialized function arrived intact.
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "ResOf"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			v, err := ctx.Resolve(call.Call.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			return ctx.Call(v, []runtime.Value{"go"})
+		})
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "ResOf0"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			v, err := ctx.Resolve(call.Call.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			return ctx.Call(v, nil)
+		})
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "ResIdent"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			return ctx.Resolve(call.Call.Args[0])
+		})
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "TypeName"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			td, err := ctx.ResolveType(call.Call.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			return td.Name, nil
+		})
+	e.RegisterSpecial(runtime.SymbolID{PackagePath: "example.com/dsl", Name: "TypeKind"},
+		func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+			td, err := ctx.ResolveType(call.Call.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			return int64(td.Kind), nil
+		})
 
 	cases := []struct {
 		fn   string
@@ -497,6 +551,17 @@ func TestSpecialForms(t *testing.T) {
 		// panicking init must not run, proving index-level laziness.
 		{"SymPkg", "github.com/podhmo/go-scan/minigo2/testdata/lazyboom::Get"},
 		{"SymGreet", "github.com/podhmo/go-scan/minigo2/testdata/greet::Hello"},
+		// Resolve maps the symbol to its value; ResOf calls it.
+		{"ResGreet", "hi go"},
+		{"ResSelf", int64(44)},
+		{"ResLocal", int64(33)},
+		// ResolveType answers type queries on quoted type expressions.
+		{"TypeNamed", "Point"},
+		{"TypeBuiltin", "int"},
+		{"TypeSlice", int64(runtime.KindSlice)},
+		{"TypePtr", int64(runtime.KindPointer)},
+		{"TypeParamInt", "int"},
+		{"TypeParamInfer", "int"},
 	}
 	for _, c := range cases {
 		got := run(t, e, "./testdata/special", c.fn)
@@ -844,5 +909,103 @@ func TestSpecialFormsConvertDefineStyle(t *testing.T) {
 	}
 	if len(spy.dirs) != 0 {
 		t.Errorf("directories located: %v", spy.dirs)
+	}
+}
+
+func TestVet(t *testing.T) {
+	e := newEngine(t)
+	e.Bind("example.com/dsl", map[string]runtime.Value{
+		"Registered": &runtime.BuiltinFunc{Name: "dsl.Registered", Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			return nil, nil
+		}},
+	})
+	got, err := e.Vet(context.Background(), "./testdata/vetmain")
+	if err != nil {
+		t.Fatalf("Vet: %v", err)
+	}
+	var resolved []string
+	for _, r := range got {
+		resolved = append(resolved, r.Resolved)
+	}
+	want := []string{
+		"github.com/podhmo/go-scan/minigo2/testdata/vetstub.Unreg",
+	}
+	if diff := cmp.Diff(want, resolved); diff != "" {
+		t.Errorf("findings mismatch (-want +got):\n%s", diff)
+	}
+	if len(got) == 1 && !strings.HasSuffix(got[0].Pos.Filename, "vetmain/main.go") {
+		t.Errorf("finding position: got %v", got[0].Pos)
+	}
+}
+
+type natPoint struct{ X int }
+
+func TestNativeBindings(t *testing.T) {
+	e := newEngine(t)
+	e.Bind("example.com/nat", map[string]runtime.Value{
+		"Add":       minigo2.WrapFunc("nat.Add", func(a, b int) int { return a + b }),
+		"Upper":     minigo2.WrapFunc("nat.Upper", strings.ToUpper),
+		"Concat":    minigo2.WrapFunc("nat.Concat", func(parts ...string) string { return strings.Join(parts, "") }),
+		"Pair":      minigo2.WrapFunc("nat.Pair", func() (int, string) { return 7, "x" }),
+		"Shift":     minigo2.WrapFunc("nat.Shift", func(v uint) uint { return v << 1 }),
+		"NonFunc":   minigo2.WrapFunc("nat.NonFunc", 42),
+		"Version":   minigo2.ValueOf("v2"),
+		"Join":      minigo2.WrapFunc("nat.Join", strings.Join),
+		"Count":     minigo2.WrapFunc("nat.Count", func(m map[string]int) int { return m["k"] }),
+		"MakePoint": minigo2.WrapFunc("nat.MakePoint", func() natPoint { return natPoint{X: 5} }),
+		"XOf":       minigo2.WrapFunc("nat.XOf", func(p natPoint) int { return p.X }),
+		"Point":     &runtime.TypeDef{Name: "Point", Kind: runtime.KindNamedBasic, Pkg: &runtime.Package{Path: "example.com/nat", Name: "nat"}},
+	})
+	cases := []struct {
+		fn   string
+		want runtime.Value
+	}{
+		{"Add", int64(3)},
+		{"Upper", "GO"},
+		{"Concat", "abc"},
+		{"Pair", int64(7)},
+		{"Shift", int64(6)},
+		{"Version", "v2"},
+		{"Join", "a-b"},
+		{"Count", int64(3)},
+		{"MkPoint", int64(5)},
+	}
+	// uint64 above MaxInt64 keeps its exact value boxed rather than
+	// wrapping to a negative int64
+	if got := minigo2.ValueOf(uint64(math.MaxUint64)); true {
+		if _, ok := got.(*runtime.GoValue); !ok {
+			t.Errorf("ValueOf(MaxUint64) = %T, want *runtime.GoValue", got)
+		}
+	}
+	if got := minigo2.ValueOf(uint64(42)); got != int64(42) {
+		t.Errorf("ValueOf(42) = %v, want int64", got)
+	}
+	for _, c := range cases {
+		got := run(t, e, "./testdata/native", c.fn)
+		if diff := cmp.Diff(c.want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+	// a WrapFunc over a non-function errors at call time, not bind time
+	_, err := e.Run(context.Background(), "./testdata/native", "NonFunc")
+	if err == nil || !strings.Contains(err.Error(), "not a function") {
+		t.Errorf("NonFunc: want not-a-function error, got %v", err)
+	}
+}
+
+// A package's init() side effects must be visible when its members are
+// used — Go runs every imported package's init before use, and the
+// default GoCompatibleInit mode reproduces that on first member access,
+// including purely indirect chains (main -> helper -> inittable).
+func TestInitOnMemberAccess(t *testing.T) {
+	e := newEngine(t)
+	for fn, want := range map[string]runtime.Value{
+		"ViaFunc":     int64(5), // func init() populated Table before Lookup ran
+		"ViaIndirect": int64(5), // same through an intermediate package
+	} {
+		got := run(t, e, "./testdata/inituser", fn)
+		if got != want {
+			t.Errorf("%s = %v, want %v", fn, got, want)
+		}
 	}
 }

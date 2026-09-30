@@ -116,8 +116,8 @@ func TestKeyFromFnWithScantest(t *testing.T) {
 		}
 
 		expectedKeys := map[string]bool{
-			"key-from-fn/foo.(*Foo).Bar": true, // from nil, pointer literal, and new
-			"key-from-fn/foo.Foo.Qux":    true, // from value
+			"(*key-from-fn/foo.Foo).Bar": true, // from nil, pointer literal, and new
+			"(key-from-fn/foo.Foo).Qux":  true, // from value
 			"key-from-fn/foo.Baz":        true, // from standalone function
 		}
 

@@ -99,6 +99,15 @@ func TestConversions(t *testing.T) {
 			{"SliceAssertUnderlyingBad", int64(1)},
 			{"ChanAssertBindOK", int64(1)},
 			{"ChanAssertOtherBad", int64(1)},
+
+			// nil receivers on nilable declared types bind like Go
+			{"NilSliceRecv", int64(0)},
+			{"NilFnSelectBind", int64(1)},
+
+			// instantiated generics assert on their type arguments
+			{"WrapAssertSameOK", int64(1)},
+			{"WrapAssertOtherBad", int64(1)},
+			{"WrapAssertNamedArgBad", int64(1)},
 		}
 		for _, c := range cases {
 			got := run(t, e, "./testdata/conversions", c.fn)
@@ -132,6 +141,7 @@ func TestConversions(t *testing.T) {
 			{"PtrNoPromote", "has no field or method Inc"},
 			{"PtrSetIndBad", "cannot use Sq2 as Sq"},
 			{"PtrNilDeref", "nil pointer dereference"},
+			{"NilPtrValueMethod", "nil pointer dereference"},
 		}
 		for _, c := range cases {
 			_, err := e.Run(context.Background(), "./testdata/conversions", c.fn)

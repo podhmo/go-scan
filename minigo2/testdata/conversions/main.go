@@ -358,6 +358,8 @@ func (s *Sq) Inc() int {
 	return s.X
 }
 
+func (s Sq) Val() int { return s.X }
+
 // PSq(x) re-tags: the result asserts to PSq, not to *Sq.
 func PtrAssertCastOK() int {
 	p := PSq(&Sq{X: 3})
@@ -575,4 +577,60 @@ func AnyToString(x any) string {
 
 func AnyToStringRune(x any) string {
 	return string(x.([]rune))
+}
+
+// ---- nil receivers on nilable declared types ----
+//
+// A nil slice/map/chan/func-typed value is a valid receiver — Go binds
+// the nil and the body decides; only a pointer-peeled value receiver
+// dereferences (and panics) at dispatch.
+
+type LS []int
+
+func (s LS) Len() int { return len(s) }
+
+func NilSliceRecv() int {
+	var s LS
+	return s.Len() // len(nil) == 0, no panic
+}
+
+func NilFnSelectBind() int {
+	var f Fn
+	m := f.Call // binds the nil func — no panic at select
+	_ = m
+	return 1
+}
+
+func NilPtrValueMethod() int {
+	var p *Sq
+	return p.Val() // panic: nil pointer dereference
+}
+
+// ---- instantiated generics assert on type arguments ----
+
+func WrapAssertSameOK() int {
+	w := Wrap[int]{1}
+	var i any = w
+	if _, ok := i.(Wrap[int]); !ok {
+		return -1
+	}
+	return 1
+}
+
+func WrapAssertOtherBad() int {
+	w := Wrap[int]{1}
+	var i any = w
+	if _, ok := i.(Wrap[string]); ok { // Wrap[int] is not Wrap[string]
+		return -1
+	}
+	return 1
+}
+
+func WrapAssertNamedArgBad() int {
+	w := Wrap[MyInt]{1}
+	var i any = w
+	if _, ok := i.(Wrap[int]); ok { // Wrap[MyInt] is not Wrap[int]
+		return -1
+	}
+	return 1
 }

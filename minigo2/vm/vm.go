@@ -2353,12 +2353,40 @@ func sameTypeDef(a, b *runtime.TypeDef) bool {
 		return false
 	}
 	if a.Name != "" || b.Name != "" {
-		return a.Name != "" && a.Name == b.Name && a.Pkg == b.Pkg
+		return a.Name != "" && a.Name == b.Name && a.Pkg == b.Pkg && bindsEq(a.Binds, b.Binds)
 	}
 	if a.Anon != nil && b.Anon != nil {
 		return typeExprNameCtx(a.Anon, a.File, a.Pkg) == typeExprNameCtx(b.Anon, b.File, b.Pkg)
 	}
 	return false
+}
+
+// bindsEq compares generic instantiation bindings: `Wrap[int]` and
+// `Wrap[string]` share Name+Pkg but instantiate differently — a declared
+// type is identical only when its type arguments are.
+func bindsEq(a, b map[string]runtime.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || !bindArgEq(av, bv) {
+			return false
+		}
+	}
+	return true
+}
+
+func bindArgEq(a, b runtime.Value) bool {
+	at, aok := a.(*runtime.TypeDef)
+	bt, bok := b.(*runtime.TypeDef)
+	if aok != bok {
+		return false
+	}
+	if !aok {
+		return a == b
+	}
+	return sameTypeDef(at, bt)
 }
 
 // typeExprName renders a type AST to a comparable shape string for
@@ -3177,7 +3205,7 @@ func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
 		if xv.Def == td {
 			return true
 		}
-		return xv.Def != nil && td.Name != "" && xv.Def.Name == td.Name && xv.Def.Pkg == td.Pkg && td.Pkg != nil
+		return xv.Def != nil && td.Name != "" && xv.Def.Name == td.Name && xv.Def.Pkg == td.Pkg && td.Pkg != nil && bindsEq(xv.Def.Binds, td.Binds)
 	case int64:
 		switch td.Name {
 		case "int", "int8", "int16", "int32", "int64", "uint", "uint8",
@@ -3316,18 +3344,17 @@ func (v *VM) memberOfType(f *frame, td *runtime.TypeDef, name string, recv runti
 	// anonymous pointer chain to the pointee (a *T nil keeps *T's method
 	// set). A declared pointer typedef (`type P *Sq`) does not promote
 	// pointee methods — P's method set is only what is declared on P.
+	peeled := false
 	for td != nil {
 		if m, ok := td.Methods[name]; ok {
-			// A value receiver copies the receiver at dispatch — on a nil
-			// that dereferences and panics like Go, unless the declared
-			// type is pointer-underlying: `type P *Sq`'s receiver IS the
-			// (nil) pointer, so the call proceeds and the body decides.
+			// A value receiver dereferences a peeled pointer chain at
+			// dispatch — panic on nil like Go. A nil carrying a nilable
+			// typedef (declared pointer/slice/map/chan/func values can
+			// be nil) is a valid receiver: the call binds it and the
+			// body decides.
 			if !m.PtrRecv {
-				if u := v.peelNamed(td); u == nil || u.Kind != runtime.KindPointer {
-					switch recv.(type) {
-					case *runtime.TypedNil, *runtime.IfaceNil:
-						panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
-					}
+				if _, isNil := asTypedNil(recv); isNil && (peeled || !v.nilableTypedef(td)) {
+					panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
 				}
 			}
 			r := recv
@@ -3346,6 +3373,7 @@ func (v *VM) memberOfType(f *frame, td *runtime.TypeDef, name string, recv runti
 			break
 		}
 		td = et
+		peeled = true
 	}
 	// field access on a nil pointer panics in Go; on a nil slice/map/chan
 	// it is a plain invalid select.
@@ -3607,6 +3635,23 @@ func (v *VM) peelNamed(td *runtime.TypeDef) *runtime.TypeDef {
 		td = u
 	}
 	return td
+}
+
+// nilableTypedef reports whether a typedef's values can be nil at all —
+// declared pointers, slices, maps, chans, funcs and interfaces have a
+// nil zero, so a nil receiver of one of these types still binds as a
+// method receiver (the body decides). Structs and basics cannot be nil.
+func (v *VM) nilableTypedef(td *runtime.TypeDef) bool {
+	u := v.peelNamed(td)
+	if u == nil {
+		return false
+	}
+	switch u.Kind {
+	case runtime.KindPointer, runtime.KindSlice, runtime.KindMap,
+		runtime.KindChan, runtime.KindFunc, runtime.KindInterface:
+		return true
+	}
+	return false
 }
 
 // tdShapeEq reports whether two typedefs have the same underlying shape —

@@ -117,7 +117,7 @@ func (r *Runner) RunTask(ctx context.Context, file, name string, args []string) 
 		return fmt.Errorf("%s is not a task (params must all be string, result empty or error)", name)
 	}
 	if len(args) != len(params) {
-		return fmt.Errorf("task %s takes %d args (%s), got %d", name, len(params), strings.Join(params, ", "), len(args))
+		return fmt.Errorf("takes %d args (%s), got %d", len(params), strings.Join(params, ", "), len(args))
 	}
 	argv := make([]runtime.Value, len(args))
 	for i, a := range args {

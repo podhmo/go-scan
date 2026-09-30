@@ -1881,4 +1881,49 @@ structs share a local name to prove `fob.S(foa.S{...})` traps while
 same-package-spelled `[]fob.Foo` converts. `AnyToString`/`AnyToStringRune`
 receive corrupt slices from the host for the `string(sx)` trap.
 
+### Follow-ups from review (same round)
+
+- `memberOfType` now panics on a nil receiver only when the value
+  receiver's method was reached through a pointer peel (a `(*T)(nil)`
+  dereferences at dispatch) or when the typedef is non-nilable — a nil
+  of a declared pointer/slice/map/chan/func type binds like Go
+  (`len(nil slice) == 0`, nil-func method selects bind).
+- `sameTypeDef` and the struct-assert path compare instantiation
+  `Binds`, so `Wrap[int]` and `Wrap[string]` are distinct declared
+  types for `x.(T)` and bind checks.
+
+### Future works
+
+Two deferred tracks stay parked at the same level — neither is needed
+for the current engine to be honest about its approximation class:
+
+- **Real concurrency semantics.** Today's channel/select is a
+  documented single-thread model: `go` runs synchronously, queues are
+  unbounded, would-block operations trap. True interleaving, blocking
+  send/recv, buffered `make(chan, n)`, and `sync` primitives would
+  need a scheduler (per-goroutine instruction budgets or serialized
+  yield points), deterministic-ish channel queues, and probably a
+  re-entrant VM — a different runtime class, not a patch.
+- **Package objects / symbol introspection.** A script-facing
+  *package value* — the Go answer to Python's module object with
+  `dir`/`getattr`-style access. Desired surface (open design):
+  - `pkg` as a first-class value: enumerate members, resolve a symbol
+    to its decl lazily, follow a struct type to its definition.
+  - File objects: a package's files with their own metadata —
+    `//go:build` constraints that selected them, doc comments,
+    positions.
+  - Import metadata both directions: each file's qualified imports
+    (`import f "path"` — which package under which local name), and
+    per-file/per-package *used* symbols — which imported members a
+    file actually references.
+  - The host already has the pieces (`SpecialContext.Resolve`/
+    `ResolveType`, `pkg.Globals`, `file.Imports`/`LocalName`), so the
+    work is value design: what the script sees, what stays lazy, and
+    how much decl-graph a symbol drags in when enumerated.
+- Dropped: `FindSymbolInPackage`-style symbol-targeted scanning. The
+  §8 idea was linear file search to skip whole-package indexing, an
+  ~O(n/2) bookkeeping win at best — `index.Build` already evaluates
+  nothing. Per-file parse caching could revisit it without a
+  dedicated scanner path.
+
 ## (end)

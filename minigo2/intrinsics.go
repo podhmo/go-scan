@@ -9,20 +9,31 @@
 package minigo2
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"maps"
+	"math"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/podhmo/go-scan/minigo2/runtime"
 )
@@ -110,6 +121,24 @@ func (e *Engine) installStdlib() {
 		"Fields":      h.fn("strings.Fields", func(a []any) (any, error) { return strsSlice(strings.Fields(str(a[0]))), nil }),
 		"EqualFold":   h.fn2("strings.EqualFold", func(a []any) (any, error) { return strings.EqualFold(str(a[0]), str(a[1])), nil }),
 		"Count":       h.fn2("strings.Count", func(a []any) (any, error) { return int64(strings.Count(str(a[0]), str(a[1]))), nil }),
+		"SplitN":      h.fn3("strings.SplitN", func(a []any) (any, error) { return strsSlice(strings.SplitN(str(a[0]), str(a[1]), intOf(a[2]))), nil }),
+		"SplitAfter":  h.fn2("strings.SplitAfter", func(a []any) (any, error) { return strsSlice(strings.SplitAfter(str(a[0]), str(a[1]))), nil }),
+		"SplitAfterN": h.fn3("strings.SplitAfterN", func(a []any) (any, error) {
+			return strsSlice(strings.SplitAfterN(str(a[0]), str(a[1]), intOf(a[2]))), nil
+		}),
+		"Trim":         h.fn2("strings.Trim", func(a []any) (any, error) { return strings.Trim(str(a[0]), str(a[1])), nil }),
+		"TrimPrefix":   h.fn2("strings.TrimPrefix", func(a []any) (any, error) { return strings.TrimPrefix(str(a[0]), str(a[1])), nil }),
+		"TrimSuffix":   h.fn2("strings.TrimSuffix", func(a []any) (any, error) { return strings.TrimSuffix(str(a[0]), str(a[1])), nil }),
+		"TrimLeft":     h.fn2("strings.TrimLeft", func(a []any) (any, error) { return strings.TrimLeft(str(a[0]), str(a[1])), nil }),
+		"TrimRight":    h.fn2("strings.TrimRight", func(a []any) (any, error) { return strings.TrimRight(str(a[0]), str(a[1])), nil }),
+		"LastIndex":    h.fn2("strings.LastIndex", func(a []any) (any, error) { return int64(strings.LastIndex(str(a[0]), str(a[1]))), nil }),
+		"LastIndexAny": h.fn2("strings.LastIndexAny", func(a []any) (any, error) { return int64(strings.LastIndexAny(str(a[0]), str(a[1]))), nil }),
+		"IndexAny":     h.fn2("strings.IndexAny", func(a []any) (any, error) { return int64(strings.IndexAny(str(a[0]), str(a[1]))), nil }),
+		"IndexRune":    h.fn2("strings.IndexRune", func(a []any) (any, error) { return int64(strings.IndexRune(str(a[0]), runeOf(a[1]))), nil }),
+		"ContainsRune": h.fn2("strings.ContainsRune", func(a []any) (any, error) { return strings.ContainsRune(str(a[0]), runeOf(a[1])), nil }),
+		"ToTitle":      h.fn("strings.ToTitle", func(a []any) (any, error) { return strings.ToTitle(str(a[0])), nil }),
+		"Title":        h.fn("strings.Title", func(a []any) (any, error) { return strings.Title(str(a[0])), nil }),
+		"NewReader":    h.fn("strings.NewReader", func(a []any) (any, error) { return strings.NewReader(str(a[0])), nil }),
 	})
 	e.Bind("strconv", map[string]runtime.Value{
 		"Atoi":    h.fn("strconv.Atoi", func(a []any) (any, error) { return retErr2(strconv.Atoi(str(a[0]))) }),
@@ -133,6 +162,213 @@ func (e *Engine) installStdlib() {
 		}),
 		"ParseBool": h.fn("strconv.ParseBool", func(a []any) (any, error) { return retErr2(strconv.ParseBool(str(a[0]))) }),
 		"FormatInt": h.fn2("strconv.FormatInt", func(a []any) (any, error) { return strconv.FormatInt(int64Of(a[0]), intOf(a[1])), nil }),
+		"FormatUint": h.fn2("strconv.FormatUint", func(a []any) (any, error) {
+			return strconv.FormatUint(uint64(int64Of(a[0])), intOf(a[1])), nil
+		}),
+		"QuoteToASCII": h.fn("strconv.QuoteToASCII", func(a []any) (any, error) { return strconv.QuoteToASCII(str(a[0])), nil }),
+		"QuoteRune":    h.fn("strconv.QuoteRune", func(a []any) (any, error) { return strconv.QuoteRune(runeOf(a[0])), nil }),
+		"IsPrint":      h.fn("strconv.IsPrint", func(a []any) (any, error) { return strconv.IsPrint(runeOf(a[0])), nil }),
+		"IsGraphic":    h.fn("strconv.IsGraphic", func(a []any) (any, error) { return strconv.IsGraphic(runeOf(a[0])), nil }),
+		"CanBackquote": h.fn("strconv.CanBackquote", func(a []any) (any, error) { return strconv.CanBackquote(str(a[0])), nil }),
+	})
+	e.Bind("bytes", map[string]runtime.Value{
+		"NewBuffer":       h.fn("bytes.NewBuffer", func(a []any) (any, error) { return bytes.NewBuffer(byteSlice(a[0])), nil }),
+		"NewBufferString": h.fn("bytes.NewBufferString", func(a []any) (any, error) { return bytes.NewBufferString(str(a[0])), nil }),
+		"Contains":        h.fn2("bytes.Contains", func(a []any) (any, error) { return bytes.Contains(byteSlice(a[0]), byteSlice(a[1])), nil }),
+		"Index":           h.fn2("bytes.Index", func(a []any) (any, error) { return int64(bytes.Index(byteSlice(a[0]), byteSlice(a[1]))), nil }),
+		"LastIndex":       h.fn2("bytes.LastIndex", func(a []any) (any, error) { return int64(bytes.LastIndex(byteSlice(a[0]), byteSlice(a[1]))), nil }),
+		"Count":           h.fn2("bytes.Count", func(a []any) (any, error) { return int64(bytes.Count(byteSlice(a[0]), byteSlice(a[1]))), nil }),
+		"Equal":           h.fn2("bytes.Equal", func(a []any) (any, error) { return bytes.Equal(byteSlice(a[0]), byteSlice(a[1])), nil }),
+		"Compare":         h.fn2("bytes.Compare", func(a []any) (any, error) { return int64(bytes.Compare(byteSlice(a[0]), byteSlice(a[1]))), nil }),
+		"HasPrefix":       h.fn2("bytes.HasPrefix", func(a []any) (any, error) { return bytes.HasPrefix(byteSlice(a[0]), byteSlice(a[1])), nil }),
+		"HasSuffix":       h.fn2("bytes.HasSuffix", func(a []any) (any, error) { return bytes.HasSuffix(byteSlice(a[0]), byteSlice(a[1])), nil }),
+		"Fields":          h.fn("bytes.Fields", func(a []any) (any, error) { return bytesSliceOf(bytes.Fields(byteSlice(a[0]))), nil }),
+		"Join":            h.fn2("bytes.Join", func(a []any) (any, error) { return bytes.Join(bytesSlices(a[0]), byteSlice(a[1])), nil }),
+		"Split":           h.fn2("bytes.Split", func(a []any) (any, error) { return bytesSliceOf(bytes.Split(byteSlice(a[0]), byteSlice(a[1]))), nil }),
+		"SplitN": h.fn3("bytes.SplitN", func(a []any) (any, error) {
+			return bytesSliceOf(bytes.SplitN(byteSlice(a[0]), byteSlice(a[1]), intOf(a[2]))), nil
+		}),
+		"Repeat":    h.fn2("bytes.Repeat", func(a []any) (any, error) { return bytes.Repeat(byteSlice(a[0]), intOf(a[1])), nil }),
+		"Trim":      h.fn2("bytes.Trim", func(a []any) (any, error) { return bytes.Trim(byteSlice(a[0]), str(a[1])), nil }),
+		"TrimSpace": h.fn("bytes.TrimSpace", func(a []any) (any, error) { return bytes.TrimSpace(byteSlice(a[0])), nil }),
+		"ToUpper":   h.fn("bytes.ToUpper", func(a []any) (any, error) { return bytes.ToUpper(byteSlice(a[0])), nil }),
+		"ToLower":   h.fn("bytes.ToLower", func(a []any) (any, error) { return bytes.ToLower(byteSlice(a[0])), nil }),
+		"ToTitle":   h.fn("bytes.ToTitle", func(a []any) (any, error) { return bytes.ToTitle(byteSlice(a[0])), nil }),
+		"Runes":     h.fn("bytes.Runes", func(a []any) (any, error) { return runeSlice(bytes.Runes(byteSlice(a[0]))), nil }),
+		"IndexByte": h.fn2("bytes.IndexByte", func(a []any) (any, error) { return int64(bytes.IndexByte(byteSlice(a[0]), byte(intOf(a[1])))), nil }),
+		"IndexRune": h.fn2("bytes.IndexRune", func(a []any) (any, error) { return int64(bytes.IndexRune(byteSlice(a[0]), runeOf(a[1]))), nil }),
+		"Replace": h.arity("bytes.Replace", 4, func(a []any) (any, error) {
+			return bytes.Replace(byteSlice(a[0]), byteSlice(a[1]), byteSlice(a[2]), intOf(a[3])), nil
+		}),
+		"ReplaceAll": h.fn3("bytes.ReplaceAll", func(a []any) (any, error) {
+			return bytes.ReplaceAll(byteSlice(a[0]), byteSlice(a[1]), byteSlice(a[2])), nil
+		}),
+	})
+	e.Bind("unicode", map[string]runtime.Value{
+		"IsControl": h.fn("unicode.IsControl", func(a []any) (any, error) { return unicode.IsControl(runeOf(a[0])), nil }),
+		"IsDigit":   h.fn("unicode.IsDigit", func(a []any) (any, error) { return unicode.IsDigit(runeOf(a[0])), nil }),
+		"IsGraphic": h.fn("unicode.IsGraphic", func(a []any) (any, error) { return unicode.IsGraphic(runeOf(a[0])), nil }),
+		"IsLetter":  h.fn("unicode.IsLetter", func(a []any) (any, error) { return unicode.IsLetter(runeOf(a[0])), nil }),
+		"IsLower":   h.fn("unicode.IsLower", func(a []any) (any, error) { return unicode.IsLower(runeOf(a[0])), nil }),
+		"IsMark":    h.fn("unicode.IsMark", func(a []any) (any, error) { return unicode.IsMark(runeOf(a[0])), nil }),
+		"IsNumber":  h.fn("unicode.IsNumber", func(a []any) (any, error) { return unicode.IsNumber(runeOf(a[0])), nil }),
+		"IsPrint":   h.fn("unicode.IsPrint", func(a []any) (any, error) { return unicode.IsPrint(runeOf(a[0])), nil }),
+		"IsPunct":   h.fn("unicode.IsPunct", func(a []any) (any, error) { return unicode.IsPunct(runeOf(a[0])), nil }),
+		"IsSpace":   h.fn("unicode.IsSpace", func(a []any) (any, error) { return unicode.IsSpace(runeOf(a[0])), nil }),
+		"IsSymbol":  h.fn("unicode.IsSymbol", func(a []any) (any, error) { return unicode.IsSymbol(runeOf(a[0])), nil }),
+		"IsTitle":   h.fn("unicode.IsTitle", func(a []any) (any, error) { return unicode.IsTitle(runeOf(a[0])), nil }),
+		"IsUpper":   h.fn("unicode.IsUpper", func(a []any) (any, error) { return unicode.IsUpper(runeOf(a[0])), nil }),
+		"ToLower":   h.fn("unicode.ToLower", func(a []any) (any, error) { return int64(unicode.ToLower(runeOf(a[0]))), nil }),
+		"ToUpper":   h.fn("unicode.ToUpper", func(a []any) (any, error) { return int64(unicode.ToUpper(runeOf(a[0]))), nil }),
+		"ToTitle":   h.fn("unicode.ToTitle", func(a []any) (any, error) { return int64(unicode.ToTitle(runeOf(a[0]))), nil }),
+		"To":        h.fn2("unicode.To", func(a []any) (any, error) { return int64(unicode.To(intOf(a[0]), runeOf(a[1]))), nil }),
+		"UpperCase": int64(unicode.UpperCase), "LowerCase": int64(unicode.LowerCase), "TitleCase": int64(unicode.TitleCase),
+		"MaxRune": int64(unicode.MaxRune), "MaxASCII": int64(unicode.MaxASCII), "ReplacementChar": int64(unicode.ReplacementChar),
+	})
+	e.Bind("unicode/utf8", map[string]runtime.Value{
+		"RuneCountInString": h.fn("utf8.RuneCountInString", func(a []any) (any, error) { return int64(utf8.RuneCountInString(str(a[0]))), nil }),
+		"RuneCount":         h.fn("utf8.RuneCount", func(a []any) (any, error) { return int64(utf8.RuneCount(byteSlice(a[0]))), nil }),
+		"RuneLen":           h.fn("utf8.RuneLen", func(a []any) (any, error) { return int64(utf8.RuneLen(runeOf(a[0]))), nil }),
+		"RuneStart":         h.fn("utf8.RuneStart", func(a []any) (any, error) { return utf8.RuneStart(byte(intOf(a[0]))), nil }),
+		"Valid":             h.fn("utf8.Valid", func(a []any) (any, error) { return utf8.Valid(byteSlice(a[0])), nil }),
+		"ValidString":       h.fn("utf8.ValidString", func(a []any) (any, error) { return utf8.ValidString(str(a[0])), nil }),
+		"ValidRune":         h.fn("utf8.ValidRune", func(a []any) (any, error) { return utf8.ValidRune(runeOf(a[0])), nil }),
+		"FullRune":          h.fn("utf8.FullRune", func(a []any) (any, error) { return utf8.FullRune(byteSlice(a[0])), nil }),
+		"FullRuneInString":  h.fn("utf8.FullRuneInString", func(a []any) (any, error) { return utf8.FullRuneInString(str(a[0])), nil }),
+		"DecodeRuneInString": h.fn("utf8.DecodeRuneInString", func(a []any) (any, error) {
+			r, n := utf8.DecodeRuneInString(str(a[0]))
+			return &runtime.Tuple{Elems: []runtime.Value{int64(r), int64(n)}}, nil
+		}),
+		"DecodeRune": h.fn("utf8.DecodeRune", func(a []any) (any, error) {
+			r, n := utf8.DecodeRune(byteSlice(a[0]))
+			return &runtime.Tuple{Elems: []runtime.Value{int64(r), int64(n)}}, nil
+		}),
+		"DecodeLastRuneInString": h.fn("utf8.DecodeLastRuneInString", func(a []any) (any, error) {
+			r, n := utf8.DecodeLastRuneInString(str(a[0]))
+			return &runtime.Tuple{Elems: []runtime.Value{int64(r), int64(n)}}, nil
+		}),
+		// Script-shaped: stdlib EncodeRune writes into a caller []byte;
+		// here it returns the encoded rune as a string.
+		"EncodeRune": h.fn("utf8.EncodeRune", func(a []any) (any, error) {
+			var buf [utf8.UTFMax]byte
+			n := utf8.EncodeRune(buf[:], runeOf(a[0]))
+			return string(buf[:n]), nil
+		}),
+		"UTFMax":    int64(utf8.UTFMax),
+		"RuneError": int64(utf8.RuneError),
+		"RuneSelf":  int64(utf8.RuneSelf),
+	})
+	e.Bind("math", map[string]runtime.Value{
+		"Pi": math.Pi, "E": math.E, "Phi": math.Phi,
+		"Sqrt2": math.Sqrt2, "SqrtE": math.SqrtE, "SqrtPi": math.SqrtPi, "SqrtPhi": math.SqrtPhi,
+		"Ln2": math.Ln2, "Log2E": math.Log2E, "Ln10": math.Ln10, "Log10E": math.Log10E,
+		"MaxInt": int64(math.MaxInt), "MinInt": int64(math.MinInt),
+		"MaxFloat32": float64(math.MaxFloat32), "MaxFloat64": math.MaxFloat64,
+		"SmallestNonzeroFloat32": float64(math.SmallestNonzeroFloat32),
+		"SmallestNonzeroFloat64": math.SmallestNonzeroFloat64,
+		"Abs":                    h.fn("math.Abs", func(a []any) (any, error) { return math.Abs(floatOf(a[0])), nil }),
+		"Ceil":                   h.fn("math.Ceil", func(a []any) (any, error) { return math.Ceil(floatOf(a[0])), nil }),
+		"Floor":                  h.fn("math.Floor", func(a []any) (any, error) { return math.Floor(floatOf(a[0])), nil }),
+		"Round":                  h.fn("math.Round", func(a []any) (any, error) { return math.Round(floatOf(a[0])), nil }),
+		"RoundToEven":            h.fn("math.RoundToEven", func(a []any) (any, error) { return math.RoundToEven(floatOf(a[0])), nil }),
+		"Trunc":                  h.fn("math.Trunc", func(a []any) (any, error) { return math.Trunc(floatOf(a[0])), nil }),
+		"Sqrt":                   h.fn("math.Sqrt", func(a []any) (any, error) { return math.Sqrt(floatOf(a[0])), nil }),
+		"Cbrt":                   h.fn("math.Cbrt", func(a []any) (any, error) { return math.Cbrt(floatOf(a[0])), nil }),
+		"Hypot":                  h.fn2("math.Hypot", func(a []any) (any, error) { return math.Hypot(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Pow":                    h.fn2("math.Pow", func(a []any) (any, error) { return math.Pow(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Pow10":                  h.fn("math.Pow10", func(a []any) (any, error) { return math.Pow10(intOf(a[0])), nil }),
+		"Exp":                    h.fn("math.Exp", func(a []any) (any, error) { return math.Exp(floatOf(a[0])), nil }),
+		"Exp2":                   h.fn("math.Exp2", func(a []any) (any, error) { return math.Exp2(floatOf(a[0])), nil }),
+		"Expm1":                  h.fn("math.Expm1", func(a []any) (any, error) { return math.Expm1(floatOf(a[0])), nil }),
+		"Log":                    h.fn("math.Log", func(a []any) (any, error) { return math.Log(floatOf(a[0])), nil }),
+		"Log2":                   h.fn("math.Log2", func(a []any) (any, error) { return math.Log2(floatOf(a[0])), nil }),
+		"Log10":                  h.fn("math.Log10", func(a []any) (any, error) { return math.Log10(floatOf(a[0])), nil }),
+		"Log1p":                  h.fn("math.Log1p", func(a []any) (any, error) { return math.Log1p(floatOf(a[0])), nil }),
+		"Mod":                    h.fn2("math.Mod", func(a []any) (any, error) { return math.Mod(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Remainder":              h.fn2("math.Remainder", func(a []any) (any, error) { return math.Remainder(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Max":                    h.fn2("math.Max", func(a []any) (any, error) { return math.Max(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Min":                    h.fn2("math.Min", func(a []any) (any, error) { return math.Min(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Dim":                    h.fn2("math.Dim", func(a []any) (any, error) { return math.Dim(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Sin":                    h.fn("math.Sin", func(a []any) (any, error) { return math.Sin(floatOf(a[0])), nil }),
+		"Cos":                    h.fn("math.Cos", func(a []any) (any, error) { return math.Cos(floatOf(a[0])), nil }),
+		"Tan":                    h.fn("math.Tan", func(a []any) (any, error) { return math.Tan(floatOf(a[0])), nil }),
+		"Asin":                   h.fn("math.Asin", func(a []any) (any, error) { return math.Asin(floatOf(a[0])), nil }),
+		"Acos":                   h.fn("math.Acos", func(a []any) (any, error) { return math.Acos(floatOf(a[0])), nil }),
+		"Atan":                   h.fn("math.Atan", func(a []any) (any, error) { return math.Atan(floatOf(a[0])), nil }),
+		"Atan2":                  h.fn2("math.Atan2", func(a []any) (any, error) { return math.Atan2(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Sinh":                   h.fn("math.Sinh", func(a []any) (any, error) { return math.Sinh(floatOf(a[0])), nil }),
+		"Cosh":                   h.fn("math.Cosh", func(a []any) (any, error) { return math.Cosh(floatOf(a[0])), nil }),
+		"Tanh":                   h.fn("math.Tanh", func(a []any) (any, error) { return math.Tanh(floatOf(a[0])), nil }),
+		"Erf":                    h.fn("math.Erf", func(a []any) (any, error) { return math.Erf(floatOf(a[0])), nil }),
+		"Erfc":                   h.fn("math.Erfc", func(a []any) (any, error) { return math.Erfc(floatOf(a[0])), nil }),
+		"Gamma":                  h.fn("math.Gamma", func(a []any) (any, error) { return math.Gamma(floatOf(a[0])), nil }),
+		"Ldexp":                  h.fn2("math.Ldexp", func(a []any) (any, error) { return math.Ldexp(floatOf(a[0]), intOf(a[1])), nil }),
+		"Nextafter":              h.fn2("math.Nextafter", func(a []any) (any, error) { return math.Nextafter(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Copysign":               h.fn2("math.Copysign", func(a []any) (any, error) { return math.Copysign(floatOf(a[0]), floatOf(a[1])), nil }),
+		"Signbit":                h.fn("math.Signbit", func(a []any) (any, error) { return math.Signbit(floatOf(a[0])), nil }),
+		"IsNaN":                  h.fn("math.IsNaN", func(a []any) (any, error) { return math.IsNaN(floatOf(a[0])), nil }),
+		"IsInf":                  h.fn2("math.IsInf", func(a []any) (any, error) { return math.IsInf(floatOf(a[0]), intOf(a[1])), nil }),
+		"NaN":                    h.fn("math.NaN", func(a []any) (any, error) { return math.NaN(), nil }),
+		"Inf":                    h.fn("math.Inf", func(a []any) (any, error) { return math.Inf(intOf(a[0])), nil }),
+	})
+	e.Bind("regexp", map[string]runtime.Value{
+		"Compile":     h.fn("regexp.Compile", func(a []any) (any, error) { return retErr2(regexp.Compile(str(a[0]))) }),
+		"MustCompile": h.fn("regexp.MustCompile", func(a []any) (any, error) { return regexp.MustCompile(str(a[0])), nil }),
+		"MatchString": h.fn2("regexp.MatchString", func(a []any) (any, error) { return retErr2(regexp.MatchString(str(a[0]), str(a[1]))) }),
+		"Match":       h.fn2("regexp.Match", func(a []any) (any, error) { return retErr2(regexp.Match(str(a[0]), byteSlice(a[1]))) }),
+		"QuoteMeta":   h.fn("regexp.QuoteMeta", func(a []any) (any, error) { return regexp.QuoteMeta(str(a[0])), nil }),
+	})
+	e.Bind("encoding/base64", map[string]runtime.Value{
+		"StdEncoding":    &runtime.GoValue{V: base64.StdEncoding},
+		"URLEncoding":    &runtime.GoValue{V: base64.URLEncoding},
+		"RawStdEncoding": &runtime.GoValue{V: base64.RawStdEncoding},
+		"RawURLEncoding": &runtime.GoValue{V: base64.RawURLEncoding},
+	})
+	e.Bind("encoding/hex", map[string]runtime.Value{
+		"EncodeToString": h.fn("hex.EncodeToString", func(a []any) (any, error) { return hex.EncodeToString(byteSlice(a[0])), nil }),
+		"DecodeString":   h.fn("hex.DecodeString", func(a []any) (any, error) { return retErr2(hex.DecodeString(str(a[0]))) }),
+		"EncodedLen":     h.fn("hex.EncodedLen", func(a []any) (any, error) { return int64(hex.EncodedLen(intOf(a[0]))), nil }),
+		"DecodedLen":     h.fn("hex.DecodedLen", func(a []any) (any, error) { return int64(hex.DecodedLen(intOf(a[0]))), nil }),
+	})
+	e.Bind("encoding/json", map[string]runtime.Value{
+		"Marshal": h.fn("json.Marshal", func(a []any) (any, error) { return retErr2(json.Marshal(goJSON(a[0]))) }),
+		"MarshalIndent": h.fn3("json.MarshalIndent", func(a []any) (any, error) {
+			return retErr2(json.MarshalIndent(goJSON(a[0]), str(a[1]), str(a[2])))
+		}),
+		// Script-shaped: stdlib Unmarshal takes a *T target; here it decodes
+		// into the runtime value tree (maps/slices/scalars) and returns it.
+		"Unmarshal": h.fn("json.Unmarshal", func(a []any) (any, error) {
+			var v any
+			err := json.Unmarshal(byteSlice(a[0]), &v)
+			return &runtime.Tuple{Elems: []runtime.Value{scriptVal(jsonDeep(v)), errVal(err)}}, nil
+		}),
+		"Valid": h.fn("json.Valid", func(a []any) (any, error) { return json.Valid(byteSlice(a[0])), nil }),
+	})
+	e.Bind("net/url", map[string]runtime.Value{
+		"QueryEscape":   h.fn("url.QueryEscape", func(a []any) (any, error) { return url.QueryEscape(str(a[0])), nil }),
+		"PathEscape":    h.fn("url.PathEscape", func(a []any) (any, error) { return url.PathEscape(str(a[0])), nil }),
+		"QueryUnescape": h.fn("url.QueryUnescape", func(a []any) (any, error) { return retErr2(url.QueryUnescape(str(a[0]))) }),
+		"PathUnescape":  h.fn("url.PathUnescape", func(a []any) (any, error) { return retErr2(url.PathUnescape(str(a[0]))) }),
+		"JoinPath": h.fn("url.JoinPath", func(a []any) (any, error) {
+			return retErr2(url.JoinPath(str(a[0]), strArgs(a[1:])...))
+		}),
+	})
+	e.Bind("html", map[string]runtime.Value{
+		"EscapeString":   h.fn("html.EscapeString", func(a []any) (any, error) { return html.EscapeString(str(a[0])), nil }),
+		"UnescapeString": h.fn("html.UnescapeString", func(a []any) (any, error) { return html.UnescapeString(str(a[0])), nil }),
+	})
+	e.Bind("path", map[string]runtime.Value{
+		"Base":  h.fn("path.Base", func(a []any) (any, error) { return path.Base(str(a[0])), nil }),
+		"Clean": h.fn("path.Clean", func(a []any) (any, error) { return path.Clean(str(a[0])), nil }),
+		"Dir":   h.fn("path.Dir", func(a []any) (any, error) { return path.Dir(str(a[0])), nil }),
+		"Ext":   h.fn("path.Ext", func(a []any) (any, error) { return path.Ext(str(a[0])), nil }),
+		"IsAbs": h.fn("path.IsAbs", func(a []any) (any, error) { return path.IsAbs(str(a[0])), nil }),
+		"Join":  h.fn("path.Join", func(a []any) (any, error) { return path.Join(strArgs(a)...), nil }),
+		"Match": h.fn2("path.Match", func(a []any) (any, error) { return retErr2(path.Match(str(a[0]), str(a[1]))) }),
+		"Split": h.fn("path.Split", func(a []any) (any, error) {
+			d, f := path.Split(str(a[0]))
+			return &runtime.Tuple{Elems: []runtime.Value{d, f}}, nil
+		}),
 	})
 	e.Bind("sort", map[string]runtime.Value{
 		"Ints":     h.sortInPlace("sort.Ints"),
@@ -1298,6 +1534,127 @@ func strsSlice(ss []string) *runtime.Slice {
 		el[i] = s
 	}
 	return &runtime.Slice{Elems: el}
+}
+
+// bytesSlices marshals a script [][]byte (slice of byte-ish values) to
+// [][]byte — for bytes.Join/Split inputs.
+func bytesSlices(v any) [][]byte {
+	var elems []any
+	switch s := v.(type) {
+	case *runtime.Named:
+		return bytesSlices(s.V)
+	case *runtime.Slice:
+		for _, e := range s.Elems {
+			elems = append(elems, goNative(e))
+		}
+	case []any:
+		elems = s
+	}
+	out := make([][]byte, len(elems))
+	for i, e := range elems {
+		out[i] = byteSlice(e)
+	}
+	return out
+}
+
+// bytesSliceOf lifts a [][]byte result into []any so scriptVal turns each
+// element into a script []byte slice.
+func bytesSliceOf(bb [][]byte) any {
+	out := make([]any, len(bb))
+	for i, b := range bb {
+		out[i] = b
+	}
+	return out
+}
+
+// runeSlice lifts a []rune result into []any of int64s.
+func runeSlice(rs []rune) any {
+	out := make([]any, len(rs))
+	for i, r := range rs {
+		out[i] = int64(r)
+	}
+	return out
+}
+
+func floatOf(v any) float64 {
+	switch x := v.(type) {
+	case *runtime.Named:
+		return floatOf(x.V)
+	case float64:
+		return x
+	case int64:
+		return float64(x)
+	case int:
+		return float64(x)
+	}
+	return 0
+}
+
+func runeOf(v any) rune { return rune(intOf(v)) }
+
+// strArgs marshals trailing varargs (each already a script value) to strings.
+func strArgs(a []any) []string {
+	out := make([]string, len(a))
+	for i, v := range a {
+		out[i] = str(v)
+	}
+	return out
+}
+
+// goJSON marshals a script value into the shape encoding/json expects:
+// structs become field-name maps, runtime maps/slices recurse, GoValue
+// unwraps.
+func goJSON(v any) any {
+	switch x := v.(type) {
+	case *runtime.Named:
+		return goJSON(x.V)
+	case *runtime.Cell:
+		return goJSON(x.Elem)
+	case *runtime.Struct:
+		m := make(map[string]any, len(x.Fields))
+		for i, name := range x.Def.Fields {
+			if i < len(x.Fields) {
+				m[name] = goJSON(x.Fields[i])
+			}
+		}
+		return m
+	case *runtime.Slice:
+		out := make([]any, len(x.Elems))
+		for i, e := range x.Elems {
+			out[i] = goJSON(e)
+		}
+		return out
+	case *runtime.Map:
+		m := make(map[string]any, len(x.Pairs))
+		for k, val := range x.Pairs {
+			m[str(goNative(k))] = goJSON(val)
+		}
+		return m
+	case *runtime.GoValue:
+		return x.V
+	default:
+		return v
+	}
+}
+
+// jsonDeep rewrites the tree encoding/json produces — map[string]any keys —
+// into the map[any]any shape scriptVal already handles.
+func jsonDeep(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[any]any, len(x))
+		for k, e := range x {
+			out[k] = jsonDeep(e)
+		}
+		return out
+	case []any:
+		for i, e := range x {
+			x[i] = jsonDeep(e)
+		}
+		return x
+	default:
+		return v
+	}
 }
 
 func mapKeys(v any) *runtime.Slice {

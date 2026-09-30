@@ -365,6 +365,172 @@ func TestOsHostSurface(t *testing.T) {
 	}
 }
 
+func TestFSIntrinsics(t *testing.T) {
+	e := newEngine(t)
+	dir := t.TempDir()
+	for _, c := range []struct {
+		fn   string
+		args []runtime.Value
+		want runtime.Value
+	}{
+		{"WriteThenRead", []runtime.Value{dir}, "hello"},
+		{"StatSize", []runtime.Value{dir}, int64(3)},
+		{"IsNotExistHit", []runtime.Value{dir}, true},
+		{"ListDir", []runtime.Value{dir}, "inner,x.txt,y.txt|dirs=1"},
+		{"GlobMatch", []runtime.Value{dir}, filepath.Join(dir, "a.txt")},
+		{"WalkCollect", []runtime.Value{dir}, int64(1)},
+		{"FileWrite", []runtime.Value{dir}, "rw"},
+	} {
+		// each case gets its own directory so writes do not leak between runs
+		args := make([]runtime.Value, len(c.args))
+		for i, a := range c.args {
+			if s, ok := a.(string); ok {
+				a = filepath.Join(s, c.fn)
+				if err := os.MkdirAll(a.(string), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args[i] = a
+		}
+		want := c.want
+		if ws, ok := want.(string); ok && strings.HasPrefix(ws, dir+string(filepath.Separator)) {
+			want = filepath.Join(dir, c.fn, filepath.Base(ws))
+		}
+		got, err := e.Run(context.Background(), "./testdata/fsops", c.fn, args...)
+		if err != nil {
+			t.Fatalf("%s: %v", c.fn, err)
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("%s mismatch (-want +got):\n%s", c.fn, diff)
+		}
+	}
+}
+
+func TestVirtualCwd(t *testing.T) {
+	e := newEngine(t)
+	dir := t.TempDir()
+	// script chdirs into dir, writes relatively, then restores: the file
+	// lands inside dir and the engine cwd comes back to the repo root.
+	got := run(t, e, "./testdata/fsops", "ChdirRoundtrip", dir)
+	want := filepath.Join(dir, "rel.txt")
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("ChdirRoundtrip mismatch (-want +got):\n%s", diff)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("relative write did not land in the virtual cwd: %v", err)
+	}
+	cwd, _ := os.Getwd()
+	if strings.HasPrefix(cwd, dir+string(filepath.Separator)) {
+		t.Fatal("script chdir leaked into the host process cwd")
+	}
+}
+
+func TestExecIntrinsics(t *testing.T) {
+	e := newEngine(t)
+	dir := t.TempDir()
+	if got := run(t, e, "./testdata/fsops", "ExecEcho"); got != "hi" {
+		t.Fatalf("ExecEcho: got %v", got)
+	}
+	// exec.Cmd.Dir defaults to the engine's virtual cwd
+	wantCwd, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, e, "./testdata/fsops", "CmdDirField"); got != wantCwd {
+		t.Fatalf("CmdDirField: got %v, want %v", got, wantCwd)
+	}
+	// field set on a host struct: cmd.Dir = dir, then pwd reports it
+	got := run(t, e, "./testdata/fsops", "ExecDirField", dir)
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != resolved {
+		t.Fatalf("ExecDirField: got %v, want %v", got, resolved)
+	}
+}
+
+func TestFSRestricted(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	script := `package main
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func WriteInside(name string) string {
+	if err := os.WriteFile(name, "x", 0644); err != nil {
+		return "v:" + err.Error()
+	}
+	return filepath.Base(name)
+}
+
+func ReadOutside(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "v:" + err.Error()
+	}
+	return string(data)
+}
+
+func WriteOutside(path string) string {
+	if err := os.WriteFile(path, "x", 0644); err != nil {
+		return "v:" + err.Error()
+	}
+	return "wrote"
+}
+`
+	fname := filepath.Join(root, "taskfile.go")
+	if err := os.WriteFile(fname, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	e := minigo2.NewEngine(root, minigo2.WithAllowedRoots(root))
+	// inside-root relative write anchors at the virtual cwd and succeeds
+	if got, err := e.RunFile(context.Background(), fname, "WriteInside", "inside.txt"); err != nil || got != "inside.txt" {
+		t.Fatalf("WriteInside: got %v, err %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "inside.txt")); err != nil {
+		t.Fatalf("inside-root write missing: %v", err)
+	}
+	// escape attempts fail the call itself — per-call path checks
+	out := filepath.Join(outside, "x.txt")
+	if err := os.WriteFile(out, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		fn   string
+		args []runtime.Value
+	}{
+		{"ReadOutside", []runtime.Value{out}},
+		{"WriteOutside", []runtime.Value{filepath.Join(outside, "y.txt")}},
+	} {
+		if _, err := e.RunFile(context.Background(), fname, tc.fn, tc.args...); err == nil ||
+			!strings.Contains(err.Error(), "outside the allowed roots") {
+			t.Fatalf("%s: expected outside-root rejection, got %v", tc.fn, err)
+		}
+	}
+	// os/exec must not be bound at all under AllowedRoots
+	execScript := `package main
+
+import (
+	"os/exec"
+)
+
+func Probe() string {
+	return exec.Command("echo").Dir
+}
+`
+	execFile := filepath.Join(root, "execfile.go")
+	if err := os.WriteFile(execFile, []byte(execScript), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.RunFile(context.Background(), execFile, "Probe"); err == nil {
+		t.Fatal("os/exec must be unbound under AllowedRoots")
+	}
+}
+
 func TestHostStubPackage(t *testing.T) {
 	e := newEngine(t)
 	// the in-repo stub path resolves to intrinsics, never the stub bodies

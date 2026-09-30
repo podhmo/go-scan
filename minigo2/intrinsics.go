@@ -12,8 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
+	"path/filepath"
 	goruntime "runtime"
 	"slices"
 	"sort"
@@ -403,17 +406,271 @@ func (e *Engine) installStdlib() {
 	})
 	// os: an interpreted program must never observe or terminate the host
 	// process — Exit is always a trap; the environment/argv surface is only
-	// bound when the engine is unrestricted (no AllowedRoots).
+	// bound when the engine is unrestricted (no AllowedRoots). File-system
+	// operations are always bound: each path argument resolves through
+	// e.fsPath, which anchors relative paths at the engine's virtual cwd
+	// and enforces AllowedRoots per call — that is the restricted-mode
+	// file policy (host-surface gating stays per-symbol via WithHostPolicy).
 	ospkg := map[string]runtime.Value{
 		"Exit": h.fn("os.Exit", func(a []any) (any, error) {
 			return nil, errors.New("os.Exit is not supported: an interpreted program cannot terminate the host process")
 		}),
+		"Stat":     h.fn1("os.Stat", func(a []any) (any, error) { return fsOp2(e, "os.Stat", a, os.Stat) }),
+		"Lstat":    h.fn1("os.Lstat", func(a []any) (any, error) { return fsOp2(e, "os.Lstat", a, os.Lstat) }),
+		"ReadFile": h.fn1("os.ReadFile", func(a []any) (any, error) { return fsOp2(e, "os.ReadFile", a, os.ReadFile) }),
+		"WriteFile": h.fn3("os.WriteFile", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return errVal(os.WriteFile(p, byteSlice(a[1]), fs.FileMode(intOf(a[2])))), nil
+		}),
+		"Mkdir": h.fn2("os.Mkdir", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return errVal(os.Mkdir(p, fs.FileMode(intOf(a[1])))), nil
+		}),
+		"MkdirAll": h.fn2("os.MkdirAll", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return errVal(os.MkdirAll(p, fs.FileMode(intOf(a[1])))), nil
+		}),
+		"Remove":    h.fn1("os.Remove", func(a []any) (any, error) { return fsErrOp(e, "os.Remove", a, os.Remove) }),
+		"RemoveAll": h.fn1("os.RemoveAll", func(a []any) (any, error) { return fsErrOp(e, "os.RemoveAll", a, os.RemoveAll) }),
+		"Truncate": h.fn2("os.Truncate", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return errVal(os.Truncate(p, int64Of(a[1]))), nil
+		}),
+		"Rename": h.fn2("os.Rename", func(a []any) (any, error) {
+			old, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			newp, err := e.fsPath(str(a[1]))
+			if err != nil {
+				return nil, err
+			}
+			return errVal(os.Rename(old, newp)), nil
+		}),
+		"ReadDir": h.fn1("os.ReadDir", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			entries, err := os.ReadDir(p)
+			el := make([]runtime.Value, len(entries))
+			for i, en := range entries {
+				el[i] = &runtime.GoValue{V: en}
+			}
+			return &runtime.Tuple{Elems: []runtime.Value{&runtime.Slice{Elems: el}, errVal(err)}}, nil
+		}),
+		// Getwd/Chdir operate on the engine's virtual cwd (see WithWorkingDir):
+		// the host process cwd is never touched, so scripts can "cd" freely
+		// without side effects on the embedding tool.
+		"Getwd": h.fn("os.Getwd", func(a []any) (any, error) { return retErr2(e.cwd, nil) }),
+		"Chdir": h.fn1("os.Chdir", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			st, err := os.Stat(p)
+			if err != nil {
+				return errVal(err), nil
+			}
+			if !st.IsDir() {
+				return errVal(fmt.Errorf("chdir %s: not a directory", p)), nil
+			}
+			e.cwd = p
+			return runtime.NIL, nil
+		}),
+		"Open":   h.fn1("os.Open", func(a []any) (any, error) { return fsOp2(e, "os.Open", a, os.Open) }),
+		"Create": h.fn1("os.Create", func(a []any) (any, error) { return fsOp2(e, "os.Create", a, os.Create) }),
+		"OpenFile": h.fn3("os.OpenFile", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return retErr2(os.OpenFile(p, intOf(a[1]), fs.FileMode(intOf(a[2]))))
+		}),
+		"MkdirTemp": h.fn2("os.MkdirTemp", func(a []any) (any, error) {
+			dir, err := e.fsTempDir(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return retErr2(os.MkdirTemp(dir, str(a[1])))
+		}),
+		"CreateTemp": h.fn2("os.CreateTemp", func(a []any) (any, error) {
+			dir, err := e.fsTempDir(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return retErr2(os.CreateTemp(dir, str(a[1])))
+		}),
+		"IsNotExist":   h.fn1("os.IsNotExist", func(a []any) (any, error) { return os.IsNotExist(asErr(a[0])), nil }),
+		"IsExist":      h.fn1("os.IsExist", func(a []any) (any, error) { return os.IsExist(asErr(a[0])), nil }),
+		"IsPermission": h.fn1("os.IsPermission", func(a []any) (any, error) { return os.IsPermission(asErr(a[0])), nil }),
+		"IsTimeout":    h.fn1("os.IsTimeout", func(a []any) (any, error) { return os.IsTimeout(asErr(a[0])), nil }),
+		// error sentinels for errors.Is on the script side
+		"ErrNotExist":   &runtime.GoValue{V: fs.ErrNotExist},
+		"ErrExist":      &runtime.GoValue{V: fs.ErrExist},
+		"ErrPermission": &runtime.GoValue{V: fs.ErrPermission},
+		"ErrClosed":     &runtime.GoValue{V: fs.ErrClosed},
+		"ErrInvalid":    &runtime.GoValue{V: fs.ErrInvalid},
+		"ErrNoDeadline": &runtime.GoValue{V: os.ErrNoDeadline},
+		// consts
+		"PathSeparator":     int64(os.PathSeparator),
+		"PathListSeparator": int64(os.PathListSeparator),
+		"DevNull":           os.DevNull,
+		"O_RDONLY":          int64(os.O_RDONLY),
+		"O_WRONLY":          int64(os.O_WRONLY),
+		"O_RDWR":            int64(os.O_RDWR),
+		"O_APPEND":          int64(os.O_APPEND),
+		"O_CREATE":          int64(os.O_CREATE),
+		"O_EXCL":            int64(os.O_EXCL),
+		"O_SYNC":            int64(os.O_SYNC),
+		"O_TRUNC":           int64(os.O_TRUNC),
+		"ModeDir":           &runtime.GoValue{V: fs.ModeDir},
+		"ModeAppend":        &runtime.GoValue{V: fs.ModeAppend},
+		"ModeExclusive":     &runtime.GoValue{V: fs.ModeExclusive},
+		"ModeTemporary":     &runtime.GoValue{V: fs.ModeTemporary},
+		"ModeSymlink":       &runtime.GoValue{V: fs.ModeSymlink},
+		"ModeNamedPipe":     &runtime.GoValue{V: fs.ModeNamedPipe},
+		"ModeSocket":        &runtime.GoValue{V: fs.ModeSocket},
+		"ModeSetuid":        &runtime.GoValue{V: fs.ModeSetuid},
+		"ModeSetgid":        &runtime.GoValue{V: fs.ModeSetgid},
+		"ModeCharDevice":    &runtime.GoValue{V: fs.ModeCharDevice},
+		"ModeSticky":        &runtime.GoValue{V: fs.ModeSticky},
+		"ModeIrregular":     &runtime.GoValue{V: fs.ModeIrregular},
+		"ModePerm":          &runtime.GoValue{V: fs.ModePerm},
+		"ModeType":          &runtime.GoValue{V: fs.ModeType},
+		"SeekStart":         int64(io.SeekStart),
+		"SeekCurrent":       int64(io.SeekCurrent),
+		"SeekEnd":           int64(io.SeekEnd),
 	}
 	if len(e.cfg.AllowedRoots) == 0 {
 		ospkg["Getenv"] = h.fn("os.Getenv", func(a []any) (any, error) { return os.Getenv(str(a[0])), nil })
+		ospkg["Setenv"] = h.fn2("os.Setenv", func(a []any) (any, error) { return errVal(os.Setenv(str(a[0]), str(a[1]))), nil })
+		ospkg["Unsetenv"] = h.fn1("os.Unsetenv", func(a []any) (any, error) { return errVal(os.Unsetenv(str(a[0]))), nil })
+		ospkg["Clearenv"] = h.fn("os.Clearenv", func(a []any) (any, error) { os.Clearenv(); return nil, nil })
+		ospkg["Environ"] = h.fn("os.Environ", func(a []any) (any, error) { return strsSlice(os.Environ()), nil })
 		ospkg["Args"] = h.fn("os.Args", func(a []any) (any, error) { return strsSlice(os.Args), nil })
+		ospkg["Hostname"] = h.fn("os.Hostname", func(a []any) (any, error) { return retErr2(os.Hostname()) })
+		// process stdio, boxed for cmd.Stdout / cmd.Stderr wiring
+		ospkg["Stdin"] = &runtime.GoValue{V: os.Stdin}
+		ospkg["Stdout"] = &runtime.GoValue{V: os.Stdout}
+		ospkg["Stderr"] = &runtime.GoValue{V: os.Stderr}
+		ospkg["TempDir"] = h.fn("os.TempDir", func(a []any) (any, error) { return os.TempDir(), nil })
+		ospkg["UserHomeDir"] = h.fn("os.UserHomeDir", func(a []any) (any, error) { return retErr2(os.UserHomeDir()) })
+		ospkg["UserCacheDir"] = h.fn("os.UserCacheDir", func(a []any) (any, error) { return retErr2(os.UserCacheDir()) })
+		ospkg["UserConfigDir"] = h.fn("os.UserConfigDir", func(a []any) (any, error) { return retErr2(os.UserConfigDir()) })
 	}
 	e.Bind("os", ospkg)
+	// path/filepath: pure path math is always available; operations that
+	// touch the filesystem (Glob, WalkDir, EvalSymlinks) go through
+	// e.fsPath like the os.* equivalents.
+	e.Bind("path/filepath", map[string]runtime.Value{
+		"Join":          h.fn("filepath.Join", func(a []any) (any, error) { return filepath.Join(strSlice(a)...), nil }),
+		"Base":          h.fn1("filepath.Base", func(a []any) (any, error) { return filepath.Base(str(a[0])), nil }),
+		"Dir":           h.fn1("filepath.Dir", func(a []any) (any, error) { return filepath.Dir(str(a[0])), nil }),
+		"Ext":           h.fn1("filepath.Ext", func(a []any) (any, error) { return filepath.Ext(str(a[0])), nil }),
+		"Clean":         h.fn1("filepath.Clean", func(a []any) (any, error) { return filepath.Clean(str(a[0])), nil }),
+		"VolumeName":    h.fn1("filepath.VolumeName", func(a []any) (any, error) { return filepath.VolumeName(str(a[0])), nil }),
+		"IsAbs":         h.fn1("filepath.IsAbs", func(a []any) (any, error) { return filepath.IsAbs(str(a[0])), nil }),
+		"ToSlash":       h.fn1("filepath.ToSlash", func(a []any) (any, error) { return filepath.ToSlash(str(a[0])), nil }),
+		"FromSlash":     h.fn1("filepath.FromSlash", func(a []any) (any, error) { return filepath.FromSlash(str(a[0])), nil }),
+		"SplitList":     h.fn1("filepath.SplitList", func(a []any) (any, error) { return filepath.SplitList(str(a[0])), nil }),
+		"Match":         h.fn3("filepath.Match", func(a []any) (any, error) { return retErr2(filepath.Match(str(a[0]), str(a[1]))) }),
+		"Separator":     int64(os.PathSeparator),
+		"ListSeparator": int64(os.PathListSeparator),
+		// Abs/Rel anchor relative paths at the engine's virtual cwd, not the
+		// host process's (divergence from real filepath.Abs is deliberate).
+		"Abs": h.fn1("filepath.Abs", func(a []any) (any, error) { return retErr2(e.cwdAbs(str(a[0])), nil) }),
+		"Rel": h.fn2("filepath.Rel", func(a []any) (any, error) {
+			return retErr2(filepath.Rel(e.cwdAbs(str(a[0])), e.cwdAbs(str(a[1]))))
+		}),
+		"EvalSymlinks": h.fn1("filepath.EvalSymlinks", func(a []any) (any, error) {
+			p, err := e.fsPath(str(a[0]))
+			if err != nil {
+				return nil, err
+			}
+			return retErr2(filepath.EvalSymlinks(p))
+		}),
+		"Glob": h.fn1("filepath.Glob", func(a []any) (any, error) {
+			pat := str(a[0])
+			ap, err := e.fsPath(pat)
+			if err != nil {
+				return nil, err
+			}
+			m, err := filepath.Glob(ap)
+			if err != nil {
+				return retErr2([]string(nil), err)
+			}
+			if !filepath.IsAbs(pat) {
+				// Go returns matches in the shape of the pattern: keep
+				// relative patterns relative to the virtual cwd.
+				for i, p := range m {
+					if rel, rerr := filepath.Rel(e.cwd, p); rerr == nil {
+						m[i] = rel
+					}
+				}
+			}
+			return retErr2(m, nil)
+		}),
+		"WalkDir": &runtime.BuiltinFunc{Name: "filepath.WalkDir", Fn: func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("filepath.WalkDir needs 2 args, got %d", len(args))
+			}
+			root := str(goNative(args[0]))
+			cb := args[1]
+			ap, err := e.fsPath(root)
+			if err != nil {
+				return nil, err
+			}
+			relIn := !filepath.IsAbs(root)
+			werr := filepath.WalkDir(ap, func(p string, d fs.DirEntry, werr error) error {
+				sp := p
+				if relIn {
+					if rel, rerr := filepath.Rel(e.cwd, p); rerr == nil {
+						sp = rel
+					}
+				}
+				r, cerr := v.Call(cb, []runtime.Value{sp, &runtime.GoValue{V: d}, errVal(werr)})
+				if cerr != nil {
+					return cerr
+				}
+				return asErr(goNative(r))
+			})
+			return errVal(werr), nil
+		}},
+		"SkipDir": &runtime.GoValue{V: filepath.SkipDir},
+		"SkipAll": &runtime.GoValue{V: filepath.SkipAll},
+	})
+	// os/exec: spawning a subprocess escapes per-path confinement, so the
+	// package is only bound for unrestricted engines. Commands default to
+	// the engine's virtual cwd via cmd.Dir; scripts wire stdio through the
+	// boxed os.Stdin/Stdout/Stderr handles.
+	if len(e.cfg.AllowedRoots) == 0 {
+		e.Bind("os/exec", map[string]runtime.Value{
+			"Command": h.fn("exec.Command", func(a []any) (any, error) {
+				if len(a) == 0 {
+					return nil, errors.New("exec.Command needs a name")
+				}
+				cmd := exec.Command(str(a[0]), strSlice(a[1:])...)
+				cmd.Dir = e.cwd
+				return &runtime.GoValue{V: cmd}, nil
+			}),
+			"LookPath":    h.fn1("exec.LookPath", func(a []any) (any, error) { return retErr2(exec.LookPath(str(a[0]))) }),
+			"ErrNotFound": &runtime.GoValue{V: exec.ErrNotFound},
+			"ErrDot":      &runtime.GoValue{V: exec.ErrDot},
+		})
+	}
 	// host: the gopls-friendly stub-package surface (plan §11). Scripts may
 	// spell the import either canonically ("minigo.dev/host") or via the
 	// in-repo stub package ("github.com/podhmo/go-scan/minigo2/host",
@@ -521,7 +778,11 @@ func (h *hostHelpers) fn(name string, f func([]any) (any, error)) *runtime.Built
 	}}
 }
 
-// fn2/fn3 are arity-checked variants.
+// fn1/fn2/fn3 are arity-checked variants.
+func (h *hostHelpers) fn1(name string, f func([]any) (any, error)) *runtime.BuiltinFunc {
+	return h.arity(name, 1, f)
+}
+
 func (h *hostHelpers) fn2(name string, f func([]any) (any, error)) *runtime.BuiltinFunc {
 	return h.arity(name, 2, f)
 }
@@ -789,6 +1050,14 @@ func scriptVal(v any) runtime.Value {
 		return x
 	case int:
 		return int64(x)
+	case []byte:
+		// a []byte result unmarshals to a slice of int64s so `string(b)`
+		// and indexing behave like Go source suggests.
+		el := make([]runtime.Value, len(x))
+		for i, b := range x {
+			el[i] = int64(b)
+		}
+		return &runtime.Slice{Elems: el}
 	case []string:
 		return strsSlice(x)
 	case time.Duration:
@@ -893,6 +1162,75 @@ func intOf(v any) int {
 func int64Of(v any) int64 { return int64(intOf(v)) }
 
 func durOf(v any) time.Duration { return time.Duration(int64Of(v)) }
+
+// fsOp2 applies a one-path os operation after resolving the script path
+// through the virtual cwd + AllowedRoots check; the result goes back as a
+// Go-style (value, err) tuple.
+func fsOp2[T any](e *Engine, name string, a []any, op func(string) (T, error)) (any, error) {
+	p, err := e.fsPath(str(a[0]))
+	if err != nil {
+		return nil, err
+	}
+	return retErr2(op(p))
+}
+
+// fsErrOp is fsOp2 for error-only results.
+func fsErrOp(e *Engine, name string, a []any, op func(string) error) (any, error) {
+	p, err := e.fsPath(str(a[0]))
+	if err != nil {
+		return nil, err
+	}
+	return errVal(op(p)), nil
+}
+
+// fsTempDir resolves the dir argument of MkdirTemp/CreateTemp: an empty
+// dir means os.TempDir() — only allowed when the engine is unrestricted
+// (a temp dir outside the roots could otherwise anchor escaped writes).
+func (e *Engine) fsTempDir(dir string) (string, error) {
+	if dir == "" {
+		if len(e.cfg.AllowedRoots) == 0 {
+			return "", nil
+		}
+		return "", errors.New("dir must name a directory inside the allowed roots")
+	}
+	return e.fsPath(dir)
+}
+
+// cwdAbs anchors a script path at the virtual cwd without a roots check —
+// for pure path math (filepath.Abs/Rel) where no filesystem is touched.
+func (e *Engine) cwdAbs(p string) string {
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Join(e.cwd, p)
+}
+
+// byteSlice unmarshals a script value to []byte for os.WriteFile & co:
+// accepts strings, []byte natives and int64 element slices.
+func byteSlice(v any) []byte {
+	if n, ok := v.(*runtime.Named); ok {
+		return byteSlice(n.V)
+	}
+	switch x := v.(type) {
+	case string:
+		return []byte(x)
+	case []byte:
+		return x
+	case []any:
+		out := make([]byte, len(x))
+		for i, e := range x {
+			out[i] = byte(int64Of(e))
+		}
+		return out
+	case *runtime.Slice:
+		out := make([]byte, len(x.Elems))
+		for i, e := range x.Elems {
+			out[i] = byte(int64Of(goNative(e)))
+		}
+		return out
+	}
+	return nil
+}
 
 func strSlice(v any) []string {
 	if n, ok := v.(*runtime.Named); ok {

@@ -8,8 +8,10 @@ import (
 	"go/ast"
 	"go/format"
 	"go/token"
+	"math"
 	"reflect"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/podhmo/go-scan/minigo2/bytecode"
@@ -1054,17 +1056,54 @@ func (v *VM) selectMember(f *frame, base runtime.Value, name string) runtime.Val
 	case *runtime.Map:
 		f.trap("select %s on map", name)
 	case *runtime.GoValue:
-		// host value (stdlib intrinsic result): reflect its method set
+		// host value (stdlib intrinsic result): fields first, then the
+		// method set — Go forbids a field and method sharing a name, so
+		// probing fields first is safe and keeps `cmd.Dir`-style access
+		// working on host structs like *exec.Cmd.
+		if fv, ok := hostField(b.V, name); ok {
+			return goValueOf(fv)
+		}
 		m := reflect.ValueOf(b.V).MethodByName(name)
 		if !m.IsValid() {
-			f.trap("no method %s on host value %T", name, b.V)
+			f.trap("no member %s on host value %T", name, b.V)
 		}
 		return &runtime.BuiltinFunc{Name: name, Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
-			in := make([]reflect.Value, len(args))
-			for i, a := range args {
-				in[i] = reflect.ValueOf(a)
+			mt := m.Type()
+			nin := mt.NumIn()
+			if !mt.IsVariadic() && len(args) != nin {
+				return nil, fmt.Errorf("%s needs %d args, got %d", name, nin, len(args))
 			}
-			out := m.Call(in)
+			if mt.IsVariadic() && len(args) < nin-1 {
+				return nil, fmt.Errorf("%s needs at least %d args, got %d", name, nin-1, len(args))
+			}
+			// a trailing slice assignable to the variadic parameter calls
+			// through CallSlice — `f(xs...)`-style forwarding on natives.
+			in := make([]reflect.Value, len(args))
+			useSlice := false
+			for i, a := range args {
+				pt := mt.In(min(i, nin-1))
+				if mt.IsVariadic() && i >= nin-1 {
+					if i == nin-1 && len(args) == nin {
+						if rv, err := toReflectValue(a, pt); err == nil {
+							in[i] = rv
+							useSlice = true
+							continue
+						}
+					}
+					pt = pt.Elem()
+				}
+				rv, err := toReflectValue(a, pt)
+				if err != nil {
+					return nil, fmt.Errorf("%s arg %d: %w", name, i, err)
+				}
+				in[i] = rv
+			}
+			var out []reflect.Value
+			if useSlice {
+				out = m.CallSlice(in)
+			} else {
+				out = m.Call(in)
+			}
 			switch len(out) {
 			case 0:
 				return runtime.NIL, nil
@@ -1096,12 +1135,43 @@ func goValueOf(rv reflect.Value) runtime.Value {
 		return int64(v)
 	case int64:
 		return v
+	case int8, int16, int32:
+		return int64(reflect.ValueOf(v).Int())
+	case uint, uint8, uint16, uint32:
+		return int64(reflect.ValueOf(v).Uint())
+	case uint64:
+		if v <= math.MaxInt64 {
+			return int64(v)
+		}
+		return &runtime.GoValue{V: x}
 	case string:
 		return v
 	case bool:
 		return v
+	case float32:
+		return float64(v)
 	case float64:
 		return v
+	case time.Duration:
+		return int64(v)
+	case []byte:
+		// []byte unmarshals to a slice of int64s so `string(b)` and
+		// indexing behave like Go source suggests.
+		el := make([]runtime.Value, len(v))
+		for i, b := range v {
+			el[i] = int64(b)
+		}
+		return &runtime.Slice{Elems: el}
+	case []string:
+		el := make([]runtime.Value, len(v))
+		for i, s := range v {
+			el[i] = s
+		}
+		return &runtime.Slice{Elems: el}
+	case error:
+		// errors stay boxed — Error() and Unwrap() dispatch via reflection;
+		// errors.Is/As unwrap through goNative.
+		return &runtime.GoValue{V: x}
 	case runtime.Nil, *runtime.Tuple, *runtime.Cell, *runtime.Slice,
 		*runtime.Map, *runtime.Struct, *runtime.Function, *runtime.Closure,
 		*runtime.BoundMethod, *runtime.BuiltinFunc, *runtime.GoValue,
@@ -1112,6 +1182,104 @@ func goValueOf(rv reflect.Value) runtime.Value {
 	default:
 		return &runtime.GoValue{V: x}
 	}
+}
+
+// hostField finds an exported field by name on a host value: pointer and
+// interface chains are dereferenced to the struct underneath. nil or
+// non-struct roots and unexported fields report not-found.
+func hostField(v any, name string) (reflect.Value, bool) {
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+		if rv.IsNil() {
+			return reflect.Value{}, false
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return reflect.Value{}, false
+	}
+	fv := rv.FieldByName(name)
+	if !fv.IsValid() || !fv.CanInterface() {
+		return reflect.Value{}, false
+	}
+	return fv, true
+}
+
+// toReflectValue marshals a runtime value to a reflect.Value of the
+// requested type: named/cell wrappers unwrap, slices and maps convert
+// element-wise, scalars assign or convert. Interface targets take any
+// assignable value.
+func toReflectValue(v runtime.Value, t reflect.Type) (reflect.Value, error) {
+	for {
+		if n, ok := v.(*runtime.Named); ok {
+			v = n.V
+			continue
+		}
+		if dv, ok := runtime.Deref(v); ok {
+			v = dv
+			continue
+		}
+		break
+	}
+	var av reflect.Value
+	switch x := v.(type) {
+	case nil, runtime.Nil:
+		return reflect.Zero(t), nil
+	case *runtime.TypedNil, *runtime.IfaceNil:
+		return reflect.Zero(t), nil
+	case *runtime.GoValue:
+		av = reflect.ValueOf(x.V)
+	case *runtime.Slice:
+		if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
+			return reflect.Value{}, fmt.Errorf("cannot convert script slice to %s", t)
+		}
+		out := reflect.New(t).Elem()
+		if t.Kind() == reflect.Slice {
+			out.Set(reflect.MakeSlice(t, len(x.Elems), len(x.Elems)))
+		}
+		for i, e := range x.Elems {
+			if i >= out.Len() {
+				break
+			}
+			ev, err := toReflectValue(e, t.Elem())
+			if err != nil {
+				return reflect.Value{}, err
+			}
+			out.Index(i).Set(ev)
+		}
+		av = out
+	case *runtime.Map:
+		if t.Kind() != reflect.Map {
+			return reflect.Value{}, fmt.Errorf("cannot convert script map to %s", t)
+		}
+		out := reflect.MakeMapWithSize(t, len(x.Pairs))
+		for k, e := range x.Pairs {
+			kv, err := toReflectValue(k, t.Key())
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("map key: %w", err)
+			}
+			ev, err := toReflectValue(e, t.Elem())
+			if err != nil {
+				return reflect.Value{}, fmt.Errorf("map elem: %w", err)
+			}
+			out.SetMapIndex(kv, ev)
+		}
+		av = out
+	case string, bool, int64, float64:
+		av = reflect.ValueOf(x)
+	default:
+		av = reflect.ValueOf(x)
+	}
+	if !av.IsValid() {
+		return reflect.Zero(t), nil
+	}
+	if av.Type().AssignableTo(t) {
+		return av, nil
+	}
+	if av.Type().ConvertibleTo(t) {
+		return av.Convert(t), nil
+	}
+	return reflect.Value{}, fmt.Errorf("cannot use %s as %s", av.Type(), t)
 }
 
 func (v *VM) structMember(f *frame, s *runtime.Struct, name string, recv runtime.Value) runtime.Value {
@@ -1233,6 +1401,28 @@ func (v *VM) setField(f *frame, base runtime.Value, name string, val runtime.Val
 			}
 		}
 		f.trap("%s has no field %s", b.Def.Name, name)
+	case *runtime.GoValue:
+		// host struct behind a pointer: `cmd.Dir = "sub"` writes through
+		// reflection so intrinsics like os/exec stay wired to scripts.
+		rv := reflect.ValueOf(b.V)
+		for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+			if rv.IsNil() {
+				f.trap("set field %s on nil host %T", name, b.V)
+			}
+			rv = rv.Elem()
+		}
+		if rv.Kind() != reflect.Struct {
+			f.trap("set field %s on host value %T", name, b.V)
+		}
+		fv := rv.FieldByName(name)
+		if !fv.IsValid() || !fv.CanSet() {
+			f.trap("host value %T has no settable field %s", b.V, name)
+		}
+		nv, err := toReflectValue(val, fv.Type())
+		if err != nil {
+			f.trap("set field %s: %s", name, err)
+		}
+		fv.Set(nv)
 	default:
 		f.trap("set field %s on %T", name, base)
 	}

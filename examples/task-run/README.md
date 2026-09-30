@@ -1,0 +1,25 @@
+# task-run — a mage-style task runner on minigo2
+
+A task runner (in the spirit of [mage](https://magefile.org) /
+[go-task/task](https://taskfile.dev)) where the Taskfile is a Go file
+interpreted by [`minigo2`](../../minigo2/). See
+[sketch/plan-task-runner.md](../../sketch/plan-task-runner.md) for the design.
+
+## Usage
+
+```sh
+go run ./ -f testdata/Taskfile.go -l      # list tasks (name + doc comment)
+go run ./ -f testdata/Taskfile.go Default # run a task
+go run ./ -f testdata/Taskfile.go Greet:world Clean
+```
+
+Tasks are exported functions — `func Name()`, `func Name() error`, or
+`func Name(a, b string) error`. The doc comment's first line is the `-l`
+description. Arg list is `Name:arg1,arg2`.
+
+Taskfiles import the stub `task` package
+(`github.com/podhmo/go-scan/examples/task-run/task`, or just `task`); the
+engine binds every member to a host intrinsic, so the file typechecks under
+plain Go tooling but only executes inside `task-run`. Relative paths and
+shell commands anchor at the Taskfile's directory — the interpreter's
+virtual cwd — so a task that runs `os.Chdir` never moves your shell.

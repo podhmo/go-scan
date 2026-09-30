@@ -1,5 +1,11 @@
 # minigo
 
+> **Outdated:** this implementation is superseded by the rebooted stack-VM
+> interpreter at [`podhmo/minigo`](https://github.com/podhmo/minigo)
+> (developed in this repository as `minigo2/`). This tree-walking
+> implementation remains for existing in-repo users and tests; new
+> development happens in `podhmo/minigo`.
+
 `minigo` is a simple, embeddable script engine for Go applications, designed primarily to serve as a powerful and type-safe **configuration language**. It interprets a curated subset of the Go language, allowing developers to write dynamic configurations with familiar syntax.
 
 `minigo` is powered by `go-scan`, which allows it to understand Go source code without relying on the heavier `go/types` or `go/packages` libraries. It uses an AST-walking interpreter to execute scripts.

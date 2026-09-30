@@ -1654,6 +1654,8 @@ implement whatever the runner's Taskfile needed. The gaps it forced:
   Worked around host-side: `os.WriteFile`/`f.Write` accept strings and
   byte-slices alike. Worth a real `[]byte` conversion rule eventually;
   scripts hit it whenever a stdlib signature says `[]byte`.
+  *(Resolved in round 14 — `T(x)` conversions now cover `[]byte`, `[]rune`,
+  generics `[]T`, and named/alias chains.)*
 - Relative-in → relative-out had to be preserved explicitly in
   `filepath.Glob`/`WalkDir`: Go returns paths in the shape of the
   argument, but the intrinsic anchors at `e.cwd` first — so results are
@@ -1670,5 +1672,70 @@ implement whatever the runner's Taskfile needed. The gaps it forced:
   surface); a task runner that wants env in a restricted engine should
   bind its own `task.Env`-style helper with an explicit policy, like
   `task.Env` in the example.
+
+## 33. Round-14 notes: `T(x)` conversions — `[]byte`, generics `[]T`, named/alias chains
+
+Round 13 left `[]byte(s)` unspellable. `convert` is now a `*VM` method
+(it needs the engine hooks for element typedefs and interface method
+sets — the free function had no access) covering the special
+string ↔ `[]byte`/`[]rune` forms plus general `T(x)` on
+slice/map/chan/pointer/struct typedefs.
+
+### The conversion rule: identical underlying types
+
+Go's `T(x)` is legal when x's type and T have identical underlying
+types (plus the special string/byte/rune/int forms). The model compares
+a canonical **shape spelling** — `typeExprName` over the typedef's
+emitted type expression, with `byte`→`uint8` and `rune`→`int32`
+normalized (byte *is* uint8 — `[]byte`↔`[]uint8` converts both ways).
+Element identity is part of the spelling, so `Ints([]int)` rejects
+(`[]MyInt` ≠ `[]int`) exactly like the compiler, while `Ints2(Ints)`,
+`[]MyByte("hi")` (named element whose underlying is byte), and
+`Wrap[int]([]int)` pass.
+
+### Out-of-plan discoveries (things that were actually broken)
+
+- **`resolveTypeRef` ignored `from.Binds` for bare idents.** A generic
+  typedef's element `T` in `[]T` resolved through the package index
+  only, so `StrToSliceT[byte]` couldn't find the bound `byte` typedef.
+  `fieldTypes` already consulted `Binds`; the ident branch now does too.
+- **Emitted composite typedefs carried no `Binds`.** `typeExpr` in
+  compile and `specialCtx.ResolveType` stamped `Anon` but never the
+  type-parameter overlay — only `specializeType` clones had it. Every
+  `[]T`/`map[K]V`/`*T`/`chan T` typedef emitted inside a generic body
+  (and struct/interface literals there) now gets `Binds`/`Pkg`/`File`.
+- **`type B []byte` vs `type C B` are different kinds.** The former is
+  a `KindSlice` typedef with `Anon=[]byte` — `B(x)` produces
+  `Slice{Typ: B}` directly. The latter is `KindNamedBasic{Anon: B}` —
+  `C(x)` peels to B, converts, then re-wraps `Named{Typ: C}`.
+  `type A = []byte` peels the alias only (one hop) so `A(x)` yields the
+  *target's* identity, matching Go's alias transparency.
+- **Typed-nil retagging was unconditional.** `[]rune`-nil → `[]byte`
+  previously retagged silently; the retag now requires shape equality.
+  `IfaceNil` folds into the same path via `asTypedNil`.
+- **Aliasing differs per container.** Slice conversion shares `Elems`
+  (a fresh header over the same backing — exactly Go). Map/chan
+  conversions instead `Named`-wrap the same object: `Map.Pairs` is
+  shared but `Order`/`Chan.Elems` append-created headers would diverge,
+  while `Named` unwraps transparently everywhere (`asChan`, `indexOf`,
+  `lenOf`, `delete`).
+- **Host `GoValue` unboxing.** `fromAny` already turns host `[]byte`
+  into `Slice{Typ: nil}` — a nil-Typ slice reads as bytes in `string(x)`.
+  `unboxGoValue` additionally unboxes `GoValue{string|[]byte|[]rune}`
+  before conversion; other shapes stay boxed (e.g. `native.go`'s
+  deliberate `uint64` boxing).
+- **Old `convert` was too permissive, in two ways.** Non-numeric →
+  `int`/`float` fell to a `Name != ""` passthrough, and the error
+  message printed `%T`/`td.Name` (`cannot convert X to ` with an empty
+  name for anonymous typedefs). Unknown families now error with
+  `typeNameOf`/`tdName`, and the numeric case covers int8/int16/uint*/uintptr.
+
+### Residuals (recorded in TODO.md)
+
+Pointer and func conversions validate but cannot re-tag (`Cell`s/funcs
+carry no `Typ`), so `x.(P)` after `P(p)` still checks shape. Struct/map
+equality is spelling-based — `[]Foo` from different packages compares
+equal without re-resolving `Foo`. `string(sx)` skips non-int64 elements
+silently.
 
 ## (end)

@@ -992,3 +992,20 @@ func TestNativeBindings(t *testing.T) {
 		t.Errorf("NonFunc: want not-a-function error, got %v", err)
 	}
 }
+
+// A package's init() side effects must be visible when its members are
+// used — Go runs every imported package's init before use, and the
+// default GoCompatibleInit mode reproduces that on first member access,
+// including purely indirect chains (main -> helper -> inittable).
+func TestInitOnMemberAccess(t *testing.T) {
+	e := newEngine(t)
+	for fn, want := range map[string]runtime.Value{
+		"ViaFunc":     int64(5), // func init() populated Table before Lookup ran
+		"ViaIndirect": int64(5), // same through an intermediate package
+	} {
+		got := run(t, e, "./testdata/inituser", fn)
+		if got != want {
+			t.Errorf("%s = %v, want %v", fn, got, want)
+		}
+	}
+}

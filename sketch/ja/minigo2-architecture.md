@@ -58,7 +58,15 @@ minigo run ./app --entry F
 | `*Iterator{Kind, ...}` | `range` 状態。Kind: `'s'` slice / `'m'` map / `'c'` chan / `'i'` int / `'r'` string / `'f'` func |
 | `*Package`/`*ImportRef`/`*SymbolID` | パッケージ値、遅延 import、シンボル識別子 |
 
-`Package` の状態遷移は `Empty → Indexed → (LazyInit で) Ready`。**`Index` は評価しない** — `index.Build` は宣言の位置と種別を記録するだけで、`Member(name)` は単一 decl を `materialize` するだけです（関数・型は init なしで取れる。var/const は init が要るので `EnsureReady`）。
+`Package` の状態遷移は `Empty → Indexed → Ready`。**`Index` は評価しない** — `index.Build` は宣言の位置と種別を記録するだけです。
+
+**init タイミング**（`InitMode`）:
+
+- `GoCompatibleInit`（既定）: `Member(name)` は**どのメンバでも**初アクセス時に `EnsureReady` — `func init() { populate(table) }` 型の副作用も `a.Lookup()` の呼出しだけで走る（main → helper → a の間接連鎖でも同じ）。var/const・type・func の種別は問わない。
+- `LazyInit`（opt-in、ツール/quoting 向け）: FuncDecl/TypeDecl は init なしで materialize できる（var/const 要求時のみ `EnsureReady`）。`SymOf(a.F)` のような「解決だけしたい」用途はこちら。
+- blank import（`import _ "a"`）は親パッケージの `__init__` 冒頭で `EnsureReady` — 推移的に連鎖する。
+
+つまり「計算表を init で構築するパッケージ」は追加の登録機構なしで動きます。エントリポイントから直接 init を起動したい場合はホスト側から `e.Package(ctx, path)` → `p.EnsureReady()`。
 
 ## コンパイラ（compile/）
 

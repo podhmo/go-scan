@@ -41,6 +41,7 @@ type Engine struct {
 	specials   map[runtime.SymbolID]runtime.SpecialFunc
 	hostPolicy func(importPath, symbol string) bool // nil = allow all bound intrinsics
 	out        io.Writer                            // print/println/fmt.Print* destination; nil = io.Discard
+	cwd        string                               // virtual cwd for os.* path intrinsics (defaults to startDir)
 
 	mu    sync.Mutex
 	pkgs  map[string]*runtime.Package // by import path
@@ -98,6 +99,38 @@ func WithOutput(w io.Writer) Option {
 	return func(e *Engine) { e.out = w }
 }
 
+// WithWorkingDir sets the engine's virtual working directory: relative
+// paths in the os.* / path/filepath intrinsics resolve against it, and
+// os.Getwd reports it. It deliberately does NOT chdir the host process —
+// the real cwd stays observable through host.Getwd. Defaults to startDir.
+func WithWorkingDir(dir string) Option {
+	return func(e *Engine) {
+		if abs, err := filepath.Abs(dir); err == nil {
+			e.cwd = abs
+		}
+	}
+}
+
+// WorkingDir reports the engine's virtual working directory — the anchor
+// relative paths in os.* / path/filepath intrinsics resolve against (see
+// WithWorkingDir). Host integrations use it to default subprocess cwd.
+func (e *Engine) WorkingDir() string { return e.cwd }
+
+// fsPath maps a script-visible path to a host path: relative paths anchor
+// at the engine's virtual cwd, and the result is checked against
+// AllowedRoots (per-call — the restricted-mode policy lives here, not in
+// symbol gating, so file APIs are available but confined).
+func (e *Engine) fsPath(p string) (string, error) {
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(e.cwd, p)
+	}
+	p = filepath.Clean(p)
+	if err := e.cfg.CheckPath(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
 // NewEngine creates an engine whose default resolver is go-scan
 // (locator.WithGoModuleResolver). startDir is used to locate the go.mod /
 // go.work anchor for import-path resolution.
@@ -112,6 +145,11 @@ func NewEngine(startDir string, opts ...Option) *Engine {
 	}
 	for _, o := range opts {
 		o(e)
+	}
+	if e.cwd == "" {
+		if abs, err := filepath.Abs(startDir); err == nil {
+			e.cwd = abs
+		}
 	}
 	e.builtins = builtins(e)
 	res, err := resolve.NewGoScanResolver(startDir, e.cfg)
@@ -158,6 +196,7 @@ func (e *Engine) NewSession() *Engine {
 		specials:   e.specials,
 		hostPolicy: e.hostPolicy,
 		out:        e.out,
+		cwd:        e.cwd,
 		pkgs:       map[string]*runtime.Package{},
 		byDir:      map[string]*runtime.Package{},
 		files:      map[string]*runtime.Package{},

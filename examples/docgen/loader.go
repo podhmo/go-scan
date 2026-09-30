@@ -116,16 +116,21 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 }
 
 // buildKeyForMethod constructs the fully qualified key for a method.
-// A method's Name is "TypeName.Method"; pointer-receiver methods get the
-// "(*TypeName).Method" spelling to match symgo's keys. The package's Path
-// is already the import path resolved by the engine, so no
-// filesystem-to-module conversion is needed.
+// A method's Name is "Type.Method"; the analyzer looks calls up as
+// "(pkg.Type).Method" / "(*pkg.Type).Method" — parentheses wrap the whole
+// receiver type — so the key is rebuilt from Pkg.Path, Name, and PtrRecv.
+// The package's Path is already the import path resolved by the engine,
+// so no filesystem-to-module conversion is needed.
 func buildKeyForMethod(fn *runtime.Function) string {
-	name := fn.Name
-	if fn.PtrRecv {
-		if i := strings.LastIndexByte(name, '.'); i >= 0 {
-			name = "(*" + name[:i] + ")" + name[i:]
-		}
+	typeName, methodName := fn.Name, ""
+	if i := strings.LastIndexByte(typeName, '.'); i >= 0 {
+		typeName, methodName = typeName[:i], typeName[i+1:]
 	}
-	return fmt.Sprintf("%s.%s", fn.Pkg.Path, name)
+	recv := fn.Pkg.Path + "." + typeName
+	if fn.PtrRecv {
+		recv = "(*" + recv + ")"
+	} else {
+		recv = "(" + recv + ")"
+	}
+	return recv + "." + methodName
 }

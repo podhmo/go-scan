@@ -1738,4 +1738,61 @@ equality is spelling-based — `[]Foo` from different packages compares
 equal without re-resolving `Foo`. `string(sx)` skips non-int64 elements
 silently.
 
+## 34. Round-15 notes: migrating a real consumer — `docgen` off v1 `minigo`
+
+`examples/docgen/loader.go` was the last non-test v1 `minigo` consumer
+(`examples/minigo` is the v1 demo itself). Its job: evaluate a DSL file
+defining `var Patterns = []patterns.PatternConfig{...}` and unmarshal
+that global into a Go slice. The whole port fit inside `loader.go` —
+no minigo2 changes were needed.
+
+### The recipe (for future consumers)
+
+```go
+engine := minigo2.NewEngine(filepath.Dir(abs))   // anchor at the file's module
+pkg, _ := engine.LoadFile(ctx, abs)              // parse + index, bypass build tags
+err := pkg.EnsureReady()                         // run var/const initializers
+v, ok := pkg.Globals.Get("Patterns")             // read the global
+(&minigo2.Result{V: v}).As(&configs)             // reflect-unmarshal
+```
+
+### What the migration surfaced (unplanned)
+
+- **The resolver anchors at `NewEngine(startDir)`, not per-file.**
+  `loadPath` resolves every import through the single locator built at
+  engine creation, so an engine must be rooted in the *config file's*
+  directory — docgen's `--patterns` file typically lives in another
+  module than the process cwd. `NewEngine(filepath.Dir(abs))` makes
+  module-local imports and `replace` directives resolve correctly.
+- **Script globals are reachable without calling a function.**
+  `EnsureReady` + `Globals.Get` covers the config-as-code case;
+  `Result.As` unmarshals any `runtime.Value`, and `assignReflect` passes
+  `*runtime.Function`/`*runtime.BoundMethod` straight into `any` fields
+  — which is exactly what `Fn` needs.
+- **`Pkg.Path` is already the import path** for resolver-loaded
+  packages, so v1's `ModuleDir`/`ModulePath` filesystem-to-import-path
+  conversion in key building is gone entirely.
+- **Method `Function`s carry `Name: "Type.Method"` but empty `Recv`.**
+  `td.Methods` materialization sets `Name`/`PtrRecv` only — consumers
+  wanting `(*T).M` spelling must rebuild it from `Name`. Recorded in
+  TODO.md as a candidate API fix (stamp `Recv` or document).
+- **Method values on typed nils work**: `(*foo.Foo)(nil).Bar` evaluates
+  to `BoundMethod{Recv: TypedNil, Fn}` — required by docgen's Fn-ref
+  patterns and already correct.
+- **String-eval API was dropped**: v1 offered `EvalString`; minigo2 is
+  file-oriented (`LoadFile`). `LoadPatternsFromSource` had no other
+  callers, so it was removed rather than shimmed through a temp file.
+- **A latent v1 bug surfaced by review**: the analyzer looks method
+  calls up as `(pkg.Type).Method` / `(*pkg.Type).Method` (parens wrap
+  the whole receiver type), but the Fn key builder — v1's included —
+  emitted `pkg.(*Type).Method` / `pkg.Type.Method`, so method Fn
+  patterns could never match a call. The old test only pinned the
+  broken string. `buildKeyForMethod` now emits the lookup spelling.
+
+### Remaining v1 consumers
+
+`examples/minigo` (the v1 CLI/REPL demo — bound to v1 by design) and
+v1's own tests/stdlib. `symgo`'s analysis test references the minigo
+package only as scan input. Nothing else compiles against v1.
+
 ## (end)

@@ -161,7 +161,7 @@ func (v *VM) call(callee runtime.Value, args []runtime.Value) (runtime.Value, er
 			if len(args) != 1 {
 				return nil, fmt.Errorf("conversion to %s needs exactly one argument", c.Name)
 			}
-			return convert(c, args[0])
+			return v.convert(c, args[0])
 		case *runtime.TypedNil, *runtime.IfaceNil:
 			// calling a nil function value panics in Go
 			panic(&runtime.Panic{Value: "call of nil function"})
@@ -403,7 +403,7 @@ func (v *VM) invokeDeferred(d deferredCall) {
 		case *runtime.TypeDef:
 			v.pushDeferredSentinel(c.Name)
 			defer v.framesPop()
-			if _, err := convert(c, firstArg(d.args)); err != nil {
+			if _, err := v.convert(c, firstArg(d.args)); err != nil {
 				panic(&runtime.Trap{Pos: d.pos, Reason: err.Error()})
 			}
 			return
@@ -788,7 +788,7 @@ func (v *VM) loop(f *frame) {
 			if ch.Closed {
 				f.trap("send on closed channel")
 			}
-			if et := v.elemTypedef(f, ch.Typ); et != nil {
+			if et := v.elemTypedef(ch.Typ); et != nil {
 				val = v.coerce(f, val, et)
 			}
 			ch.Elems = append(ch.Elems, val)
@@ -800,7 +800,7 @@ func (v *VM) loop(f *frame) {
 			val := f.pop()
 			chv := runtime.Unwrap(f.pop())
 			if ch, ok := chv.(*runtime.Chan); ok && !ch.Closed {
-				if et := v.elemTypedef(f, ch.Typ); et != nil {
+				if et := v.elemTypedef(ch.Typ); et != nil {
 					val = v.coerce(f, val, et)
 				}
 				ch.Elems = append(ch.Elems, val)
@@ -1486,9 +1486,9 @@ func (v *VM) fieldTypedefs(td *runtime.TypeDef) []*runtime.TypeDef {
 }
 
 // elemTypedef resolves the element type of a container typedef (nil when
-// unresolvable — coerce then passes values through).
-func (v *VM) elemTypedef(f *frame, td *runtime.TypeDef) *runtime.TypeDef {
-	if v.H.ElemOf == nil {
+// unresolvable — callers then pass values through or reject).
+func (v *VM) elemTypedef(td *runtime.TypeDef) *runtime.TypeDef {
+	if td == nil || v.H.ElemOf == nil {
 		return nil
 	}
 	et, err := v.H.ElemOf(v.peelNamed(td))
@@ -1571,7 +1571,7 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 			f.trap("slice index is %T", idx)
 		}
 		// the slice's declared element type constrains the write.
-		if et := v.elemTypedef(f, b.Typ); et != nil {
+		if et := v.elemTypedef(b.Typ); et != nil {
 			val = v.coerce(f, val, et)
 		}
 		b.Elems[i] = val
@@ -1580,7 +1580,7 @@ func (v *VM) setIndex(f *frame, base, idx, val runtime.Value) {
 			f.trap("map key %T is not comparable", idx)
 		}
 		// the map's declared element type constrains the write.
-		if et := v.elemTypedef(f, b.Typ); et != nil {
+		if et := v.elemTypedef(b.Typ); et != nil {
 			val = v.coerce(f, val, et)
 		}
 		if _, exists := b.Pairs[idx]; !exists {
@@ -1686,7 +1686,7 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 		} else {
 			// elements coerce to the declared element type — `[]any{x}`
 			// boxes a typed nil while `[]*int{x}` keeps it
-			et := v.elemTypedef(f, td)
+			et := v.elemTypedef(td)
 			for i := range raw {
 				raw[i] = v.coerce(f, raw[i], et)
 			}
@@ -1695,7 +1695,7 @@ func (v *VM) makeComposite(f *frame, ins bytecode.Instruction) runtime.Value {
 		return s
 	case runtime.KindMap:
 		m := &runtime.Map{Pairs: map[runtime.Value]runtime.Value{}, Typ: td}
-		et := v.elemTypedef(f, td)
+		et := v.elemTypedef(td)
 		for i := 0; i < n; i++ {
 			k := runtime.Unwrap(raw[i*2])
 			m.Pairs[k] = v.coerce(f, raw[i*2+1], et)
@@ -2431,10 +2431,18 @@ func toFloat(v runtime.Value) float64 {
 }
 
 // convert implements T(x) — a call on a *TypeDef.
-func convert(td *runtime.TypeDef, v runtime.Value) (runtime.Value, error) {
-	// nil converts to a typed nil for nilable kinds, NIL for interfaces
-	if _, isNil := v.(runtime.Nil); isNil || v == nil {
-		switch td.Kind {
+func (v *VM) convert(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error) {
+	// nil converts to a typed nil for nilable kinds, NIL for interfaces.
+	// Nilability reads through declared chains (`type C B` where B is a
+	// slice type takes nil even though C's own kind reads NamedBasic).
+	if _, isNil := x.(runtime.Nil); isNil || x == nil {
+		k := td.Kind
+		if k == runtime.KindNamedBasic || k == runtime.KindAlias {
+			if u := v.peelNamed(td); u != nil {
+				k = u.Kind
+			}
+		}
+		switch k {
 		case runtime.KindInterface:
 			return runtime.NIL, nil
 		case runtime.KindSlice, runtime.KindMap, runtime.KindChan, runtime.KindFunc, runtime.KindPointer:
@@ -2442,13 +2450,14 @@ func convert(td *runtime.TypeDef, v runtime.Value) (runtime.Value, error) {
 		}
 		return nil, fmt.Errorf("cannot convert nil to %s", tdName(td))
 	}
-	if _, isNil := v.(runtime.Nil); isNil {
-		return runtime.NIL, nil
-	}
-	// a typed nil converts to another nilable type by re-tagging
-	if tn, ok := v.(*runtime.TypedNil); ok {
+	// a typed nil converts to another nilable type by re-tagging when the
+	// underlying shapes match (Go requires identical underlying types).
+	if tn, ok := asTypedNil(x); ok {
 		switch td.Kind {
 		case runtime.KindSlice, runtime.KindMap, runtime.KindChan, runtime.KindFunc, runtime.KindPointer:
+			if tn.Typ != nil && !v.convShapeEq(tn.Typ, td) {
+				return nil, fmt.Errorf("cannot convert %s to %s", tdName(tn.Typ), tdName(td))
+			}
 			return &runtime.TypedNil{Typ: td}, nil
 		case runtime.KindInterface:
 			return &runtime.IfaceNil{Typ: tn.Typ}, nil
@@ -2457,55 +2466,126 @@ func convert(td *runtime.TypeDef, v runtime.Value) (runtime.Value, error) {
 	// a Named value converts through its underlying value — `string(x)` on
 	// a named string value works like the underlying conversion; `T(x)`
 	// on the same declared type is a no-op.
-	if n, ok := v.(*runtime.Named); ok {
+	if n, ok := x.(*runtime.Named); ok {
 		if sameTypeDef(n.Typ, td) {
-			return v, nil
+			return x, nil
 		}
-		v = n.V
+		x = n.V
 	}
+	// a host value unboxes so its concrete value converts like a script
+	// value of the same shape (a []byte arriving boxed becomes a slice).
+	x = unboxGoValue(x)
 	switch td.Name {
-	case "int", "int64", "int32", "byte", "rune":
-		switch x := v.(type) {
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "byte", "rune", "uintptr":
+		switch n := x.(type) {
 		case int64:
-			return x, nil
+			return n, nil
 		case float64:
-			return int64(x), nil
+			return int64(n), nil
 		case string:
-			return int64([]rune(x)[0]), nil
+			return int64([]rune(n)[0]), nil // int("x") is the first rune's code point
 		}
+		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), td.Name)
 	case "float64", "float32":
-		return toFloat(v), nil
-	case "string":
-		switch x := v.(type) {
-		case string:
-			return x, nil
-		case int64:
-			return string(rune(x)), nil
-		case *runtime.Slice:
-			// []byte or []rune -> string
-			var bs []byte
-			for _, e := range x.Elems {
-				if i, ok := e.(int64); ok {
-					bs = append(bs, byte(i))
-				}
-			}
-			return string(bs), nil
+		switch x.(type) {
+		case int64, float64:
+			return toFloat(x), nil
 		}
+		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), td.Name)
+	case "string":
+		switch sx := x.(type) {
+		case string:
+			return sx, nil
+		case int64:
+			return string(rune(sx)), nil
+		case *runtime.Slice:
+			// []byte or []rune -> string: the element family decides.
+			// An untyped slice (host-produced) reads as bytes.
+			fam := byte('b')
+			if sx.Typ != nil {
+				fam = v.elemFamily(v.elemTypedef(sx.Typ))
+			}
+			switch fam {
+			case 'b':
+				bs := make([]byte, 0, len(sx.Elems))
+				for _, e := range sx.Elems {
+					if i, ok := runtime.Unwrap(e).(int64); ok {
+						bs = append(bs, byte(i))
+					}
+				}
+				return string(bs), nil
+			case 'r':
+				rs := make([]rune, 0, len(sx.Elems))
+				for _, e := range sx.Elems {
+					if i, ok := runtime.Unwrap(e).(int64); ok {
+						rs = append(rs, rune(i))
+					}
+				}
+				return string(rs), nil
+			}
+			return nil, fmt.Errorf("cannot convert %s to string", tdName(sx.Typ))
+		}
+		return nil, fmt.Errorf("cannot convert %s to string", typeNameOf(x))
 	case "bool":
-		return truthy(v), nil
+		return truthy(x), nil
+	}
+	// a declared name built on another type — an alias `type A = T` or a
+	// chain `type C B` — converts through that type first. An alias yields
+	// the target's own identity; `type C B` re-wraps in C's identity.
+	switch td.Kind {
+	case runtime.KindAlias:
+		if u := v.peelAlias(td); u != nil && u != td {
+			return v.convert(u, x)
+		}
+	case runtime.KindNamedBasic:
+		if u := v.peelNamed(td); u != nil && u != td {
+			cv, err := v.convert(u, x)
+			if err != nil {
+				return nil, err
+			}
+			return &runtime.Named{Typ: td, V: cv}, nil
+		}
+	}
+	switch td.Kind {
+	case runtime.KindSlice:
+		return v.convertSlice(td, x)
+	case runtime.KindMap:
+		return v.convertMap(td, x)
+	case runtime.KindChan:
+		return v.convertChan(td, x)
+	case runtime.KindPointer:
+		return v.convertPointer(td, x)
+	case runtime.KindStruct:
+		return v.convertStruct(td, x)
+	case runtime.KindInterface:
+		ok, err := v.ifaceSatisfied(td, x)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
+		}
+		return x, nil
+	case runtime.KindFunc:
+		switch x.(type) {
+		case *runtime.Function, *runtime.Closure, *runtime.BoundMethod, *runtime.BuiltinFunc:
+			return x, nil // signatures are not modeled
+		}
+		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
 	}
 	// declared named basic types tag the converted value so its declared
-	// identity survives reads (MyInt(5) is MyInt, not int). The value
-	// itself converts through the underlying ident's builtin family when
-	// one is known; unresolvable chains pass through unchecked, like every
-	// other dynamic fallthrough.
+	// identity survives reads (MyInt(5) is MyInt, not int). This point is
+	// reached only when the underlying ident did not resolve (no engine
+	// hooks or an unbound name) — the declared tag still applies, like
+	// every other dynamic fallthrough.
 	if td.Kind == runtime.KindNamedBasic {
 		if !declaredType(td) {
-			return v, nil
+			return x, nil
 		}
-		u := v
+		u := x
 		if id, ok := td.Anon.(*ast.Ident); ok {
-			cv, err := convert(&runtime.TypeDef{Kind: runtime.KindNamedBasic, Name: id.Name}, v)
+			cv, err := v.convert(&runtime.TypeDef{Kind: runtime.KindNamedBasic, Name: id.Name}, x)
 			if err != nil {
 				return nil, err
 			}
@@ -2514,9 +2594,286 @@ func convert(td *runtime.TypeDef, v runtime.Value) (runtime.Value, error) {
 		return &runtime.Named{Typ: td, V: u}, nil
 	}
 	if td.Name != "" {
-		return v, nil
+		return x, nil
 	}
-	return nil, fmt.Errorf("cannot convert %T to %s", v, td.Name)
+	return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
+}
+
+// unboxGoValue gives a boxed host value the script value of the same
+// shape where one exists, so `[]byte(x)` and `string(x)` see through a
+// GoValue carrying []byte, []rune or string. Other shapes stay boxed.
+func unboxGoValue(x runtime.Value) runtime.Value {
+	gv, ok := x.(*runtime.GoValue)
+	if !ok {
+		return x
+	}
+	switch h := gv.V.(type) {
+	case string:
+		return h
+	case []byte:
+		el := make([]runtime.Value, len(h))
+		for i, b := range h {
+			el[i] = int64(b)
+		}
+		return &runtime.Slice{Elems: el, Typ: anonSliceTyp("byte")}
+	case []rune:
+		el := make([]runtime.Value, len(h))
+		for i, r := range h {
+			el[i] = int64(r)
+		}
+		return &runtime.Slice{Elems: el, Typ: anonSliceTyp("rune")}
+	}
+	return x
+}
+
+// anonSliceTyp builds the anonymous []name typedef used to tag slices
+// unboxed from host values (no package context — the name is a builtin).
+func anonSliceTyp(name string) *runtime.TypeDef {
+	return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: &ast.ArrayType{Elt: ast.NewIdent(name)}}
+}
+
+// convertSlice implements `[]T(x)`: the special string->byte/rune-slice
+// conversions plus slice->slice when the underlying shapes are identical
+// (element types compare by identity — []int does not convert to
+// []MyIntElem, while []uint8 and []byte are the same type).
+func (v *VM) convertSlice(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error) {
+	switch s := x.(type) {
+	case string:
+		switch v.elemFamily(v.elemTypedef(td)) {
+		case 'b':
+			el := make([]runtime.Value, 0, len(s))
+			for _, b := range []byte(s) {
+				el = append(el, int64(b))
+			}
+			return &runtime.Slice{Elems: el, Typ: td}, nil
+		case 'r':
+			el := make([]runtime.Value, 0, len(s))
+			for _, r := range s {
+				el = append(el, int64(r))
+			}
+			return &runtime.Slice{Elems: el, Typ: td}, nil
+		}
+		return nil, fmt.Errorf("cannot convert string to %s", tdName(td))
+	case *runtime.Slice:
+		if s.Typ != nil && !v.convShapeEq(s.Typ, td) {
+			return nil, fmt.Errorf("cannot convert %s to %s", tdName(s.Typ), tdName(td))
+		}
+		// Go shares the backing array on a conversion: re-tag, no copy.
+		return &runtime.Slice{Elems: s.Elems, Typ: td}, nil
+	}
+	return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
+}
+
+// convertMap implements `M(x)` on map typedefs: identical underlying
+// shapes share the same map (key types are part of the shape). The Named
+// wrap keeps the declared tag while sends/indexes resolve through to the
+// shared underlying map — Go's conversion aliases the map.
+func (v *VM) convertMap(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error) {
+	m, ok := x.(*runtime.Map)
+	if !ok {
+		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
+	}
+	if m.Typ != nil && !v.convShapeEq(m.Typ, td) {
+		return nil, fmt.Errorf("cannot convert %s to %s", tdName(m.Typ), tdName(td))
+	}
+	return &runtime.Named{Typ: td, V: m}, nil
+}
+
+// convertChan implements `C(x)` on channel typedefs: identical underlying
+// shapes share the same channel. The Named wrap keeps the declared tag
+// while the underlying queue stays shared — Go's conversion aliases the
+// channel.
+func (v *VM) convertChan(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error) {
+	ch, ok := x.(*runtime.Chan)
+	if !ok {
+		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
+	}
+	if ch.Typ != nil && !v.convShapeEq(ch.Typ, td) {
+		return nil, fmt.Errorf("cannot convert %s to %s", tdName(ch.Typ), tdName(td))
+	}
+	return &runtime.Named{Typ: td, V: ch}, nil
+}
+
+// convertPointer implements `*T(x)` and `P(x)` on pointer typedefs. A
+// pointer in this model is a cell — it carries no swappable type tag, so
+// the conversion checks the pointee's declared shape when one is known
+// and passes the pointer itself through.
+func (v *VM) convertPointer(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error) {
+	if _, ok := runtime.Deref(x); !ok {
+		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
+	}
+	if ptag := v.pointeeTag(x); ptag != nil && v.H.ElemOf != nil {
+		if et, err := v.H.ElemOf(v.peelNamed(td)); err == nil && et != nil && !sameTypeDef(ptag, et) && !sameTypeDef(ptag, v.peelAlias(et)) {
+			pe, pp := v.peelNamed(et), v.peelNamed(ptag)
+			if pe == nil || pp == nil || pe.Kind != pp.Kind ||
+				(pe.Kind == runtime.KindStruct && !structFieldsEq(pe, pp)) ||
+				(pe.Kind != runtime.KindStruct && !v.convShapeEq(pe, pp)) {
+				return nil, fmt.Errorf("cannot convert *%s to %s", tdName(ptag), tdName(td))
+			}
+		}
+	}
+	return x, nil
+}
+
+// convertStruct implements `S(x)` on struct typedefs: legal when the
+// source is a struct whose field list matches the target's (the
+// approximation of Go's identical-underlying rule — field types and tags
+// are not modeled). The result is a copy carrying the target's typedef.
+func (v *VM) convertStruct(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error) {
+	s, ok := x.(*runtime.Struct)
+	if !ok {
+		if dv, isRef := runtime.Deref(x); isRef {
+			s, ok = dv.(*runtime.Struct)
+		}
+	}
+	if !ok {
+		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
+	}
+	if s.Def != nil && s.Def != td && tagIsNamed(s.Def) && !structFieldsEq(s.Def, td) {
+		return nil, fmt.Errorf("cannot convert %s to %s", tdName(s.Def), tdName(td))
+	}
+	return &runtime.Struct{Def: td, Fields: append([]runtime.Value{}, s.Fields...)}, nil
+}
+
+// convShapeEq reports whether two typedefs have identical underlying
+// shape for a conversion: both peel through declared chains to their
+// structural spelling — `type C B` gives B's shape, `Wrap[int]` gives
+// []int — while element positions compare by written identity, so []MyInt
+// does not spell []int.
+func (v *VM) convShapeEq(a, b *runtime.TypeDef) bool {
+	sa, sb := v.underlyingShape(a), v.underlyingShape(b)
+	return sa != "" && sa == sb
+}
+
+// underlyingShape spells a typedef's underlying shape. Declared chain
+// heads (type C B, aliases) peel away; composite shapes spell their type
+// expression with generic binds substituted.
+func (v *VM) underlyingShape(td *runtime.TypeDef) string {
+	u := v.peelNamed(td)
+	if u == nil {
+		return ""
+	}
+	src := u.Anon
+	if src == nil && u.Spec != nil {
+		src = u.Spec.Type
+	}
+	if src != nil {
+		return v.shapeSpelling(src, u.Binds)
+	}
+	return normBasicName(u.Name)
+}
+
+// shapeSpelling renders a type expression to a comparable string under
+// generic instantiation binds: bound type parameters resolve to their
+// argument's spelling. byte and rune normalize to their canonical names
+// so []byte and []uint8 spell identically (byte IS uint8).
+func (v *VM) shapeSpelling(e ast.Expr, binds map[string]runtime.Value) string {
+	switch t := e.(type) {
+	case *ast.Ident:
+		if btd := boundTypedef(binds, t.Name); btd != nil {
+			return v.boundShape(btd)
+		}
+		return normBasicName(t.Name)
+	case *ast.StarExpr:
+		return "*" + v.shapeSpelling(t.X, binds)
+	case *ast.ArrayType:
+		return "[]" + v.shapeSpelling(t.Elt, binds)
+	case *ast.Ellipsis:
+		return "[]" + v.shapeSpelling(t.Elt, binds)
+	case *ast.MapType:
+		return "map[" + v.shapeSpelling(t.Key, binds) + "]" + v.shapeSpelling(t.Value, binds)
+	case *ast.ChanType:
+		return "chan " + v.shapeSpelling(t.Value, binds)
+	case *ast.ParenExpr:
+		return v.shapeSpelling(t.X, binds)
+	case *ast.SelectorExpr:
+		return v.shapeSpelling(t.X, binds) + "." + t.Sel.Name
+	case *ast.IndexExpr:
+		return v.shapeSpelling(t.X, binds) + "[" + v.shapeSpelling(t.Index, binds) + "]"
+	case *ast.IndexListExpr:
+		s := v.shapeSpelling(t.X, binds) + "["
+		for i, x := range t.Indices {
+			if i > 0 {
+				s += ","
+			}
+			s += v.shapeSpelling(x, binds)
+		}
+		return s + "]"
+	case *ast.InterfaceType:
+		return "interface{}"
+	case *ast.StructType:
+		return "struct{}"
+	case *ast.FuncType:
+		return "func()"
+	}
+	return fmt.Sprintf("%T", e)
+}
+
+// boundShape spells an instantiated type argument: a named type keeps its
+// declared name (T=MyInt spells "MyInt", not "int"), an anonymous shape
+// spells structurally.
+func (v *VM) boundShape(td *runtime.TypeDef) string {
+	if td.Name != "" {
+		return normBasicName(td.Name)
+	}
+	src := td.Anon
+	if src == nil && td.Spec != nil {
+		src = td.Spec.Type
+	}
+	if src != nil {
+		return v.shapeSpelling(src, td.Binds)
+	}
+	return fmt.Sprintf("%p", td)
+}
+
+// boundTypedef returns the typedef a type parameter binds to, if any.
+func boundTypedef(binds map[string]runtime.Value, name string) *runtime.TypeDef {
+	if binds == nil {
+		return nil
+	}
+	if bv, ok := binds[name]; ok {
+		if btd, ok := bv.(*runtime.TypeDef); ok {
+			return btd
+		}
+	}
+	return nil
+}
+
+// normBasicName maps the predeclared aliases to their canonical names:
+// byte IS uint8 and rune IS int32, so shapes spelled with either compare
+// equal.
+func normBasicName(name string) string {
+	switch name {
+	case "byte":
+		return "uint8"
+	case "rune":
+		return "int32"
+	}
+	return name
+}
+
+// elemFamily classifies a slice element typedef for the special string
+// conversions: 'b' when its underlying is byte-family (byte, uint8, or a
+// named type on them like `type MyByte byte`), 'r' for rune-family, else
+// 0 — mirroring Go's `[]byte(s)` / `[]rune(s)` rule.
+func (v *VM) elemFamily(et *runtime.TypeDef) byte {
+	u := v.peelNamed(et)
+	if u == nil {
+		return 0
+	}
+	name := u.Name
+	if name == "" {
+		if id, ok := u.Anon.(*ast.Ident); ok {
+			name = id.Name
+		}
+	}
+	switch name {
+	case "byte", "uint8":
+		return 'b'
+	case "rune", "int32":
+		return 'r'
+	}
+	return 0
 }
 
 // ---- references, spread, types, specials (round 4) ----
@@ -2699,29 +3056,39 @@ func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
 
 // satisfiesIface checks a value against an interface typedef's method set.
 func (v *VM) satisfiesIface(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
+	ok, err := v.ifaceSatisfied(td, x)
+	if err != nil {
+		f.trap("%s", err)
+	}
+	return ok
+}
+
+// ifaceSatisfied is satisfiesIface's error-returning core, usable from
+// contexts without a running frame (conversions).
+func (v *VM) ifaceSatisfied(td *runtime.TypeDef, x runtime.Value) (bool, error) {
 	if len(td.MReqs) == 0 && len(td.IEmbeds) == 0 {
-		return true // empty interface
+		return true, nil // empty interface
 	}
 	if v.H.IfaceReqs == nil || v.H.MethodsOf == nil {
-		f.trap("interface checks require engine hooks")
+		return false, fmt.Errorf("interface checks require engine hooks")
 	}
 	reqs, err := v.H.IfaceReqs(td)
 	if err != nil {
-		f.trap("%s", err)
+		return false, err
 	}
 	if len(reqs) == 0 {
-		return true
+		return true, nil
 	}
 	have, err := v.H.MethodsOf(x)
 	if err != nil {
-		f.trap("%s", err)
+		return false, err
 	}
 	for m := range reqs {
 		if !have[m] {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 // ---- declared types: zeros, typed nils, interface boxing (round 5) ----
@@ -3053,6 +3420,8 @@ func (v *VM) peelNamed(td *runtime.TypeDef) *runtime.TypeDef {
 
 // tdShapeEq reports whether two typedefs have the same underlying shape —
 // for typed-nil retagging (`var s S = ([]int)(nil)` needs S ~ []int).
+// Shape spelling normalizes byte/rune and resolves bound type params
+// (convShapeEq), so []byte and []uint8 count as one shape.
 func (v *VM) tdShapeEq(a, b *runtime.TypeDef) bool {
 	pa, pb := v.peelNamed(a), v.peelNamed(b)
 	if pa == pb {
@@ -3062,6 +3431,9 @@ func (v *VM) tdShapeEq(a, b *runtime.TypeDef) bool {
 		return false
 	}
 	if sameTypeDef(pa, pb) {
+		return true
+	}
+	if v.convShapeEq(pa, pb) {
 		return true
 	}
 	if pa.Anon != nil && pb.Anon != nil {
@@ -3525,17 +3897,17 @@ func (s *specialCtx) ResolveType(e ast.Expr) (*runtime.TypeDef, error) {
 		}
 		return td, nil
 	case *ast.ArrayType:
-		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: pkg, File: s.q.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}, nil
 	case *ast.MapType:
-		return &runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: pkg, File: s.q.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}, nil
 	case *ast.StarExpr:
-		return &runtime.TypeDef{Kind: runtime.KindPointer, Anon: t, Pkg: pkg, File: s.q.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindPointer, Anon: t, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}, nil
 	case *ast.ChanType:
-		return &runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: pkg, File: s.q.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}, nil
 	case *ast.FuncType:
-		return &runtime.TypeDef{Kind: runtime.KindFunc}, nil
+		return &runtime.TypeDef{Kind: runtime.KindFunc, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}, nil
 	case *ast.StructType:
-		td := &runtime.TypeDef{Kind: runtime.KindStruct}
+		td := &runtime.TypeDef{Kind: runtime.KindStruct, Anon: t, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}
 		for _, fld := range t.Fields.List {
 			if len(fld.Names) == 0 {
 				td.EmbedSpecs = append(td.EmbedSpecs, fld.Type)
@@ -3549,7 +3921,7 @@ func (s *specialCtx) ResolveType(e ast.Expr) (*runtime.TypeDef, error) {
 		}
 		return td, nil
 	case *ast.InterfaceType:
-		td := &runtime.TypeDef{Kind: runtime.KindInterface}
+		td := &runtime.TypeDef{Kind: runtime.KindInterface, Anon: t, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}
 		for _, m := range t.Methods.List {
 			if len(m.Names) == 0 {
 				td.IEmbeds = append(td.IEmbeds, m.Type)
@@ -3567,7 +3939,7 @@ func (s *specialCtx) ResolveType(e ast.Expr) (*runtime.TypeDef, error) {
 	case *ast.IndexListExpr:
 		return s.instantiateType(e, t.X, t.Indices)
 	case *ast.Ellipsis:
-		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: &ast.ArrayType{Lbrack: t.Pos(), Elt: t.Elt}, Pkg: pkg, File: s.q.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: &ast.ArrayType{Lbrack: t.Pos(), Elt: t.Elt}, Pkg: pkg, File: s.q.File, Binds: s.f.fn.Binds}, nil
 	default:
 		return nil, s.Errorf(e, "unsupported type expression %T", e)
 	}

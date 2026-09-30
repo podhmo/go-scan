@@ -311,6 +311,16 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 	case *ast.FuncType:
 		return &runtime.TypeDef{Kind: runtime.KindFunc, Anon: t, Pkg: from.Pkg, File: from.File}, nil
 	case *ast.Ident:
+		// an ident may name a bound type parameter — the element of `[]T`
+		// inside an instantiated `type Wrap[T any] []T` resolves to the
+		// argument typedef carried on the typedef's Binds.
+		if from.Binds != nil {
+			if bv, ok := from.Binds[t.Name]; ok {
+				if btd, ok := bv.(*runtime.TypeDef); ok {
+					return btd, nil
+				}
+			}
+		}
 		if from.Pkg != nil && from.Pkg.Index != nil {
 			if info, ok := from.Pkg.Index.Types[t.Name]; ok && info.Decl != nil {
 				vv, err := e.materialize(from.Pkg, info.Decl)

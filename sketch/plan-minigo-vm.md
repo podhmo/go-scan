@@ -1795,4 +1795,90 @@ v, ok := pkg.Globals.Get("Patterns")             // read the global
 v1's own tests/stdlib. `symgo`'s analysis test references the minigo
 package only as scan input. Nothing else compiles against v1.
 
+## 35. Round-16 notes: declared pointer/func identity and the last conversion residuals
+
+The `[]byte` round left three residuals (TODO): pointer/func
+conversions validated but passed the value through untagged, `[]Foo`
+spellings collided across packages, and `string(sx)` skipped non-int64
+elements. All three are now fixed, along with the `Function.Recv` gap
+recorded in round 15.
+
+### `P(p)`/`F(f)` re-tag as `*runtime.Named`
+
+Declared pointer (`type P *Sq`) and func (`type F func()`) typedefs now
+re-tag conversions and binds in `Named{Typ, V}` — the same mechanism
+map/chan conversions already used. `x.(P)` then asserts on the tag:
+`P`↔`*Sq`, `F`↔`func()`, and named↔anonymous containers
+(`Ints`↔`[]int`) all fail like Go. Asserts of a stamped container first
+hit `typeMatchesTD` (declared identity); anonymous↔anonymous compares
+by `convShapeEq`.
+
+### What the implementation surfaced (unplanned)
+
+- **`td.Spec != nil` is the right "declared" predicate**, not
+  `declaredType` (`Spec || Pkg`). The compiler stamps `Pkg`/`Anon` on
+  emitted *anonymous* typedefs too, so `Pkg != nil` would have wrapped
+  `var p *Sq` in a `Named` — breaking `p.M()` (pointee methods must
+  promote through an anonymous pointer) and `x.(*Sq)` on ordinary
+  pointers.
+- **Anonymous pointer typedefs peel during member lookup; declared
+  ones do not.** `memberOfType`/`typeMethods` now peel only
+  `KindPointer && Spec == nil`: `*Sq` promotes `Sq`'s methods while
+  `P *Sq` has an empty method set. Under Go's spec this is unreachable
+  anyway — the spec forbids methods on pointer-underlying declarations
+  (`type P *Sq; func (p P) M()` does not compile) — but the runtime
+  still had to honor it because `p.M` previously fell through to the
+  pointee. Declared func types are different: `type F func()` *can*
+  carry methods, and they resolve normally through `td.Methods`.
+- **`runtime.Deref` does not return bare `*Struct`** — it only unwraps
+  `Cell`/`FieldRef`/`IndexRef`/`Named`. `namedMember` therefore tries
+  `n.V` as `*Struct` first and only then `Deref` (for `Named{P, cell}`
+  where the cell's element is the pointee struct). Getting this wrong
+  surfaced as `A has no field or method F` on named-struct binds.
+- **`runtime.Unwrap` peels one `Named` level only** — `OpSetInd`
+  needed a loop so `*p = v` on `var p P` stores through `Named{P,cell}`
+  and still coerces `v` to the pointee's declared type via `Cell.Typ`.
+- **Value receivers on pointer-underlying names share the pointee.**
+  `namedMember` binds `valueCopy(n)`; for `Named{P, cell}` the pointer
+  itself is the receiver so `Inc` mutates shared state like Go.
+- **The `string(sx)` non-int64 trap is unreachable from typed Go** —
+  `x.([]byte)` already guarantees element type. The trap exists only
+  for host-injected values (`e.Run(..., &runtime.Slice{Elems: "x"})`);
+  the test drives it through an `any`-typed parameter.
+- **Asserting a container checks its `Typ` tag.** `Slice`/`Map`/`Chan`
+  literals and `make` already stamp `Typ`, so `x.(T)` on a container is
+  `sameTypeDef` when either side is named, `convShapeEq` when both are
+  anonymous, and kind-only when the host left `Typ` nil.
+- **`[]Foo` collision fix = qualified spellings.** `shapeSpelling`,
+  `sameTypeDef`'s `Anon` fallback, and `tdShapeEq` all render type
+  expressions through `typeExprNameCtx`: a non-predeclared ident spells
+  `pkgPath.Name` and a selector `a.T` resolves its alias through
+  `file.Imports` (`im.LocalName()`) to the import path. Predeclared
+  names stay bare so `[]byte`/`[]uint8` still normalize equal, and
+  typedefs without `File`/`Pkg` context degrade to the old unqualified
+  spelling (same behavior as before for local types).
+- **`Function.Recv` is stamped at materialize time** (`Recv: d.Name`
+  next to `Name: "T.M"`/`PtrRecv`). `examples/docgen` consumes it
+  directly; the split-on-`.` fallback stays for `Function` values built
+  outside materialization.
+- **Rejected: re-stamping container `Typ` on `var s []int = Ints{...}`**
+  binds. `Typ` lives on the shared `*Slice` object — writing `[]int`
+  onto it would corrupt every aliased view of the same storage (the
+  named type's declared element identity). The unchecked bind stays as
+  a documented approximation; it is the mirror image of the unboxing
+  rule that `var x int = MyInt(1)` passes (untyped-constant tolerance).
+- **`x.(A)` for `type A = T` peels the alias first** — aliases are
+  transparent to asserts, matching the compiler's resolve of `A` to
+  `T`'s typedef.
+
+### Testdata
+
+`minigo2/testdata/conversions` gained the `PSq`/`Fn` identity cases
+(field read/write through `Named{P,cell}`, `*p = v` coercion, nil-ptr
+assert + deref trap, `F`-method dispatch) and named-container asserts.
+`convfooa`/`convfoob`/`convident` are three tiny packages whose `Foo`
+structs share a local name to prove `fob.S(foa.S{...})` traps while
+same-package-spelled `[]fob.Foo` converts. `AnyToString`/`AnyToStringRune`
+receive corrupt slices from the host for the `string(sx)` trap.
+
 ## (end)

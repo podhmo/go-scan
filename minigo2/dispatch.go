@@ -59,7 +59,10 @@ func (e *Engine) typeMethods(td *runtime.TypeDef) (map[string]bool, error) {
 	if td == nil {
 		return nil, nil
 	}
-	if td.Kind == runtime.KindPointer {
+	// an anonymous *T typedef sees T's method set; a declared pointer
+	// typedef (`type P *Sq`) keeps only methods declared on P itself —
+	// Go forbids those outright, so in valid programs the set is empty.
+	if td.Kind == runtime.KindPointer && td.Spec == nil {
 		if et, err := e.elemOf(td); err == nil && et != nil {
 			td = et
 		}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/podhmo/go-scan/minigo2/runtime"
 )
 
 // TestConversions covers `T(x)` conversion calls: the special string <->
@@ -71,6 +73,43 @@ func TestConversions(t *testing.T) {
 			{"NestedGenericLit", int64(4)},
 			{"NestedGenericElemAssign", int64(11)},
 			{"AnonStructCast", int64(5)},
+
+			// declared pointer/func identity: `x.(P)` checks the tag
+			{"PtrAssertCastOK", int64(4)},
+			{"PtrAssertBindOK", int64(1)},
+			{"PtrAssertAnonBad", int64(1)},
+			{"PtrAssertNamedBad", int64(1)},
+			{"PtrAssertNilOK", int64(1)},
+			{"PtrFieldThrough", int64(7)},
+			{"PtrFieldSet", int64(9)},
+			{"PtrSetInd", int64(7)},
+
+			// declared func types: methods on F, asserts check identity
+			{"FnMethodCall", int64(33)},
+			{"FnAssertCastOK", int64(5)},
+			{"FnAssertBindOK", int64(1)},
+			{"FnAssertAnonBad", int64(1)},
+
+			// named containers assert by declared identity
+			{"MapAssertBindOK", int64(1)},
+			{"MapAssertOtherBad", int64(1)},
+			{"MapAssertUnderlyingBad", int64(1)},
+			{"MapAssertCastOK", int64(1)},
+			{"SliceAssertBindOK", int64(1)},
+			{"SliceAssertUnderlyingBad", int64(1)},
+			{"ChanAssertBindOK", int64(1)},
+			{"ChanAssertOtherBad", int64(1)},
+
+			// nil receivers on nilable declared types bind like Go
+			{"NilSliceRecv", int64(0)},
+			{"NilFnSelectBind", int64(1)},
+
+			// instantiated generics assert on their type arguments
+			{"WrapAssertSameOK", int64(1)},
+			{"WrapAssertOtherBad", int64(1)},
+			{"WrapAssertNamedArgBad", int64(1)},
+			{"WrapAssertByteOK", int64(1)},
+			{"WrapAssertRuneOK", int64(1)},
 		}
 		for _, c := range cases {
 			got := run(t, e, "./testdata/conversions", c.fn)
@@ -98,12 +137,66 @@ func TestConversions(t *testing.T) {
 			{"PtrToSliceBad", "cannot convert *byte to []byte"},
 			{"NilToSliceBad", "cannot convert []rune to []byte"},
 			{"AnonStructCastBad", "cannot convert struct{} to Sq2"},
+
+			// a declared pointer keeps Sq's methods out of its method
+			// set, and *p = v coerces to the pointee's declared type
+			{"PtrNoPromote", "has no field or method Inc"},
+			{"PtrSetIndBad", "cannot use Sq2 as Sq"},
+			{"PtrNilDeref", "nil pointer dereference"},
+			{"NilPtrValueMethod", "nil pointer dereference"},
 		}
 		for _, c := range cases {
 			_, err := e.Run(context.Background(), "./testdata/conversions", c.fn)
 			if err == nil || !strings.Contains(err.Error(), c.msg) {
 				t.Errorf("%s: expected %q trap, got %v", c.fn, c.msg, err)
 			}
+		}
+	})
+
+	t.Run("string on non-integer elements", func(t *testing.T) {
+		// a byte-family slice with non-int64 elements is unreachable in
+		// typed Go but can be host-injected — it must trap, not skip.
+		for _, fn := range []string{"AnyToString", "AnyToStringRune"} {
+			_, err := e.Run(context.Background(), "./testdata/conversions", fn,
+				&runtime.Slice{Elems: []runtime.Value{"x"}})
+			if err == nil || !strings.Contains(err.Error(), "cannot convert") {
+				t.Errorf("%s: expected conversion trap, got %v", fn, err)
+			}
+		}
+	})
+
+	t.Run("cross-package element identity", func(t *testing.T) {
+		// []Foo in package A and []Foo in package B are different types.
+		_, err := e.Run(context.Background(), "./testdata/convident", "CrossPkgSliceCast")
+		if err == nil || !strings.Contains(err.Error(), "cannot convert") {
+			t.Fatalf("CrossPkgSliceCast: expected conversion trap, got %v", err)
+		}
+		cases := []struct {
+			fn   string
+			want any
+		}{
+			{"SamePkgSliceCast", int64(2)},
+			{"AliasElemCast", int64(3)},
+		}
+		for _, c := range cases {
+			if got := run(t, e, "./testdata/convident", c.fn); got != c.want {
+				t.Errorf("%s: got %v, want %v", c.fn, got, c.want)
+			}
+		}
+	})
+
+	t.Run("method Recv is stamped", func(t *testing.T) {
+		got := run(t, e, "./testdata/conversions", "PtrTyp")
+		td, ok := got.(*runtime.TypeDef)
+		if !ok {
+			t.Fatalf("PtrTyp: got %T, want *runtime.TypeDef", got)
+		}
+		m, ok := td.Methods["Inc"]
+		if !ok {
+			t.Fatalf("Sq has no method Inc")
+		}
+		if m.Recv != "Sq" {
+			t.Fatalf("Inc.Recv = %q, want Sq", m.Recv)
 		}
 	})
 }

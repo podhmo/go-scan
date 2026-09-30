@@ -1,13 +1,24 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"math"
+	"net/url"
+	"path"
+	"regexp"
 	goruntime "runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -140,5 +151,114 @@ func UnsafeSizeofSlice() int { return int(unsafe.Sizeof([]int{})) } // 24
 
 // UnsafeAlignofEmpty: alignment is at least 1 even for the empty struct.
 func UnsafeAlignofEmpty() int { return int(unsafe.Alignof(struct{}{})) } // 1
+
+// StringsSplitN exercises a member added past the original bound set.
+func StringsSplitN() string { return strings.SplitN("a:b:c", ":", 2)[1] } // "b:c"
+
+func StringsTrim() string { return strings.Trim("<<x>>", "<>") } // "x"
+
+func StringsLastIndex() int { return strings.LastIndex("aXbXc", "X") } // 3
+
+func StringsTitle() string { return strings.Title("hello world") } // "Hello World"
+
+func StrconvFormatUint() string { return strconv.FormatUint(255, 16) } // "ff"
+
+func StrconvIsPrint() bool { return strconv.IsPrint('a') && !strconv.IsPrint('\x00') }
+
+// BytesBuffer is the Builder stand-in: a host *bytes.Buffer boxed as a
+// GoValue, driven through reflective method dispatch.
+func BytesBuffer() string {
+	b := bytes.NewBufferString("x")
+	b.WriteString("y")
+	b.WriteByte('z')
+	return b.String() // "xyz"
+}
+
+func BytesFields() string { return string(bytes.Fields([]byte(" a b "))[0]) } // "a"
+
+func Utf8Count() int { return utf8.RuneCountInString("héllo") } // 5
+
+func Utf8Encode() string { return utf8.EncodeRune('☺') } // "☺" — script-shaped: returns a string
+
+func UnicodeDigit() bool {
+	return unicode.IsDigit('3') && unicode.IsUpper('A') && !unicode.IsSpace('x')
+}
+
+func MathRound() bool {
+	return math.Pow(2, 10) == 1024 && math.Abs(-3) == 3 && math.Min(2, 1) == 1 && math.MaxInt > 0 && math.Pi > 3.14
+}
+
+// RegexpReplace drives a host *regexp.Regexp through reflective dispatch.
+func RegexpReplace() string {
+	re := regexp.MustCompile("a+")
+	return re.ReplaceAllString("baaaac", "X") // "bXc"
+}
+
+func RegexpMatch() bool {
+	m, _ := regexp.MatchString("^h.+o$", "hello")
+	return m
+}
+
+func Base64Enc() string { return base64.StdEncoding.EncodeToString([]byte("hi")) } // "aGk="
+
+func Base64Dec() string {
+	s, _ := base64.StdEncoding.DecodeString("aGk=")
+	return string(s) // "hi"
+}
+
+func HexEnc() string { return hex.EncodeToString([]byte{104, 105}) } // "6869"
+
+func UrlEsc() string { return url.QueryEscape("a b&c") } // "a+b%26c"
+
+func UrlJoin() string {
+	u, _ := url.JoinPath("https://x.example/base", "a", "b.txt")
+	return u // "https://x.example/base/a/b.txt"
+}
+
+func HtmlEsc() string { return html.EscapeString("<b>&") } // "&lt;b&gt;&amp;"
+
+func PathJoin() string { return path.Join("a", "b", "c.txt") } // "a/b/c.txt"
+
+func PathSplit() string {
+	d, f := path.Split("/a/b/c.txt")
+	return d + "|" + f // "/a/b/|c.txt"
+}
+
+// JsonMarshal converts a script map to JSON through goJSON.
+func JsonMarshal() string {
+	b, err := json.Marshal(map[string]any{"x": 1, "ys": []string{"a", "b"}})
+	if err != nil {
+		return "err"
+	}
+	return string(b) // {"x":1,"ys":["a","b"]}
+}
+
+// JPoint feeds JsonMarshalStruct.
+type JPoint struct {
+	X int
+	Y string
+}
+
+// JsonMarshalStruct converts a script struct to JSON through its field names.
+func JsonMarshalStruct() string {
+	b, err := json.Marshal(JPoint{X: 1, Y: "a"})
+	if err != nil {
+		return "err"
+	}
+	return string(b) // {"X":1,"Y":"a"}
+}
+
+// JsonUnmarshal decodes into the runtime value tree: map[string]any lands
+// as a script map, numbers as float64.
+func JsonUnmarshal() string {
+	v, err := json.Unmarshal([]byte(`{"a": 1}`))
+	if err != nil {
+		return "err"
+	}
+	if v["a"] == 1.0 {
+		return "ok"
+	}
+	return "bad"
+}
 
 func main() {}

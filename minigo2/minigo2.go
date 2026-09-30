@@ -738,7 +738,7 @@ func (e *Engine) typeDefOf(pkg *runtime.Package, d *index.Decl) (runtime.Value, 
 			_, ptrRecv := md.Func.Recv.List[0].Type.(*ast.StarExpr)
 			td.Methods[name] = &runtime.Function{
 				Pkg: pkg, File: md.File, Decl: md.Func, Name: d.Name + "." + name,
-				PtrRecv: ptrRecv, Compile: compile.Func,
+				Recv: d.Name, PtrRecv: ptrRecv, Compile: compile.Func,
 			}
 		}
 	}

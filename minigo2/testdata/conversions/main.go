@@ -345,3 +345,310 @@ func ChainNilRetag() int {
 	}
 	return -1
 }
+
+// ---- declared pointer/func types keep their identity ----
+//
+// `type P *Sq`/`type F func()` values are tagged so `x.(P)` checks
+// declared identity rather than the underlying shape. (Go forbids
+// methods on pointer-underlying types, so P's member surface is fields
+// only; Sq's own methods do not promote onto P.)
+
+func (s *Sq) Inc() int {
+	s.X = s.X + 1
+	return s.X
+}
+
+func (s Sq) Val() int { return s.X }
+
+// PSq(x) re-tags: the result asserts to PSq, not to *Sq.
+func PtrAssertCastOK() int {
+	p := PSq(&Sq{X: 3})
+	var i any = p
+	q, ok := i.(PSq)
+	if !ok {
+		return -1
+	}
+	return q.X + 1 // 4
+}
+
+// `var p P` binds carry the same tag.
+func PtrAssertBindOK() int {
+	var p PSq = PSq(&Sq{X: 4})
+	var i any = p
+	if _, ok := i.(PSq); !ok {
+		return -1
+	}
+	return 1
+}
+
+// A bare *Sq is not a PSq — the pointee's shape must not leak.
+func PtrAssertAnonBad() int {
+	var p *Sq = &Sq{X: 1}
+	var i any = p
+	if _, ok := i.(PSq); ok {
+		return -1
+	}
+	return 1
+}
+
+// And a PSq is not an anonymous *Sq either.
+func PtrAssertNamedBad() int {
+	var i any = PSq(&Sq{X: 1})
+	if _, ok := i.(*Sq); ok {
+		return -1
+	}
+	return 1
+}
+
+// A nil declared pointer still asserts as P.
+func PtrAssertNilOK() int {
+	var p PSq
+	var i any = p
+	if _, ok := i.(PSq); !ok {
+		return -1
+	}
+	return 1
+}
+
+// A declared pointer's method set is empty — Sq's methods do not
+// promote onto PSq (this file would not compile under Go).
+func PtrNoPromote() int {
+	p := PSq(&Sq{X: 5})
+	return p.Inc() // PSq has no method Inc
+}
+
+// p.F reads through the named pointer to the pointee's fields.
+func PtrFieldThrough() int {
+	var p PSq = PSq(&Sq{X: 6})
+	return p.X + 1 // 7
+}
+
+// p.F = v writes through the named pointer into the pointee.
+func PtrFieldSet() int {
+	var p PSq = PSq(&Sq{X: 6})
+	p.X = 9
+	return p.X // 9
+}
+
+// *p = v stores through the named pointer and coerces to the pointee
+// declaration.
+func PtrSetInd() int {
+	var p PSq = PSq(&Sq{X: 1})
+	*p = Sq{X: 7}
+	return p.X // 7
+}
+
+func PtrSetIndBad() int {
+	var p PSq = PSq(&Sq{X: 1})
+	*p = Sq2{X: 7} // Sq2 is not Sq
+	return p.X
+}
+
+// A nil declared pointer dereferences like Go.
+func PtrNilDeref() int {
+	var p PSq
+	return p.X // panic: nil pointer dereference
+}
+
+// The typedef value itself is observable: materialized methods stamp
+// their receiver's declared name.
+func PtrTyp() any {
+	return Sq
+}
+
+// ---- declared func types ----
+
+type Fn func() int
+
+// A func type can carry methods (unlike a pointer type).
+func (f Fn) Call() int { return f() }
+
+func FnMethodCall() int {
+	var f Fn = func() int { return 30 }
+	return f.Call() + 3 // 33
+}
+
+func FnAssertCastOK() int {
+	f := Fn(func() int { return 5 })
+	var i any = f
+	if _, ok := i.(Fn); !ok {
+		return -1
+	}
+	return f()
+}
+
+func FnAssertBindOK() int {
+	var f Fn = func() int { return 6 }
+	var i any = f
+	if _, ok := i.(Fn); !ok {
+		return -1
+	}
+	return 1
+}
+
+func FnAssertAnonBad() int {
+	var i any = func() int { return 1 }
+	if _, ok := i.(Fn); ok {
+		return -1
+	}
+	return 1
+}
+
+// ---- named containers assert by identity ----
+
+func MapAssertBindOK() int {
+	m := M1{"a": 5}
+	var i any = m
+	if _, ok := i.(M1); !ok {
+		return -1
+	}
+	return 1
+}
+
+func MapAssertOtherBad() int {
+	m := M1{"a": 5}
+	var i any = m
+	if _, ok := i.(M2); ok { // M1 is not M2 — identical underlying is not enough
+		return -1
+	}
+	return 1
+}
+
+func MapAssertUnderlyingBad() int {
+	m := M1{"a": 5}
+	var i any = m
+	if _, ok := i.(map[string]int); ok { // M1 is not map[string]int either
+		return -1
+	}
+	return 1
+}
+
+func MapAssertCastOK() int {
+	m := M2(M1{"a": 5})
+	var i any = m
+	if _, ok := i.(M2); !ok {
+		return -1
+	}
+	return 1
+}
+
+func SliceAssertBindOK() int {
+	s := Ints{1, 2}
+	var i any = s
+	if _, ok := i.(Ints); !ok {
+		return -1
+	}
+	return 1
+}
+
+func SliceAssertUnderlyingBad() int {
+	s := Ints{1, 2}
+	var i any = s
+	if _, ok := i.([]int); ok { // Ints is not []int
+		return -1
+	}
+	return 1
+}
+
+func ChanAssertBindOK() int {
+	c := make(C1)
+	var i any = c
+	if _, ok := i.(C1); !ok {
+		return -1
+	}
+	return 1
+}
+
+func ChanAssertOtherBad() int {
+	c := make(C1)
+	var i any = c
+	if _, ok := i.(C2); ok {
+		return -1
+	}
+	return 1
+}
+
+// string() on a byte-family slice whose elements are not integers is
+// unreachable from typed Go — a host value can still produce one; it
+// must trap rather than skip elements silently.
+func AnyToString(x any) string {
+	return string(x.([]byte))
+}
+
+func AnyToStringRune(x any) string {
+	return string(x.([]rune))
+}
+
+// ---- nil receivers on nilable declared types ----
+//
+// A nil slice/map/chan/func-typed value is a valid receiver — Go binds
+// the nil and the body decides; only a pointer-peeled value receiver
+// dereferences (and panics) at dispatch.
+
+type LS []int
+
+func (s LS) Len() int { return len(s) }
+
+func NilSliceRecv() int {
+	var s LS
+	return s.Len() // len(nil) == 0, no panic
+}
+
+func NilFnSelectBind() int {
+	var f Fn
+	m := f.Call // binds the nil func — no panic at select
+	_ = m
+	return 1
+}
+
+func NilPtrValueMethod() int {
+	var p *Sq
+	return p.Val() // panic: nil pointer dereference
+}
+
+// ---- instantiated generics assert on type arguments ----
+
+func WrapAssertSameOK() int {
+	w := Wrap[int]{1}
+	var i any = w
+	if _, ok := i.(Wrap[int]); !ok {
+		return -1
+	}
+	return 1
+}
+
+func WrapAssertOtherBad() int {
+	w := Wrap[int]{1}
+	var i any = w
+	if _, ok := i.(Wrap[string]); ok { // Wrap[int] is not Wrap[string]
+		return -1
+	}
+	return 1
+}
+
+func WrapAssertNamedArgBad() int {
+	w := Wrap[MyInt]{1}
+	var i any = w
+	if _, ok := i.(Wrap[int]); ok { // Wrap[MyInt] is not Wrap[int]
+		return -1
+	}
+	return 1
+}
+
+func WrapAssertByteOK() int {
+	w := Wrap[byte]{1}
+	var i any = w
+	if _, ok := i.(Wrap[uint8]); !ok { // byte ≡ uint8
+		return -1
+	}
+	return 1
+}
+
+func WrapAssertRuneOK() int {
+	w := Wrap[rune]{1}
+	var i any = w
+	if _, ok := i.(Wrap[int32]); !ok { // rune ≡ int32
+		return -1
+	}
+	return 1
+}

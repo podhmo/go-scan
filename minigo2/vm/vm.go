@@ -561,7 +561,18 @@ func (v *VM) loop(f *frame) {
 			if tn, ok := asTypedNil(ref); ok && tn.Typ.Kind == runtime.KindPointer {
 				panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
 			}
-			if c, ok := ref.(*runtime.Cell); ok {
+			// a Named pointer unwraps to its cell so the pointee's
+			// declared type still constrains the store (`*p = v` on a
+			// `var p P` where P is `type P *Sq`).
+			ur := ref
+			for {
+				n, isNamed := ur.(*runtime.Named)
+				if !isNamed {
+					break
+				}
+				ur = n.V
+			}
+			if c, ok := ur.(*runtime.Cell); ok {
 				if c.ReadOnly {
 					f.trap("cannot assign to constant")
 				}
@@ -1350,17 +1361,22 @@ func (v *VM) namedMember(f *frame, n *runtime.Named, name string, recv runtime.V
 				r = &runtime.Cell{Elem: r}
 			}
 		} else {
-			if dv, ok := runtime.Deref(r); ok {
-				r = dv
-			}
-			r = valueCopy(r)
+			// a value receiver binds a copy of the named value — for a
+			// pointer-underlying declaration (`type P *Sq`) the pointer
+			// itself is the receiver, so the pointee stays shared.
+			r = valueCopy(n)
 		}
 		return &runtime.BoundMethod{Recv: r, Fn: m}
 	}
 	// fields live on the underlying struct value — promoted fields of the
 	// underlying type are stored as fields on it, but promoted METHODS of
-	// the underlying type are not part of the named type's method set.
-	if s, ok := n.V.(*runtime.Struct); ok {
+	// the underlying type are not part of the named type's method set. A
+	// pointer-underlying declaration (`type P *Sq`) dereferences first.
+	sv := n.V
+	if dv, ok := runtime.Deref(n.V); ok {
+		sv = dv
+	}
+	if s, isStruct := sv.(*runtime.Struct); isStruct {
 		for i, fn := range s.Def.Fields {
 			if fn == name {
 				return s.Fields[i]
@@ -2337,12 +2353,52 @@ func sameTypeDef(a, b *runtime.TypeDef) bool {
 		return false
 	}
 	if a.Name != "" || b.Name != "" {
-		return a.Name != "" && a.Name == b.Name && a.Pkg == b.Pkg
+		return a.Name != "" && canonBasicName(a.Name) == canonBasicName(b.Name) && a.Pkg == b.Pkg && bindsEq(a.Binds, b.Binds)
 	}
 	if a.Anon != nil && b.Anon != nil {
-		return typeExprName(a.Anon) == typeExprName(b.Anon)
+		return typeExprNameCtx(a.Anon, a.File, a.Pkg) == typeExprNameCtx(b.Anon, b.File, b.Pkg)
 	}
 	return false
+}
+
+// canonBasicName folds predeclared aliases: byte is uint8 and rune is int32
+// — an alias spelled at a call site and its canonical name are the same type.
+func canonBasicName(n string) string {
+	switch n {
+	case "byte":
+		return "uint8"
+	case "rune":
+		return "int32"
+	}
+	return n
+}
+
+// bindsEq compares generic instantiation bindings: `Wrap[int]` and
+// `Wrap[string]` share Name+Pkg but instantiate differently — a declared
+// type is identical only when its type arguments are.
+func bindsEq(a, b map[string]runtime.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || !bindArgEq(av, bv) {
+			return false
+		}
+	}
+	return true
+}
+
+func bindArgEq(a, b runtime.Value) bool {
+	at, aok := a.(*runtime.TypeDef)
+	bt, bok := b.(*runtime.TypeDef)
+	if aok != bok {
+		return false
+	}
+	if !aok {
+		return a == b
+	}
+	return sameTypeDef(at, bt)
 }
 
 // typeExprName renders a type AST to a comparable shape string for
@@ -2385,6 +2441,91 @@ func typeExprName(e ast.Expr) string {
 		return "func()"
 	}
 	return fmt.Sprintf("%T", e)
+}
+
+// typeExprNameCtx renders a type AST like typeExprName but package-aware:
+// a non-predeclared ident spells as pkgPath.Name, and a selector `a.T`
+// resolves through the file's import table to the imported path — so
+// `[]Foo` typedefs written in different packages never spell equal, and
+// `a.Foo`/`b.Foo` written under different aliases compare correctly.
+// Predeclared names and unresolved selectors stay unqualified.
+func typeExprNameCtx(e ast.Expr, file *syntax.File, pkg *runtime.Package) string {
+	switch t := e.(type) {
+	case *ast.Ident:
+		if predeclaredTypeName(t.Name) {
+			return t.Name
+		}
+		if pkg != nil {
+			return pkg.Path + "." + t.Name
+		}
+		return t.Name
+	case *ast.StarExpr:
+		return "*" + typeExprNameCtx(t.X, file, pkg)
+	case *ast.ArrayType:
+		return "[]" + typeExprNameCtx(t.Elt, file, pkg)
+	case *ast.MapType:
+		return "map[" + typeExprNameCtx(t.Key, file, pkg) + "]" + typeExprNameCtx(t.Value, file, pkg)
+	case *ast.ChanType:
+		return "chan " + typeExprNameCtx(t.Value, file, pkg)
+	case *ast.SelectorExpr:
+		if id, ok := t.X.(*ast.Ident); ok {
+			if p := importPathFor(file, id.Name); p != "" {
+				return p + "." + t.Sel.Name
+			}
+		}
+		return typeExprNameCtx(t.X, file, pkg) + "." + t.Sel.Name
+	case *ast.IndexExpr:
+		return typeExprNameCtx(t.X, file, pkg) + "[" + typeExprNameCtx(t.Index, file, pkg) + "]"
+	case *ast.IndexListExpr:
+		s := typeExprNameCtx(t.X, file, pkg) + "["
+		for i, x := range t.Indices {
+			if i > 0 {
+				s += ","
+			}
+			s += typeExprNameCtx(x, file, pkg)
+		}
+		return s + "]"
+	case *ast.ParenExpr:
+		return typeExprNameCtx(t.X, file, pkg)
+	case *ast.Ellipsis:
+		return "..." + typeExprNameCtx(t.Elt, file, pkg)
+	case *ast.InterfaceType:
+		return "interface{}"
+	case *ast.StructType:
+		return "struct{}"
+	case *ast.FuncType:
+		return "func()"
+	}
+	return fmt.Sprintf("%T", e)
+}
+
+// predeclaredTypeName reports whether name is a predeclared type-ish
+// identifier — basic types, aliases (byte, rune) and pseudo-types
+// (error, any, comparable) — which never carry a package qualifier.
+func predeclaredTypeName(name string) bool {
+	switch name {
+	case "bool", "string",
+		"int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "float64", "complex64", "complex128",
+		"error", "any", "comparable":
+		return true
+	}
+	return false
+}
+
+// importPathFor resolves a file-local import alias (explicit or the
+// basename-derived default) to its import path.
+func importPathFor(file *syntax.File, alias string) string {
+	if file == nil {
+		return ""
+	}
+	for _, im := range file.Imports {
+		if im.LocalName() == alias {
+			return im.Path
+		}
+	}
+	return ""
 }
 
 // tdName is a readable name for a typedef in diagnostics.
@@ -2511,24 +2652,30 @@ func (v *VM) convert(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error
 			// []byte or []rune -> string: the element family decides.
 			// An untyped slice (host-produced) reads as bytes.
 			fam := byte('b')
+			tn := "[]byte"
 			if sx.Typ != nil {
 				fam = v.elemFamily(v.elemTypedef(sx.Typ))
+				tn = tdName(sx.Typ)
 			}
 			switch fam {
 			case 'b':
 				bs := make([]byte, 0, len(sx.Elems))
 				for _, e := range sx.Elems {
-					if i, ok := runtime.Unwrap(e).(int64); ok {
-						bs = append(bs, byte(i))
+					i, ok := runtime.Unwrap(e).(int64)
+					if !ok {
+						return nil, fmt.Errorf("cannot convert %s to string", tn)
 					}
+					bs = append(bs, byte(i))
 				}
 				return string(bs), nil
 			case 'r':
 				rs := make([]rune, 0, len(sx.Elems))
 				for _, e := range sx.Elems {
-					if i, ok := runtime.Unwrap(e).(int64); ok {
-						rs = append(rs, rune(i))
+					i, ok := runtime.Unwrap(e).(int64)
+					if !ok {
+						return nil, fmt.Errorf("cannot convert %s to string", tn)
 					}
+					rs = append(rs, rune(i))
 				}
 				return string(rs), nil
 			}
@@ -2578,6 +2725,12 @@ func (v *VM) convert(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error
 	case runtime.KindFunc:
 		switch x.(type) {
 		case *runtime.Function, *runtime.Closure, *runtime.BoundMethod, *runtime.BuiltinFunc:
+			// a declared func type re-tags so `x.(F)` checks identity
+			// and member access sees only F's declared method set —
+			// function values carry no swappable tag otherwise.
+			if td.Spec != nil {
+				return &runtime.Named{Typ: td, V: x}, nil
+			}
 			return x, nil // signatures are not modeled
 		}
 		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
@@ -2720,6 +2873,12 @@ func (v *VM) convertPointer(td *runtime.TypeDef, x runtime.Value) (runtime.Value
 			}
 		}
 	}
+	// a declared pointer type re-tags so `x.(P)` checks identity and
+	// member access sees only P's declared method set — a bare cell's
+	// dynamic type stays the anonymous *Elem.
+	if td.Spec != nil {
+		return &runtime.Named{Typ: td, V: x}, nil
+	}
 	return x, nil
 }
 
@@ -2766,45 +2925,59 @@ func (v *VM) underlyingShape(td *runtime.TypeDef) string {
 		src = u.Spec.Type
 	}
 	if src != nil {
-		return v.shapeSpelling(src, u.Binds)
+		return v.shapeSpelling(src, u)
 	}
 	return normBasicName(u.Name)
 }
 
-// shapeSpelling renders a type expression to a comparable string under
-// generic instantiation binds: bound type parameters resolve to their
-// argument's spelling. byte and rune normalize to their canonical names
-// so []byte and []uint8 spell identically (byte IS uint8).
-func (v *VM) shapeSpelling(e ast.Expr, binds map[string]runtime.Value) string {
+// shapeSpelling renders a type expression to a comparable string in the
+// context of its declaring typedef: generic binds substitute bound type
+// parameters, non-predeclared idents qualify by package path, and
+// `a.T` selectors resolve through the file's import table — so `[]Foo`
+// in two packages never collides. byte and rune normalize to their
+// canonical names so []byte and []uint8 spell identically (byte IS uint8).
+func (v *VM) shapeSpelling(e ast.Expr, ctx *runtime.TypeDef) string {
+	binds := ctx.Binds
 	switch t := e.(type) {
 	case *ast.Ident:
 		if btd := boundTypedef(binds, t.Name); btd != nil {
 			return v.boundShape(btd)
 		}
+		if predeclaredTypeName(t.Name) {
+			return normBasicName(t.Name)
+		}
+		if ctx.Pkg != nil {
+			return ctx.Pkg.Path + "." + t.Name
+		}
 		return normBasicName(t.Name)
 	case *ast.StarExpr:
-		return "*" + v.shapeSpelling(t.X, binds)
+		return "*" + v.shapeSpelling(t.X, ctx)
 	case *ast.ArrayType:
-		return "[]" + v.shapeSpelling(t.Elt, binds)
+		return "[]" + v.shapeSpelling(t.Elt, ctx)
 	case *ast.Ellipsis:
-		return "[]" + v.shapeSpelling(t.Elt, binds)
+		return "[]" + v.shapeSpelling(t.Elt, ctx)
 	case *ast.MapType:
-		return "map[" + v.shapeSpelling(t.Key, binds) + "]" + v.shapeSpelling(t.Value, binds)
+		return "map[" + v.shapeSpelling(t.Key, ctx) + "]" + v.shapeSpelling(t.Value, ctx)
 	case *ast.ChanType:
-		return "chan " + v.shapeSpelling(t.Value, binds)
+		return "chan " + v.shapeSpelling(t.Value, ctx)
 	case *ast.ParenExpr:
-		return v.shapeSpelling(t.X, binds)
+		return v.shapeSpelling(t.X, ctx)
 	case *ast.SelectorExpr:
-		return v.shapeSpelling(t.X, binds) + "." + t.Sel.Name
+		if id, ok := t.X.(*ast.Ident); ok {
+			if p := importPathFor(ctx.File, id.Name); p != "" {
+				return p + "." + t.Sel.Name
+			}
+		}
+		return v.shapeSpelling(t.X, ctx) + "." + t.Sel.Name
 	case *ast.IndexExpr:
-		return v.shapeSpelling(t.X, binds) + "[" + v.shapeSpelling(t.Index, binds) + "]"
+		return v.shapeSpelling(t.X, ctx) + "[" + v.shapeSpelling(t.Index, ctx) + "]"
 	case *ast.IndexListExpr:
-		s := v.shapeSpelling(t.X, binds) + "["
+		s := v.shapeSpelling(t.X, ctx) + "["
 		for i, x := range t.Indices {
 			if i > 0 {
 				s += ","
 			}
-			s += v.shapeSpelling(x, binds)
+			s += v.shapeSpelling(x, ctx)
 		}
 		return s + "]"
 	case *ast.InterfaceType:
@@ -2818,10 +2991,13 @@ func (v *VM) shapeSpelling(e ast.Expr, binds map[string]runtime.Value) string {
 }
 
 // boundShape spells an instantiated type argument: a named type keeps its
-// declared name (T=MyInt spells "MyInt", not "int"), an anonymous shape
-// spells structurally.
+// declared identity (T=MyInt spells "pkg.MyInt", not "int"), an anonymous
+// shape spells structurally.
 func (v *VM) boundShape(td *runtime.TypeDef) string {
 	if td.Name != "" {
+		if td.Pkg != nil {
+			return td.Pkg.Path + "." + td.Name
+		}
 		return normBasicName(td.Name)
 	}
 	src := td.Anon
@@ -2829,7 +3005,7 @@ func (v *VM) boundShape(td *runtime.TypeDef) string {
 		src = td.Spec.Type
 	}
 	if src != nil {
-		return v.shapeSpelling(src, td.Binds)
+		return v.shapeSpelling(src, td)
 	}
 	return fmt.Sprintf("%p", td)
 }
@@ -2992,6 +3168,12 @@ func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
 		// (`case nil:` in a type switch is matched by BinEql, not here.)
 		return false
 	}
+	if td.Kind == runtime.KindAlias {
+		// aliases are transparent: `x.(A)` on `type A = T` asserts to T
+		if u := v.peelAlias(td); u != td {
+			td = u
+		}
+	}
 	if n, ok := x.(*runtime.Named); ok {
 		// a Named value's dynamic type is its declared typedef —
 		// `x.(MyInt)` on MyInt matches, `x.(int)` does not.
@@ -3004,6 +3186,12 @@ func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
 		return v.satisfiesIface(f, td, x)
 	}
 	if td.Kind == runtime.KindPointer {
+		if td.Spec != nil {
+			// a declared pointer type asserts on its tag alone — the
+			// Named branch above already handled it; a bare cell's
+			// dynamic type is the anonymous *Elem, never P.
+			return false
+		}
 		// asserting *T on a non-nil value: dereference one level and match
 		// the element type (a Cell IS the pointer in this model).
 		et, err := v.H.ElemOf(td)
@@ -3029,7 +3217,7 @@ func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
 		if xv.Def == td {
 			return true
 		}
-		return xv.Def != nil && td.Name != "" && xv.Def.Name == td.Name && xv.Def.Pkg == td.Pkg && td.Pkg != nil
+		return xv.Def != nil && td.Name != "" && xv.Def.Name == td.Name && xv.Def.Pkg == td.Pkg && td.Pkg != nil && bindsEq(xv.Def.Binds, td.Binds)
 	case int64:
 		switch td.Name {
 		case "int", "int8", "int16", "int32", "int64", "uint", "uint8",
@@ -3050,16 +3238,35 @@ func (v *VM) typeMatches(f *frame, td *runtime.TypeDef, x runtime.Value) bool {
 	case bool:
 		return td.Name == "bool"
 	case *runtime.Slice:
-		return td.Kind == runtime.KindSlice
+		return v.containerAssert(f, td, xv.Typ, runtime.KindSlice)
 	case *runtime.Map:
-		return td.Kind == runtime.KindMap
+		return v.containerAssert(f, td, xv.Typ, runtime.KindMap)
 	case *runtime.Chan:
-		return td.Kind == runtime.KindChan
+		return v.containerAssert(f, td, xv.Typ, runtime.KindChan)
 	case *runtime.Function, *runtime.Closure, *runtime.BoundMethod, *runtime.BuiltinFunc:
-		return td.Kind == runtime.KindFunc
+		// anonymous func shapes kind-match; a declared func type asserts
+		// on its Named tag only.
+		return td.Kind == runtime.KindFunc && td.Spec == nil
 	default:
 		return false
 	}
+}
+
+// containerAssert runs x.(T) on a stamped slice/map/chan: a declared tag
+// asserts by typedef identity (`type A []int` is not `[]int`), anonymous
+// tags compare by underlying shape ([]byte IS []uint8), and untagged
+// (host-produced) containers fall back to the kind check.
+func (v *VM) containerAssert(f *frame, td, tag *runtime.TypeDef, kind runtime.TypeKind) bool {
+	if td.Kind != kind {
+		return false
+	}
+	if tag == nil {
+		return true
+	}
+	if td.Name != "" || tag.Name != "" {
+		return v.typeMatchesTD(f, td, tag)
+	}
+	return v.convShapeEq(td, tag)
 }
 
 // satisfiesIface checks a value against an interface typedef's method set.
@@ -3145,26 +3352,22 @@ func (v *VM) typeMatchesTD(f *frame, td, dyn *runtime.TypeDef) bool {
 // type — a method on *T still binds (the body panics on field access);
 // a field select on a nil pointer panics like Go.
 func (v *VM) memberOfType(f *frame, td *runtime.TypeDef, name string, recv runtime.Value, isIface bool) runtime.Value {
-	// a method on *T lives on the element typedef
-	for td != nil && td.Kind == runtime.KindPointer {
-		et, err := v.H.ElemOf(td)
-		if err != nil || et == nil {
-			break
-		}
-		td = et
-	}
-	if td != nil {
+	// methods resolve on the nil's own typedef first, then through an
+	// anonymous pointer chain to the pointee (a *T nil keeps *T's method
+	// set). A declared pointer typedef (`type P *Sq`) does not promote
+	// pointee methods — P's method set is only what is declared on P.
+	peeled := false
+	for td != nil {
 		if m, ok := td.Methods[name]; ok {
-			// A value-receiver method would dereference the nil pointer at
-			// dispatch — panic eagerly like Go. A pointer-receiver method
-			// keeps the typed nil so `s == nil` inside the body is true.
-			if tn, isNil := recv.(*runtime.TypedNil); isNil && !m.PtrRecv {
-				_ = tn
-				panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
-			}
-			if in, isNil := recv.(*runtime.IfaceNil); isNil && !m.PtrRecv {
-				_ = in
-				panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
+			// A value receiver dereferences a peeled pointer chain at
+			// dispatch — panic on nil like Go. A nil carrying a nilable
+			// typedef (declared pointer/slice/map/chan/func values can
+			// be nil) is a valid receiver: the call binds it and the
+			// body decides.
+			if !m.PtrRecv {
+				if _, isNil := asTypedNil(recv); isNil && (peeled || !v.nilableTypedef(td)) {
+					panic(&runtime.Panic{Value: "runtime error: invalid memory address or nil pointer dereference"})
+				}
 			}
 			r := recv
 			if !m.PtrRecv {
@@ -3174,6 +3377,15 @@ func (v *VM) memberOfType(f *frame, td *runtime.TypeDef, name string, recv runti
 			}
 			return &runtime.BoundMethod{Recv: r, Fn: m}
 		}
+		if td.Kind != runtime.KindPointer || td.Spec != nil {
+			break
+		}
+		et, err := v.H.ElemOf(td)
+		if err != nil || et == nil {
+			break
+		}
+		td = et
+		peeled = true
 	}
 	// field access on a nil pointer panics in Go; on a nil slice/map/chan
 	// it is a plain invalid select.
@@ -3387,8 +3599,19 @@ func (v *VM) coerceConcrete(f *frame, x runtime.Value, td *runtime.TypeDef) runt
 			}
 		}
 	}
-	if td.Kind == runtime.KindNamedBasic && declaredType(td) {
-		return &runtime.Named{Typ: td, V: x}
+	switch td.Kind {
+	case runtime.KindNamedBasic:
+		if declaredType(td) {
+			return &runtime.Named{Typ: td, V: x}
+		}
+	case runtime.KindPointer, runtime.KindFunc:
+		// declared pointer/func types tag the bound value so asserts
+		// check declared identity and member access sees only the
+		// declared method set. Anonymous *T/func() binds stay bare —
+		// they carry the pointee's members (T's method set promotes).
+		if td.Spec != nil {
+			return &runtime.Named{Typ: td, V: x}
+		}
 	}
 	return x
 }
@@ -3426,6 +3649,23 @@ func (v *VM) peelNamed(td *runtime.TypeDef) *runtime.TypeDef {
 	return td
 }
 
+// nilableTypedef reports whether a typedef's values can be nil at all —
+// declared pointers, slices, maps, chans, funcs and interfaces have a
+// nil zero, so a nil receiver of one of these types still binds as a
+// method receiver (the body decides). Structs and basics cannot be nil.
+func (v *VM) nilableTypedef(td *runtime.TypeDef) bool {
+	u := v.peelNamed(td)
+	if u == nil {
+		return false
+	}
+	switch u.Kind {
+	case runtime.KindPointer, runtime.KindSlice, runtime.KindMap,
+		runtime.KindChan, runtime.KindFunc, runtime.KindInterface:
+		return true
+	}
+	return false
+}
+
 // tdShapeEq reports whether two typedefs have the same underlying shape —
 // for typed-nil retagging (`var s S = ([]int)(nil)` needs S ~ []int).
 // Shape spelling normalizes byte/rune and resolves bound type params
@@ -3445,7 +3685,7 @@ func (v *VM) tdShapeEq(a, b *runtime.TypeDef) bool {
 		return true
 	}
 	if pa.Anon != nil && pb.Anon != nil {
-		return typeExprName(pa.Anon) == typeExprName(pb.Anon)
+		return typeExprNameCtx(pa.Anon, pa.File, pa.Pkg) == typeExprNameCtx(pb.Anon, pb.File, pb.Pkg)
 	}
 	return pa.Anon == nil && pb.Anon == nil
 }

@@ -116,15 +116,19 @@ func convertConfigsToPatterns(configs []patterns.PatternConfig, logger *slog.Log
 }
 
 // buildKeyForMethod constructs the fully qualified key for a method.
-// A method's Name is "Type.Method"; the analyzer looks calls up as
-// "(pkg.Type).Method" / "(*pkg.Type).Method" — parentheses wrap the whole
-// receiver type — so the key is rebuilt from Pkg.Path, Name, and PtrRecv.
-// The package's Path is already the import path resolved by the engine,
-// so no filesystem-to-module conversion is needed.
+// Materialized methods carry the receiver's type name in Recv (the Name
+// is "Type.Method" — the split fallback covers methods built by other
+// paths, e.g. embedded/promoted bindings). The analyzer looks calls up
+// as "(pkg.Type).Method" / "(*pkg.Type).Method" — parentheses wrap the
+// whole receiver type — so the key is rebuilt from Pkg.Path, Recv, and
+// PtrRecv. The package's Path is already the import path resolved by the
+// engine, so no filesystem-to-module conversion is needed.
 func buildKeyForMethod(fn *runtime.Function) string {
-	typeName, methodName := fn.Name, ""
-	if i := strings.LastIndexByte(typeName, '.'); i >= 0 {
-		typeName, methodName = typeName[:i], typeName[i+1:]
+	typeName, methodName := fn.Recv, fn.Name
+	if typeName != "" {
+		methodName = strings.TrimPrefix(methodName, typeName+".")
+	} else if i := strings.LastIndexByte(methodName, '.'); i >= 0 {
+		typeName, methodName = methodName[:i], methodName[i+1:]
 	}
 	recv := fn.Pkg.Path + "." + typeName
 	if fn.PtrRecv {

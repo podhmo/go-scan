@@ -57,6 +57,20 @@ func TestConversions(t *testing.T) {
 			{"NilToSliceOK", int64(1)},
 			{"SlicePtrCast", int64(1)},
 			{"ByteOfStringIdx", int64(-23)},
+
+			// slicing/append keep the declared tag; typed nil through chains
+			{"SlicedRuneString", "él"},
+			{"SlicedNamedSlice", int64(15)},
+			{"AppendKeepsByteTag", "hi"},
+			{"AppendKeepsRuneTag", "hé"},
+			{"AppendOnTypedNil", "ü"},
+			{"ChainNilRetag", int64(1)},
+
+			// nested generics and anonymous struct sources
+			{"NestedGenericCast", int64(6)},
+			{"NestedGenericLit", int64(4)},
+			{"NestedGenericElemAssign", int64(11)},
+			{"AnonStructCast", int64(5)},
 		}
 		for _, c := range cases {
 			got := run(t, e, "./testdata/conversions", c.fn)
@@ -83,6 +97,7 @@ func TestConversions(t *testing.T) {
 			{"StringToSliceBad", "cannot convert string to []int"},
 			{"PtrToSliceBad", "cannot convert *byte to []byte"},
 			{"NilToSliceBad", "cannot convert []rune to []byte"},
+			{"AnonStructCastBad", "cannot convert struct{} to Sq2"},
 		}
 		for _, c := range cases {
 			_, err := e.Run(context.Background(), "./testdata/conversions", c.fn)

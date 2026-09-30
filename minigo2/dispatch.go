@@ -277,13 +277,13 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 	case *ast.IndexListExpr:
 		return e.resolveTypeRef(from, t.X)
 	case *ast.ArrayType:
-		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: from.Pkg, File: from.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: from.Pkg, File: from.File, Binds: from.Binds}, nil
 	case *ast.MapType:
-		return &runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: from.Pkg, File: from.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: from.Pkg, File: from.File, Binds: from.Binds}, nil
 	case *ast.ChanType:
-		return &runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: from.Pkg, File: from.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: from.Pkg, File: from.File, Binds: from.Binds}, nil
 	case *ast.StructType:
-		td := &runtime.TypeDef{Kind: runtime.KindStruct, Anon: t, Pkg: from.Pkg, File: from.File}
+		td := &runtime.TypeDef{Kind: runtime.KindStruct, Anon: t, Pkg: from.Pkg, File: from.File, Binds: from.Binds}
 		for _, f := range t.Fields.List {
 			if len(f.Names) == 0 {
 				td.EmbedSpecs = append(td.EmbedSpecs, f.Type)
@@ -297,7 +297,7 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 		}
 		return td, nil
 	case *ast.InterfaceType:
-		td := &runtime.TypeDef{Kind: runtime.KindInterface, Anon: t, Pkg: from.Pkg, File: from.File}
+		td := &runtime.TypeDef{Kind: runtime.KindInterface, Anon: t, Pkg: from.Pkg, File: from.File, Binds: from.Binds}
 		for _, m := range t.Methods.List {
 			if len(m.Names) == 0 {
 				td.IEmbeds = append(td.IEmbeds, m.Type)
@@ -309,7 +309,7 @@ func (e *Engine) resolveTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.Typ
 		}
 		return td, nil
 	case *ast.FuncType:
-		return &runtime.TypeDef{Kind: runtime.KindFunc, Anon: t, Pkg: from.Pkg, File: from.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindFunc, Anon: t, Pkg: from.Pkg, File: from.File, Binds: from.Binds}, nil
 	case *ast.Ident:
 		// an ident may name a bound type parameter — the element of `[]T`
 		// inside an instantiated `type Wrap[T any] []T` resolves to the
@@ -407,7 +407,7 @@ func (e *Engine) elemOf(td *runtime.TypeDef) (*runtime.TypeDef, error) {
 // through resolveTypeRef to P's own typedef, which memberOfType peels.
 func (e *Engine) elemTypeRef(from *runtime.TypeDef, x ast.Expr) (*runtime.TypeDef, error) {
 	if st, ok := x.(*ast.StarExpr); ok {
-		return &runtime.TypeDef{Kind: runtime.KindPointer, Anon: st, Pkg: from.Pkg, File: from.File}, nil
+		return &runtime.TypeDef{Kind: runtime.KindPointer, Anon: st, Pkg: from.Pkg, File: from.File, Binds: from.Binds}, nil
 	}
 	return e.resolveTypeRef(from, x)
 }

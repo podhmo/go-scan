@@ -1614,7 +1614,7 @@ func (v *VM) slice(f *frame, base, lo, hi runtime.Value) runtime.Value {
 		return b
 	case *runtime.Slice:
 		l, h := bounds(f, lo, hi, int64(len(b.Elems)))
-		return &runtime.Slice{Elems: b.Elems[l:h]}
+		return &runtime.Slice{Elems: b.Elems[l:h], Typ: b.Typ}
 	case string:
 		l, h := bounds(f, lo, hi, int64(len(b)))
 		return b[l:h]
@@ -2452,8 +2452,16 @@ func (v *VM) convert(td *runtime.TypeDef, x runtime.Value) (runtime.Value, error
 	}
 	// a typed nil converts to another nilable type by re-tagging when the
 	// underlying shapes match (Go requires identical underlying types).
+	// Declared chains (`type C B`) peel like the untyped-nil path so the
+	// result carries the target's canonical zero form.
 	if tn, ok := asTypedNil(x); ok {
-		switch td.Kind {
+		k := td.Kind
+		if k == runtime.KindNamedBasic || k == runtime.KindAlias {
+			if u := v.peelNamed(td); u != nil {
+				k = u.Kind
+			}
+		}
+		switch k {
 		case runtime.KindSlice, runtime.KindMap, runtime.KindChan, runtime.KindFunc, runtime.KindPointer:
 			if tn.Typ != nil && !v.convShapeEq(tn.Typ, td) {
 				return nil, fmt.Errorf("cannot convert %s to %s", tdName(tn.Typ), tdName(td))
@@ -2729,7 +2737,7 @@ func (v *VM) convertStruct(td *runtime.TypeDef, x runtime.Value) (runtime.Value,
 	if !ok {
 		return nil, fmt.Errorf("cannot convert %s to %s", typeNameOf(x), tdName(td))
 	}
-	if s.Def != nil && s.Def != td && tagIsNamed(s.Def) && !structFieldsEq(s.Def, td) {
+	if s.Def != nil && s.Def != td && !structFieldsEq(s.Def, td) {
 		return nil, fmt.Errorf("cannot convert %s to %s", tdName(s.Def), tdName(td))
 	}
 	return &runtime.Struct{Def: td, Fields: append([]runtime.Value{}, s.Fields...)}, nil

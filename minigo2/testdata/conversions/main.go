@@ -276,3 +276,72 @@ func ByteOfStringIdx() int {
 	b[0] = 'x'
 	return int(s[0]) - int(b[0]) // 97-120 = -23 (copy semantics)
 }
+
+// ---- operations that must preserve the slice's declared type ----
+
+func SlicedRuneString() string {
+	r := []rune("héllo")
+	return string(r[1:3]) // "él" — slicing keeps the []rune tag
+}
+
+func SlicedNamedSlice() int {
+	t := Ints2(Ints{7, 8}[0:2]) // sub-slice keeps Ints: []MyInt -> Ints2
+	return int(t[0]) + int(t[1])
+}
+
+func AppendKeepsByteTag() string {
+	b := []byte("h")
+	return string(append(b, 'i')) // append keeps []byte: "hi"
+}
+
+func AppendKeepsRuneTag() string {
+	r := []rune("h")
+	return string(append(r, 'é'))
+}
+
+func AppendOnTypedNil() string {
+	var r []rune
+	return string(append(r, 'ü')) // nil's declared type survives append
+}
+
+// ---- nested generics ----
+
+type Wrap2[T any] [][]T
+
+func NestedGenericCast() int {
+	w := Wrap2[int]([][]int{{1, 2}, {3}})
+	return w[0][0] + w[0][1] + w[1][0]
+}
+
+func NestedGenericLit() int {
+	w := Wrap2[int]{{1, 2}, {3}} // element coerce resolves []T under binds
+	return w[0][0] + w[1][0]
+}
+
+func NestedGenericElemAssign() int {
+	w := Wrap2[int]{{1}, {2}}
+	w[0] = []int{9} // element type is []T with T=int
+	return w[0][0] + w[1][0]
+}
+
+// ---- anonymous-struct sources ----
+
+func AnonStructCast() int {
+	s := Sq2(struct{ X int }{X: 5})
+	return s.X
+}
+
+func AnonStructCastBad() int {
+	s := Sq2(struct{ Y int }{Y: 5}) // different fields: Go rejects
+	return s.X
+}
+
+// ---- typed nil through a named chain ----
+
+func ChainNilRetag() int {
+	c := C(B(nil)) // same canonical zero as C(nil)
+	if c == nil {
+		return 1
+	}
+	return -1
+}

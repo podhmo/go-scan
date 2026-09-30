@@ -12,3 +12,6 @@ func errors.Is(error, error) #8
 func errors.As(error, any) #10
   func errors.as(error, any, reflectlite.Value, reflectlite.Type) #11
     func .As(any) #7
+func errors.AsType(error) #12
+  func errors.asType(error, *E) #13
+    func .As(any) #7

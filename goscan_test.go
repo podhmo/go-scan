@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json" // Added for manual cache file creation in tests
 	"fmt"           // Added for debug printing in tests
+	"go/version"
 	"os"            // Added for os.MkdirTemp, os.ReadFile, os.Stat
 	"path/filepath" // Added for filepath.Join, filepath.Abs
 	"reflect"       // Added for reflect.DeepEqual in tests
-	"sort"          // Added for sorting slices in tests
-	"strings"       // Added for strings.Contains
+	"runtime"
+	"sort"    // Added for sorting slices in tests
+	"strings" // Added for strings.Contains
 	"testing"
 
 	// "time" // Removed: No longer used
@@ -418,6 +420,11 @@ func TestListExportedSymbols(t *testing.T) {
 		"TrimRightFunc",
 		"TrimSpace",
 		"TrimSuffix",
+	}
+
+	// strings.CutLast was added in Go 1.27.
+	if version.Compare(runtime.Version(), "go1.27") >= 0 {
+		expectedSymbols = append(expectedSymbols, "CutLast")
 	}
 
 	if diff := cmp.Diff(expectedSymbols, symbols); diff != "" {

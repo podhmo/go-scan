@@ -7,6 +7,7 @@ digraph dependencies {
   "github.com/podhmo/go-scan/testdata/walk/b" [label="github.com/podhmo/go-scan/testdata/walk/b"];
   "github.com/podhmo/go-scan/testdata/walk/c" [label="github.com/podhmo/go-scan/testdata/walk/c"];
   "internal/fmtsort" [label="internal/fmtsort"];
+  "internal/stringslite" [label="internal/stringslite"];
   "io" [label="io"];
   "math" [label="math"];
   "os" [label="os"];
@@ -18,6 +19,7 @@ digraph dependencies {
 
   "fmt" -> "errors";
   "fmt" -> "internal/fmtsort";
+  "fmt" -> "internal/stringslite";
   "fmt" -> "io";
   "fmt" -> "math";
   "fmt" -> "os";

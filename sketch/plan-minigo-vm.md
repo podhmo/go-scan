@@ -1575,4 +1575,100 @@ different class of work. A second, symbol-shaped scanner path would
 duplicate `memberDecl` semantics for marginal gain. Left in TODO.md
 until a measured cost shows up.
 
+## 32. Round-13 notes: filesystem/exec intrinsics, per-call root checks, host-struct fields, virtual cwd
+
+The exercise for this round: build a mage/go-task-style task runner on top
+of minigo2 (`examples/task-run`, plan: `sketch/plan-task-runner.md`) and
+implement whatever the runner's Taskfile needed. The gaps it forced:
+
+- **os file I/O, always bound, checked per call.** `Stat`, `Lstat`,
+  `ReadFile`, `WriteFile`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`,
+  `Rename`, `Truncate`, `ReadDir`, `Open`/`Create`/`OpenFile`,
+  `MkdirTemp`/`CreateTemp`, the `IsNotExist`/`IsExist`/`IsPermission`/
+  `IsTimeout` predicates, error sentinels (`ErrNotExist`/`ErrExist`/
+  `ErrPermission`/`ErrClosed`/`ErrInvalid`/`ErrNoDeadline` as boxed
+  GoValues so `errors.Is` works script-side), `O_*`/`Mode*`/seek consts.
+  This resolves the long-standing restricted-mode question (old §18 note
+  "still no policy for future file/network I/O declared per-call rather
+  than per-symbol"): file APIs are bound unconditionally, and every path
+  argument passes through `Engine.fsPath` — relative paths anchor at the
+  engine's virtual cwd, then `resolve.BuildConfig.CheckPath` enforces
+  AllowedRoots. The policy lives in the call, not in the symbol set, so a
+  restricted script can still read/write *inside* its roots. Symlink
+  handling: `CheckPath` resolves through the nearest existing ancestor
+  (`resolveSymlinkNearest`) so a not-yet-existing write target under a
+  symlinked dir can't escape either.
+- **A virtual working directory.** `WithWorkingDir(dir)` /
+  `Engine.WorkingDir()` + `e.cwd` (defaults to `NewEngine`'s startDir,
+  copied into `NewSession`). `os.Getwd` reports it, `os.Chdir` moves it
+  (after a stat + roots check), `filepath.Abs`/`Rel` anchor at it, and
+  `exec.Command` defaults `cmd.Dir` to it. Deliberate divergence: the
+  host process never chdirs — `host.Getwd` still reports the real one.
+  Reason: an interpreter inside a tool (REPL, test harness) must not
+  mutate host state; a task runner needs cwd semantics.
+- **`os/exec`, unrestricted-only.** `Command`/`LookPath` + `ErrNotFound`/
+  `ErrDot`. Spawning a subprocess escapes per-path confinement entirely,
+  so the whole package is only bound when `AllowedRoots` is empty —
+  process control stays in the "host process surface" class alongside
+  `os.Getenv`/`os.Args`. `exec.Cmd` needs no hand-written wrapper: the
+  boxed GoValue carries it.
+- **Host-struct field get/set on `*runtime.GoValue`.** `cmd.Dir = "sub"`,
+  `cmd.Stdout = os.Stdout`, reading `cmd.ProcessState`. `selectMember`
+  probes exported fields first (Go forbids field/method name overlap),
+  then falls back to the reflective method set; `setField` writes through
+  pointer chains. Marshalling goes through the new `toReflectValue`:
+  Named/Cell unwrap, `*Slice`/`*Map` convert element-wise to typed
+  slices/maps, scalars assign or convert, interface targets accept any
+  assignable value (that's how `cmd.Stdout = os.Stdout` stores
+  `*os.File` into an `io.Writer` slot). The reflective method call path
+  uses the same conversion per parameter, with a `CallSlice` fast path
+  for a trailing slice arg (`f(xs)` where the param is `...T`), so
+  `f.Write(data)` accepts a script slice as `[]byte` — and, via
+  `ConvertibleTo`, even a plain string.
+- **Wider `goValueOf`/`scriptVal` coverage.** `[]byte` → `*Slice` of
+  int64s (so `string(b)`, indexing, `len` all behave); `[]string` →
+  `*Slice` of strings; `time.Duration` → int64; int8–32/uint8–32/float32
+  widen; uint64 boxes past MaxInt64 like `ValueOf`; `error` stays boxed
+  so `Error`/`Unwrap` dispatch reflectively. Host `os.ReadDir` entries
+  marshal per-element as `GoValue{fs.DirEntry}` — `d.Name()`/`IsDir()`
+  resolve through reflection.
+
+### Task-runner findings that cost nothing in the VM
+
+- `task.Deps(Build)` needs **no special form**: a function value passed
+  as an argument is already lazy — referencing `Build` materializes the
+  decl but calling it is the script's choice. Quoted calls remain the
+  tool for DSL-shaped *declarations* (`define.Rule(...)`), not for
+  ordinary "pass the callback" sites. Dedup/cycle detection is host-side
+  bookkeeping keyed on the `*runtime.Function` pointer (plus marshalled
+  args for `task.F` thunks).
+- Task discovery is pure index inspection: `pkg.Index.Funcs` +
+  `FuncDecl.Doc` + a signature shape check — `LazyInit`-style "names
+  without execution" is exactly what `task-run -l` wants, and it costs
+  one `LoadFile` and no initialization.
+
+### Out-of-plan notes (things learned while implementing)
+
+- `[]byte(x)` is still unspellable in script (`T(x)` conversion has no
+  slice-of-byte case — `TypeDef` carries no element type for conversions).
+  Worked around host-side: `os.WriteFile`/`f.Write` accept strings and
+  byte-slices alike. Worth a real `[]byte` conversion rule eventually;
+  scripts hit it whenever a stdlib signature says `[]byte`.
+- Relative-in → relative-out had to be preserved explicitly in
+  `filepath.Glob`/`WalkDir`: Go returns paths in the shape of the
+  argument, but the intrinsic anchors at `e.cwd` first — so results are
+  re-relativized when the input was relative.
+- Method-call marshalling silently changed meaning for a bad arity:
+  `reflect.ValueOf(nil)` produced an invalid Value and `Call` panicked —
+  now a clean "needs N args" error per method.
+- `go f()` being synchronous turned out fine for `task.SerialDeps` —
+  documented approximation — but true `Deps`-parallelism maps onto the
+  real-goroutine feature, deliberately deferred. Sharing one memory space
+  (tasks mutate shared Go state without serialization) is the argument
+  for eventually doing it — recorded as far-future optional work.
+- `os.Getenv` under `AllowedRoots` stays unbound (env is host-process
+  surface); a task runner that wants env in a restricted engine should
+  bind its own `task.Env`-style helper with an explicit policy, like
+  `task.Env` in the example.
+
 ## (end)

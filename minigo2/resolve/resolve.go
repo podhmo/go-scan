@@ -36,26 +36,55 @@ func (cfg BuildConfig) CheckDir(dir string) error {
 	if len(cfg.AllowedRoots) == 0 {
 		return nil
 	}
-	abs, err := filepath.Abs(dir)
+	abs, err := resolveSymlinkNearest(dir)
 	if err != nil {
 		return err
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
 	for _, root := range cfg.AllowedRoots {
-		r, err := filepath.Abs(root)
+		r, err := resolveSymlinkNearest(root)
 		if err != nil {
 			continue
-		}
-		if resolved, err := filepath.EvalSymlinks(r); err == nil {
-			r = resolved
 		}
 		if abs == r || strings.HasPrefix(abs, r+string(filepath.Separator)) {
 			return nil
 		}
 	}
 	return fmt.Errorf("directory %s is outside the allowed roots", abs)
+}
+
+// CheckPath verifies an arbitrary filesystem path against AllowedRoots
+// (no-op when unrestricted). Unlike CheckDir the path need not exist:
+// symlinks are resolved through the nearest existing ancestor so a write
+// target under a symlinked directory cannot escape the roots either.
+func (cfg BuildConfig) CheckPath(path string) error {
+	return cfg.CheckDir(path)
+}
+
+// resolveSymlinkNearest absolutizes path and resolves symlinks as far as
+// the filesystem allows: the path itself when it exists, otherwise the
+// longest existing ancestor is resolved and the remaining tail re-joined.
+func resolveSymlinkNearest(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	var tail []string
+	dir := abs
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return abs, nil // reached the filesystem root unresolved
+		}
+		tail = append([]string{filepath.Base(dir)}, tail...)
+		dir = parent
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			parts := append([]string{resolved}, tail...)
+			return filepath.Join(parts...), nil
+		}
+	}
 }
 
 // PackageMeta is the cheap metadata level of a package — enough to know its

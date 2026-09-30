@@ -45,4 +45,21 @@ func SymLocal() string {
 	return dsl.SymOf(boom) // local var: resolution must fail
 }
 
+// Resolve maps a symbol expression to its runtime value — lazily, so only
+// the named declaration materializes. ResOf calls the resolved function.
+type Point struct{ X, Y int }
+
+func ResGreet() string { return dsl.ResOf(greet.Hello) } // "hi go"
+func ResSelf() int     { return dsl.ResOf0(TwiceIt) }    // 44
+func ResLocal() int {
+	x := 33
+	return dsl.ResIdent(x) // local cell contents -> 33
+}
+
+// ResolveType resolves a quoted type expression to its *TypeDef.
+func TypeNamed() string   { return dsl.TypeName(Point) }   // "Point"
+func TypeBuiltin() string { return dsl.TypeName(int) }     // "int"
+func TypeSlice() int      { return dsl.TypeKind([]Point) } // KindSlice
+func TypePtr() int        { return dsl.TypeKind(*Point) }  // KindPointer
+
 func main() {}

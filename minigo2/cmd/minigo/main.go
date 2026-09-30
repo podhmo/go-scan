@@ -4,6 +4,8 @@
 //	minigo run ./path/to/pkg [--entry FuncName]
 //	minigo ./path/to/pkg [FuncName]   # shorthand for run
 //	minigo repl                       # interactive session
+//	minigo vet <ref> [--special import/path.Sym]...  # list unregistered stub calls
+//	minigo gen-intrinsics -output <dir> <pkg>...     # emit a Bind table
 package main
 
 import (
@@ -16,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/podhmo/go-scan/minigo2"
+	"github.com/podhmo/go-scan/minigo2/runtime"
 )
 
 func main() {
@@ -30,6 +33,10 @@ func main() {
 		err = runREPL(ctx, os.Stdin, os.Stdout)
 	case "run":
 		err = run(ctx, args[1:])
+	case "vet":
+		err = vet(ctx, args[1:])
+	case "gen-intrinsics":
+		err = genIntrinsics(ctx, args[1:])
 	default:
 		// shorthand: `minigo <ref> [func]`
 		err = run(ctx, args)
@@ -44,7 +51,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   minigo run <dir-or-importpath> [--entry Func]
   minigo <dir-or-importpath> [Func]
-  minigo repl`)
+  minigo repl
+  minigo vet <dir-or-importpath> [--special import/path.Sym]...
+  minigo gen-intrinsics -output <dir> <dir-or-importpath>...`)
 	os.Exit(1)
 }
 
@@ -89,6 +98,63 @@ func run(ctx context.Context, args []string) error {
 	}
 	if r != nil {
 		fmt.Printf("%v\n", r)
+	}
+	return nil
+}
+
+func vet(ctx context.Context, args []string) error {
+	var ref string
+	var specials []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--special" || a == "-special":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("--special requires an import/path.Sym argument")
+			}
+			specials = append(specials, args[i])
+		case strings.HasPrefix(a, "--special="), strings.HasPrefix(a, "-special="):
+			specials = append(specials, strings.SplitN(a, "=", 2)[1])
+		case strings.HasPrefix(a, "-"):
+			return fmt.Errorf("unknown flag %q (supported: --special)", a)
+		default:
+			if ref != "" {
+				return fmt.Errorf("vet takes exactly one package reference")
+			}
+			ref = a
+		}
+	}
+	if ref == "" {
+		usage()
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	e := minigo2.NewEngine(cwd)
+	// the CLI has no embedding app to register specials for it, so the
+	// caller declares intercepted symbols explicitly: --special
+	// import/path.Name marks that member as registered for this check.
+	for _, s := range specials {
+		dot := strings.LastIndex(s, ".")
+		if dot <= 0 || dot == len(s)-1 {
+			return fmt.Errorf("--special wants import/path.Sym, got %q", s)
+		}
+		e.RegisterSpecial(runtime.SymbolID{PackagePath: s[:dot], Name: s[dot+1:]},
+			func(ctx runtime.SpecialContext, call *runtime.QuotedCall) (runtime.Value, error) {
+				return nil, fmt.Errorf("unreachable: vet-only special")
+			})
+	}
+	findings, err := e.Vet(ctx, ref)
+	if err != nil {
+		return err
+	}
+	for _, f := range findings {
+		fmt.Fprintln(os.Stderr, f)
+	}
+	if len(findings) > 0 {
+		return fmt.Errorf("%d unregistered stub call(s)", len(findings))
 	}
 	return nil
 }

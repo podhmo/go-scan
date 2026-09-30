@@ -1456,4 +1456,105 @@ adding multi-line input to the REPL:
   needs a yield-callback bridge plus early-`break` plumbing (`yield`
   must return false).
 
+## 31. Round-12 notes: range-over-func, Resolve/ResolveType, vet, gen-intrinsics
+
+### `iter.Seq`/`Seq2` producers run on a push model inside the pull-model VM
+
+There is no coroutine — the producer function never suspends at `yield`.
+Instead the loop body drives it from inside:
+
+- `newIterator` accepts `*Function`/`*Closure`/`*BoundMethod`/`*BuiltinFunc`
+  and yields `Iterator{Kind: 'f', Fn}`.
+- The first `OpRangeNext` on such an iterator calls `driveFuncIter`, which
+  invokes the producer **once** with a `yield` BuiltinFunc. `yield` pushes
+  its arguments as the loop values, sets `f.ip` to the body start, and
+  re-enters `v.loop` under a saved/restored bound
+  (`frame.boundLo`/`boundHi`) so the body's own `break`/`continue`/
+  `return`/`goto` terminate that bounded run normally.
+- `yield` returns `true` only when the bounded run ended by falling off
+  the body (back-edge, `f.ip == top`). Anything else — `break`/`goto`/
+  `return` at any distance — lands `f.ip` outside `[top, end]`, `yield`
+  returns `false`, and `it.Exited` marks the iterator dead so `OpRangeNext`
+  exits the loop. A misbehaving producer that calls `yield` again after a
+  false gets Go's runtime panic verbatim ("range function continued
+  iteration after yield returned false").
+- Because `f.ip` may land *past* `end` (labeled break, outer loop
+  back-edges, `return`'s `ip = len(code)`), `OpRangeNext` must only snap
+  `f.ip` to `end` when it still sits inside the range statement
+  (`top <= ip <= end`) — clamping unconditionally would erase the jump
+  target.
+- Body panics propagate through the producer's own frames — its `defer`s
+  run, its `recover` may catch — exactly as Go specifies. This fell out
+  of the in-place design for free; a panic-suspension model would have
+  needed dedicated plumbing.
+- Limitations recorded in TODO.md: `goto` out of the body only preserves
+  the target at the loop level (the producer keeps running after the
+  jump rather than being aborted mid-yield — indistinguishable for
+  finite well-behaved producers, observable for infinite ones);
+  `*GoValue` functions are not callable producers; `iter.Pull`/`Pull2`
+  are unbound.
+
+### `SpecialContext.Resolve`/`ResolveType` complete the §12.5 surface
+
+- `Resolve(expr)` maps a *symbol expression only* — bare `x` or
+  `pkg.Sym` — to its runtime value: locals/upvals first, then globals via
+  `resolveGlobalE` (a non-trapping twin of `resolveGlobal`), then the
+  caller file's import table via `Member` (which keeps per-decl
+  materialization lazy). Anything else is rejected — deliberately
+  narrower than `Eval`, so handlers that only need declaration-level
+  laziness can't accidentally force evaluation.
+- `ResolveType(expr)` answers the type question `compile.typeExpr`
+  answers: named types through `Resolve`, composite forms
+  (`[]T`/`map[K]V`/`*T`/`chan T`/`struct{}`/`interface{}`/`func`)
+  producing the same `Anon`-spec typedef literals the compiler emits,
+  `T[Args]` through the generic `instantiate` path. A quoter can now ask
+  `ctx.ResolveType(param.Type)` and get a `*TypeDef` — the
+  convert-define alias/scanner dance collapses to the call the plan
+  wanted.
+
+### `minigo vet` is a stub-marker checker, not a type checker
+
+It walks the target package's AST for `pkgAlias.Sym(...)` calls, resolves
+the callee declaration, and reports when the body is exactly
+`panic("minigo intrinsic")` and the `SymbolID` is neither registered
+special nor bound host symbol. Two properties worth keeping:
+
+- It inspects *index-level* data only — the callee package is parsed and
+  indexed but never initialized, so vet is fast and side-effect free.
+- Registered-ness comes from the live engine (`e.specials` + `e.binds`),
+  so embedding apps check against their real configuration. The bare
+  CLI has no app to inherit from, so `minigo vet --special path.Sym`
+  declares intercepted symbols explicitly.
+
+### `gen-intrinsics` needed a reflect adapter first
+
+`v.call` cannot call `*runtime.GoValue` functions, so generated tables
+couldn't bind `pkg.F` raw. `minigo2.WrapFunc(name, fn)` is the §13
+"OptionalNative" piece: a `*runtime.BuiltinFunc` that reflect-calls the
+real Go function — args marshal to parameter types (assignable or
+convertible, variadic tails packed for `CallSlice`), a trailing `error`
+result becomes the call's Go error, other results marshal back through
+`minigo2.ValueOf` (multiple results as `*runtime.Tuple`), and host
+panics are recovered into errors. The generator emits
+`<path>/install.go` with `func Bind(e *minigo2.Engine)`.
+
+- **Pitfall worth remembering: `runtime.Value` is an `any` alias.** A
+  type-switch `case runtime.Value:` matches *everything*, so
+  `ValueOf` must enumerate concrete runtime types explicitly —
+  the first draft returned `int` unboxed and downstream coercion
+  ("cannot use int as int") was the confusing symptom.
+- Vars/consts bind as `ValueOf` snapshots (no live reference); types
+  bind as boxed `reflect.Type`; generic functions and methods are
+  skipped — no single callable form exists.
+
+### `FindSymbolInPackage` stays unbuilt — on purpose this round
+
+The §8 even-lazier option skips whole-package indexing to resolve one
+symbol. But `index.Build` already performs no evaluation — it only walks
+the parsed files once, recording decl positions; the laziness it adds
+over scanning-for-one-symbol is constant-factor bookkeeping, not a
+different class of work. A second, symbol-shaped scanner path would
+duplicate `memberDecl` semantics for marginal gain. Left in TODO.md
+until a measured cost shows up.
+
 ## (end)

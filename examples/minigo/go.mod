@@ -1,8 +1,6 @@
 module github.com/podhmo/go-scan/examples/minigo
 
-go 1.24.2
-
-toolchain go1.24.3
+go 1.26.0
 
 //他のexamplesディレクトリを参考にreplaceディレクティブを追加
 //ローカルのgo-scanパッケージを参照するようにします。

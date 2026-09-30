@@ -2709,20 +2709,46 @@ func (e *Evaluator) evalTypeConversion(call *ast.CallExpr, typeObj object.Object
 		case "int", "int8", "int16", "int32", "int64",
 			"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
 			"byte", "rune": // For now, treat all integer types as int.
+			toInt := func(v int64) int64 {
+				switch typeName {
+				case "int8":
+					return int64(int8(v))
+				case "int16":
+					return int64(int16(v))
+				case "int32", "rune":
+					return int64(int32(v))
+				case "uint8", "byte":
+					return int64(uint8(v))
+				case "uint16":
+					return int64(uint16(v))
+				case "uint32":
+					return int64(uint32(v))
+				case "uint64":
+					return int64(uint64(v))
+				default: // int, int64, uint, uintptr
+					return v
+				}
+			}
 			switch input := arg.(type) {
 			case *object.Integer:
-				return input // It's already an integer, no-op.
+				return &object.Integer{Value: toInt(input.Value)}
 			case *object.Float:
-				return &object.Integer{Value: int64(input.Value)}
+				return &object.Integer{Value: toInt(int64(input.Value))}
 			default:
 				return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeName)
 			}
 		case "float32", "float64":
+			toFloat := func(v float64) float64 {
+				if typeName == "float32" {
+					return float64(float32(v))
+				}
+				return v
+			}
 			switch input := arg.(type) {
 			case *object.Float:
-				return input // It's already a float, no-op.
+				return &object.Float{Value: toFloat(input.Value)}
 			case *object.Integer:
-				return &object.Float{Value: float64(input.Value)}
+				return &object.Float{Value: toFloat(float64(input.Value))}
 			default:
 				return e.newError(call.Pos(), "cannot convert %s to type %s", arg.Type(), typeName)
 			}

@@ -1,8 +1,6 @@
 module github.com/podhmo/go-scan/examples/docgen
 
-go 1.24.2
-
-toolchain go1.24.3
+go 1.26.0
 
 replace github.com/podhmo/go-scan => ../../
 

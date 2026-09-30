@@ -1,8 +1,6 @@
 module github.com/podhmo/go-scan/examples/convert
 
-go 1.24.2
-
-toolchain go1.24.3
+go 1.26.0
 
 require (
 	github.com/google/go-cmp v0.7.0

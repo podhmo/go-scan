@@ -197,7 +197,8 @@ func LookPathLocal(dir string) string {
 	if err != nil {
 		return "lookpath: " + err.Error()
 	}
-	return filepath.Base(p)
+	// Go's contract: the found name keeps the caller's (relative) shape
+	return p
 }
 
 // GlobStar widens via *: in a restricted engine a match that escapes the

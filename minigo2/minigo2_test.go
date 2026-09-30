@@ -455,7 +455,7 @@ func TestExecIntrinsics(t *testing.T) {
 	if err := os.WriteFile(tool, []byte("#!"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if got := run(t, e, "./testdata/fsops", "LookPathLocal", dir); got != "tool.bin" {
+	if got := run(t, e, "./testdata/fsops", "LookPathLocal", dir); got != "./tool.bin" {
 		t.Fatalf("LookPathLocal: got %v", got)
 	}
 }
@@ -493,12 +493,12 @@ func WriteOutside(path string) string {
 	return "wrote"
 }
 
-func GlobStar() (string, error) {
+func GlobStar() string {
 	m, err := filepath.Glob("*/e.txt")
 	if err != nil {
-		return "", err
+		return "caught"
 	}
-	return strings.Join(m, ","), nil
+	return strings.Join(m, ",")
 }
 `
 	fname := filepath.Join(root, "taskfile.go")
@@ -539,9 +539,10 @@ func GlobStar() (string, error) {
 	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.RunFile(context.Background(), fname, "GlobStar"); err == nil ||
-		!strings.Contains(err.Error(), "outside the allowed roots") {
-		t.Fatalf("GlobStar: expected outside-root rejection, got %v", err)
+	// the escape surfaces as the call's error value — script-catchable —
+	// never as out-of-root match names
+	if got, err := e.RunFile(context.Background(), fname, "GlobStar"); err != nil || got != "caught" {
+		t.Fatalf("GlobStar: expected script-caught rejection, got %v, %v", got, err)
 	}
 	os.Remove(filepath.Join(root, "link"))
 

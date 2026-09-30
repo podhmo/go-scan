@@ -613,10 +613,12 @@ func (e *Engine) installStdlib() {
 				return retErr2([]string(nil), err)
 			}
 			// A pattern inside the roots can still expand through an in-root
-			// symlink into files outside them, so every match is re-checked.
+			// symlink into files outside them; matches are re-checked and an
+			// escape comes back as the call's error value (Go's shape), not
+			// a trap — the script gets nil matches either way.
 			for _, p := range m {
 				if err := e.cfg.CheckPath(p); err != nil {
-					return nil, err
+					return retErr2([]string(nil), err)
 				}
 			}
 			if !filepath.IsAbs(pat) {
@@ -675,10 +677,15 @@ func (e *Engine) installStdlib() {
 			}),
 			"LookPath": h.fn1("exec.LookPath", func(a []any) (any, error) {
 				name := str(a[0])
-				// LookPath checks a separator-bearing name against the caller's
-				// cwd; the engine's virtual cwd is the script-visible one.
+				// A separator-bearing relative name is checked against the
+				// caller's cwd — here the engine's virtual one — but Go returns
+				// the name in the shape it was given, so don't absolutize the
+				// result.
 				if strings.ContainsRune(name, '/') && !filepath.IsAbs(name) {
-					name = e.cwdAbs(name)
+					if _, err := exec.LookPath(e.cwdAbs(name)); err != nil {
+						return retErr2("", err)
+					}
+					return retErr2(name, nil)
 				}
 				return retErr2(exec.LookPath(name))
 			}),

@@ -1632,6 +1632,17 @@ func goJSON(v any) any {
 		return m
 	case *runtime.GoValue:
 		return x.V
+	case map[any]any: // goNative's *runtime.Map output — keys stringify
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			m[str(k)] = goJSON(e)
+		}
+		return m
+	case []any: // goNative's *runtime.Slice output
+		for i, e := range x {
+			x[i] = goJSON(e)
+		}
+		return x
 	default:
 		return v
 	}

@@ -93,6 +93,13 @@ type frame struct {
 	deferred bool           // frame created for a deferred call
 	retNamed bool           // gather named result slots after defers run
 	results  []runtime.Value
+
+	// boundLo/boundHi bound a re-entrant loop run (range-over-func yield):
+	// the bounded run executes only while boundLo < ip < boundHi and halts
+	// on either edge — the loop's back-edge address is boundLo, its exit
+	// boundHi. boundHi == 0 disables bounding (normal execution).
+	boundLo int
+	boundHi int
 }
 
 func (f *frame) push(v runtime.Value) { f.stack = append(f.stack, v) }
@@ -436,7 +443,7 @@ func firstArg(args []runtime.Value) runtime.Value {
 func (v *VM) loop(f *frame) {
 	code := f.ch.Code
 	consts := f.ch.Consts
-	for f.ip < len(code) {
+	for f.ip < len(code) && (f.boundHi == 0 || (f.ip > f.boundLo && f.ip < f.boundHi)) {
 		ins := code[f.ip]
 		f.ip++
 		switch ins.Op {
@@ -754,7 +761,22 @@ func (v *VM) loop(f *frame) {
 			f.push(newIterator(f, f.pop()))
 		case bytecode.OpRangeNext:
 			it := f.locals[ins.B].Elem.(*runtime.Iterator)
-			if !iterNext(f, it, int(ins.C)) {
+			if it.Kind == 'f' {
+				// Range over a function inverts control: the producer calls
+				// yield, and each yield runs the loop body bounded to this
+				// loop's (top, end) instruction range. top is this
+				// instruction's index — f.ip already advanced past it.
+				top := f.ip - 1
+				v.driveFuncIter(f, it, int(ins.C), top, int(ins.A))
+				// The producer and every iteration already ran; f.ip sits
+				// where the body last stopped:
+				//   [top, end]  loop is done — take the exit jump
+				//   < top       a goto left the loop backward — keep target
+				//   > end       a goto forward or OpReturn — keep target
+				if f.ip >= top && f.ip <= int(ins.A) {
+					f.ip = int(ins.A)
+				}
+			} else if !iterNext(f, it, int(ins.C)) {
 				f.ip = int(ins.A)
 			}
 		case bytecode.OpSend:
@@ -848,29 +870,39 @@ func fileOf(f *frame, pkg *runtime.Package) *syntax.File {
 // resolveGlobal resolves a name in file scope order: imports, package
 // globals (including lazily materialized decls), dot imports, builtins.
 func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
+	mv, err := v.resolveGlobalE(f, name)
+	if err != nil {
+		f.trap("%s", err)
+	}
+	return mv
+}
+
+// resolveGlobalE is resolveGlobal without the trap: failures return as
+// errors so callers (e.g. SpecialContext.Resolve) can report them.
+func (v *VM) resolveGlobalE(f *frame, name string) (runtime.Value, error) {
 	pkg := f.fn.Pkg
 	file := fileOf(f, pkg)
 	// 1. file imports
 	if file != nil {
 		if ref, ok := pkg.Scopes[file][name]; ok {
-			return ref
+			return ref, nil
 		}
 	}
 	// 2. package globals / lazy members
 	if gv, ok := pkg.Globals.Get(name); ok {
 		if c, isCell := gv.(*runtime.Cell); isCell {
-			return c.Elem
+			return c.Elem, nil
 		}
-		return gv
+		return gv, nil
 	}
 	if pkg.Index != nil {
 		if d, ok := lookupDecl(pkg, name); ok {
 			mv, err := v.H.Materialize(pkg, d)
 			if err != nil {
-				f.trap("materialize %s: %s", name, err)
+				return nil, fmt.Errorf("materialize %s: %s", name, err)
 			}
 			pkg.Globals.Set(name, mv)
-			return mv
+			return mv, nil
 		}
 	}
 	// 2.5 unnamed imports whose package name differs from the path's
@@ -884,7 +916,7 @@ func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
 			}
 			p, err := ref.Materialize()
 			if err == nil && p != nil && p.Name == name {
-				return ref
+				return ref, nil
 			}
 		}
 	}
@@ -898,7 +930,7 @@ func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
 			}
 			p, err := ref.Materialize()
 			if err != nil {
-				f.trap("dot import %s: %s", ref.Path, err)
+				return nil, fmt.Errorf("dot import %s: %s", ref.Path, err)
 			}
 			_, inGlobals := p.Globals.Get(name)
 			inIndex := false
@@ -909,28 +941,27 @@ func (v *VM) resolveGlobal(f *frame, name string) runtime.Value {
 				continue
 			}
 			if imported != nil {
-				f.trap("ambiguous dot-imported name: %s", name)
+				return nil, fmt.Errorf("ambiguous dot-imported name: %s", name)
 			}
 			imported = p
 		}
 		if imported != nil {
 			mv, err := imported.Member(name, v.H.Materialize)
 			if err != nil {
-				f.trap("dot import %s: %s", imported.Path, err)
+				return nil, fmt.Errorf("dot import %s: %s", imported.Path, err)
 			}
 			if c, isCell := mv.(*runtime.Cell); isCell {
-				return c.Elem
+				return c.Elem, nil
 			}
 			imported.Globals.Set(name, mv)
-			return mv
+			return mv, nil
 		}
 	}
 	// 4. builtins
 	if bv, ok := v.H.Builtin(name); ok {
-		return bv
+		return bv, nil
 	}
-	f.trap("undefined: %s", name)
-	return nil
+	return nil, fmt.Errorf("undefined: %s", name)
 }
 
 func lookupDecl(pkg *runtime.Package, name string) (*index.Decl, bool) {
@@ -1699,6 +1730,10 @@ func newIterator(f *frame, coll runtime.Value) *runtime.Iterator {
 		return it
 	case *runtime.Chan:
 		return &runtime.Iterator{Kind: 'c', Chan: c}
+	case *runtime.Function, *runtime.Closure, *runtime.BoundMethod, *runtime.BuiltinFunc:
+		// iter.Seq/Seq2-style producer: the whole loop runs inside the
+		// first OpRangeNext via yield — see driveFuncIter.
+		return &runtime.Iterator{Kind: 'f', Fn: c}
 	case int64:
 		return &runtime.Iterator{Kind: 'i', Limit: int(c)}
 	case string:
@@ -1766,6 +1801,78 @@ func iterNext(f *frame, it *runtime.Iterator, nvars int) bool {
 		return true
 	}
 	return false
+}
+
+// runBounded executes the frame's instructions while its ip stays strictly
+// inside (lo, hi); reaching either edge returns to the caller, who
+// interprets the stop: ip == lo is the loop back-edge (iteration done),
+// anything else means the body abandoned the loop (break, goto out, or
+// OpReturn). Bounds are saved/restored so bounded runs nest.
+func (v *VM) runBounded(f *frame, lo, hi int) {
+	oLo, oHi := f.boundLo, f.boundHi
+	f.boundLo, f.boundHi = lo, hi
+	defer func() { f.boundLo, f.boundHi = oLo, oHi }()
+	v.loop(f)
+}
+
+// driveFuncIter runs a range-over-func loop (iter.Seq/Seq2 semantics) to
+// completion: the producer function is invoked once with a yield builtin,
+// and each yield call pushes its arguments as the loop values and re-runs
+// the loop body inside the same frame — the push model of Go 1.23
+// iterators on top of the pull-model VM, no coroutine needed.
+//
+// yield reports the body's exit back to the producer: it returns true
+// when the body reached the loop's back-edge (next iteration), false when
+// the body left the loop (break/goto/return), and panics when called
+// again after that — matching the runtime panic for an iterator that
+// continues past a false yield. A panic inside the body propagates
+// through the producer's frames (its defers run, recover() may catch it)
+// and then through the caller frame, as in Go.
+func (v *VM) driveFuncIter(f *frame, it *runtime.Iterator, nvars, top, end int) {
+	if it.Started {
+		// The loop head was re-entered (e.g. a goto back into it); the
+		// producer already ran to completion, so the loop is over.
+		return
+	}
+	it.Started = true
+	bodyStart := top + 1
+	stackMark := len(f.stack)
+	defer func() {
+		// A panic recovered inside the producer can leave the body's
+		// operand pushes behind — restore the pre-loop depth.
+		f.stack = f.stack[:stackMark]
+	}()
+	yield := &runtime.BuiltinFunc{
+		Name: "yield",
+		Fn: func(_ runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
+			if it.Exited {
+				panic(&runtime.Panic{Value: "range function continued iteration after yield returned false"})
+			}
+			if nvars > 0 && len(args) != nvars {
+				return nil, fmt.Errorf("yield must be called with %d argument(s), got %d", nvars, len(args))
+			}
+			for i := 0; i < nvars && i < len(args); i++ {
+				f.push(args[i])
+			}
+			completed := false
+			defer func() {
+				if !completed {
+					it.Exited = true // body died on panic — loop is over
+				}
+			}()
+			f.ip = bodyStart
+			v.runBounded(f, top, end)
+			completed = true
+			if f.ip == top {
+				return true, nil // back-edge reached: next iteration
+			}
+			it.Exited = true
+			return false, nil // body left the loop: producer must stop
+		},
+	}
+	if _, err := v.call(it.Fn, []runtime.Value{yield}); err != nil {
+		panic(&runtime.Trap{Pos: f.pos(), Reason: err.Error()})
+	}
 }
 
 // arithmetic
@@ -3129,6 +3236,193 @@ func (s *specialCtx) ResolveSymbol(e ast.Expr) (runtime.SymbolID, error) {
 	default:
 		return runtime.SymbolID{}, s.Errorf(e, "cannot resolve %T to a symbol", e)
 	}
+}
+
+// Resolve maps a symbol expression to its runtime value through ordinary
+// name resolution — locals/upvals first, then globals (materializing only
+// the named decl), then a pkg.Sym selector via the file's import table.
+// Non-symbol expressions are rejected, keeping resolution declaration-
+// level lazy: no arbitrary code runs that Eval would allow.
+func (s *specialCtx) Resolve(e ast.Expr) (runtime.Value, error) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if slot, ok := s.q.Locals[x.Name]; ok {
+			if slot >= len(s.f.locals) || s.f.locals[slot] == nil {
+				return nil, s.Errorf(x, "local %s is not bound", x.Name)
+			}
+			return s.f.locals[slot].Elem, nil
+		}
+		if idx, ok := s.q.Upvals[x.Name]; ok {
+			if idx >= len(s.f.upvals) || s.f.upvals[idx] == nil {
+				return nil, s.Errorf(x, "upvalue %s is not bound", x.Name)
+			}
+			return s.f.upvals[idx].Elem, nil
+		}
+		mv, err := s.v.resolveGlobalE(s.f, x.Name)
+		if err != nil {
+			return nil, s.Errorf(x, "%s", err)
+		}
+		return mv, nil
+	case *ast.SelectorExpr:
+		id, ok := x.X.(*ast.Ident)
+		if !ok {
+			return nil, s.Errorf(e, "cannot resolve %s to a value", s.Format(e))
+		}
+		if _, ok := s.q.Locals[id.Name]; ok {
+			return nil, s.Errorf(x.X, "%s is a local variable, not an import alias", id.Name)
+		}
+		if _, ok := s.q.Upvals[id.Name]; ok {
+			return nil, s.Errorf(x.X, "%s is a captured variable, not an import alias", id.Name)
+		}
+		pkg := s.f.fn.Pkg
+		if pkg == nil {
+			return nil, s.Errorf(x, "no package context")
+		}
+		ref, ok := pkg.Scopes[s.q.File][id.Name]
+		if !ok {
+			return nil, s.Errorf(x, "%s is not an import alias in this file", id.Name)
+		}
+		p, err := ref.Materialize()
+		if err != nil {
+			return nil, err
+		}
+		mv, err := p.Member(x.Sel.Name, s.v.H.Materialize)
+		if err != nil {
+			return nil, err
+		}
+		if c, isCell := mv.(*runtime.Cell); isCell {
+			return c.Elem, nil
+		}
+		return mv, nil
+	default:
+		return nil, s.Errorf(e, "cannot resolve %T to a value", e)
+	}
+}
+
+// ResolveType resolves a type expression to its *TypeDef: named types
+// through Resolve, composite forms as the same anonymous typedefs the
+// compiler emits for declared types (Anon specs keep element types
+// lazily resolved on use).
+func (s *specialCtx) ResolveType(e ast.Expr) (*runtime.TypeDef, error) {
+	pkg := s.f.fn.Pkg
+	switch t := e.(type) {
+	case *ast.Ident:
+		// Inside a generic instantiation a bare ident may name a type
+		// parameter: resolve it through the function's binds first.
+		if td, ok := s.f.fn.Binds[t.Name]; ok {
+			if td2, ok := td.(*runtime.TypeDef); ok {
+				return td2, nil
+			}
+			return nil, s.Errorf(e, "%s is bound to a non-type", t.Name)
+		}
+		mv, err := s.Resolve(e)
+		if err != nil {
+			return nil, err
+		}
+		td, ok := mv.(*runtime.TypeDef)
+		if !ok {
+			return nil, s.Errorf(e, "%s is not a type", s.Format(e))
+		}
+		return td, nil
+	case *ast.SelectorExpr:
+		mv, err := s.Resolve(e)
+		if err != nil {
+			return nil, err
+		}
+		td, ok := mv.(*runtime.TypeDef)
+		if !ok {
+			return nil, s.Errorf(e, "%s is not a type", s.Format(e))
+		}
+		return td, nil
+	case *ast.ArrayType:
+		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: pkg, File: s.q.File}, nil
+	case *ast.MapType:
+		return &runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: pkg, File: s.q.File}, nil
+	case *ast.StarExpr:
+		return &runtime.TypeDef{Kind: runtime.KindPointer, Anon: t, Pkg: pkg, File: s.q.File}, nil
+	case *ast.ChanType:
+		return &runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: pkg, File: s.q.File}, nil
+	case *ast.FuncType:
+		return &runtime.TypeDef{Kind: runtime.KindFunc}, nil
+	case *ast.StructType:
+		td := &runtime.TypeDef{Kind: runtime.KindStruct}
+		for _, fld := range t.Fields.List {
+			if len(fld.Names) == 0 {
+				td.EmbedSpecs = append(td.EmbedSpecs, fld.Type)
+				td.EmbedIdx = append(td.EmbedIdx, len(td.Fields))
+				td.Fields = append(td.Fields, embeddedFieldName(fld.Type))
+				continue
+			}
+			for _, n := range fld.Names {
+				td.Fields = append(td.Fields, n.Name)
+			}
+		}
+		return td, nil
+	case *ast.InterfaceType:
+		td := &runtime.TypeDef{Kind: runtime.KindInterface}
+		for _, m := range t.Methods.List {
+			if len(m.Names) == 0 {
+				td.IEmbeds = append(td.IEmbeds, m.Type)
+				continue
+			}
+			for _, n := range m.Names {
+				td.MReqs = append(td.MReqs, n.Name)
+			}
+		}
+		return td, nil
+	case *ast.ParenExpr:
+		return s.ResolveType(t.X)
+	case *ast.IndexExpr:
+		return s.instantiateType(e, t.X, []ast.Expr{t.Index})
+	case *ast.IndexListExpr:
+		return s.instantiateType(e, t.X, t.Indices)
+	case *ast.Ellipsis:
+		return &runtime.TypeDef{Kind: runtime.KindSlice, Anon: &ast.ArrayType{Lbrack: t.Pos(), Elt: t.Elt}, Pkg: pkg, File: s.q.File}, nil
+	default:
+		return nil, s.Errorf(e, "unsupported type expression %T", e)
+	}
+}
+
+// instantiateType resolves the T of T[Args] and each argument typedef,
+// then instantiates through the VM's generic binder.
+func (s *specialCtx) instantiateType(e ast.Expr, x ast.Expr, argExprs []ast.Expr) (*runtime.TypeDef, error) {
+	base, err := s.Resolve(x)
+	if err != nil {
+		return nil, err
+	}
+	targs := make([]runtime.Value, len(argExprs))
+	for i, a := range argExprs {
+		td, err := s.ResolveType(a)
+		if err != nil {
+			return nil, err
+		}
+		targs[i] = td
+	}
+	iv := s.v.instantiate(s.f, base, targs, e.Pos())
+	td, ok := iv.(*runtime.TypeDef)
+	if !ok {
+		return nil, s.Errorf(e, "%s is not a type", s.Format(e))
+	}
+	return td, nil
+}
+
+// embeddedFieldName derives the field name of an anonymous (embedded)
+// struct field: the base type name, ignoring pointers, packages and
+// type args. Mirrors compile's embedFieldName.
+func embeddedFieldName(x ast.Expr) string {
+	switch t := x.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return embeddedFieldName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.IndexExpr:
+		return embeddedFieldName(t.X)
+	case *ast.IndexListExpr:
+		return embeddedFieldName(t.X)
+	}
+	return ""
 }
 
 // Eval compiles expr against the caller's live scope (locals/upvals snap-

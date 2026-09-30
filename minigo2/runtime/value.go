@@ -427,13 +427,21 @@ type Closure struct {
 
 // Iterator is the state of an in-progress range loop.
 type Iterator struct {
-	Kind   byte // 's' slice, 'm' map, 'i' int, 'x' string, 'c' chan
+	Kind   byte // 's' slice, 'm' map, 'i' int, 'x' string, 'c' chan, 'f' func
 	Elems  []Value
 	Keys   []Value // map keys
 	Idx    int
 	Limit  int // for integer ranges
 	String string
 	Chan   *Chan // for channel ranges
+
+	// Fn is the producer for 'f' (range-over-func) iterators. Started marks
+	// that the producer was invoked once; Exited marks that the loop body
+	// abandoned the loop (break/goto/return) or died on panic, after which
+	// further yield calls must panic.
+	Fn      Value
+	Started bool
+	Exited  bool
 }
 
 // GoValue wraps a host reflect value at the FFI boundary (implemented in
@@ -484,6 +492,24 @@ type SpecialContext interface {
 	// level laziness special forms exploit: quoting huge.ConvertFoo
 	// yields its SymbolID without initializing huge.
 	ResolveSymbol(expr ast.Expr) (SymbolID, error)
+	// Resolve resolves a symbol expression (a bare identifier or a
+	// pkg.Sym selector on an import alias) to its runtime value. Unlike
+	// Eval it accepts no arbitrary expression: resolution goes through
+	// normal name lookup, so a package is located/indexed lazily and only
+	// the named declaration is materialized (var/const members do run the
+	// package init, via Member's EnsureReady). Local/upvalue names
+	// resolve to their current cell contents; other expressions are an
+	// error.
+	Resolve(expr ast.Expr) (Value, error)
+	// ResolveType resolves a type expression to its runtime typedef.
+	// Named types go through Resolve (package decls materialize to the
+	// TypeDef itself; builtin names like int resolve to their typedefs);
+	// composite types ([]T, map[K]V, *T, chan T, struct{...},
+	// interface{...}, func signatures) yield anonymous typedefs carrying
+	// Anon specs so element types resolve lazily on use — the same shape
+	// the compiler emits for declared types. T[Args] instantiates a
+	// generic typedef with the argument typedefs.
+	ResolveType(expr ast.Expr) (*TypeDef, error)
 	// Format renders an AST node back to source text.
 	Format(n ast.Node) string
 	// Errorf reports a failure attributed to an AST node.

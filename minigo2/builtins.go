@@ -38,31 +38,40 @@ func builtins(e *Engine) *runtime.Env {
 	bf("append", func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 		var s *runtime.Slice
 		var tag *runtime.TypeDef
+		var rtyp *runtime.TypeDef
 		switch x := args[0].(type) {
 		case *runtime.Named:
 			tag = x.Typ
 			s, _ = x.V.(*runtime.Slice)
 			if s == nil {
-				return nil, fmt.Errorf("append on named %s", x.Typ.Name)
+				// a Named nil slice appends fine, keeping the declared tag
+				switch tn := x.V.(type) {
+				case *runtime.TypedNil:
+					rtyp = tn.Typ
+				case *runtime.IfaceNil:
+					rtyp = tn.Typ
+				default:
+					return nil, fmt.Errorf("append on named %s", x.Typ.Name)
+				}
 			}
 		case *runtime.Slice:
 			s = x
 		case *runtime.Cell:
 			s, _ = x.Elem.(*runtime.Slice)
 		case *runtime.IfaceNil:
-			s = nil // nil slice boxed in an interface
+			rtyp = x.Typ
 		case *runtime.TypedNil:
-			s = nil
+			rtyp = x.Typ
 		case runtime.Nil:
-			s = nil
 		default:
 			return nil, fmt.Errorf("append on %T", args[0])
 		}
 		var elems []runtime.Value
 		if s != nil {
 			elems = s.Elems
+			rtyp = s.Typ
 		}
-		res := &runtime.Slice{Elems: append(append([]runtime.Value{}, elems...), args[1:]...)}
+		res := &runtime.Slice{Elems: append(append([]runtime.Value{}, elems...), args[1:]...), Typ: rtyp}
 		if tag != nil {
 			return &runtime.Named{Typ: tag, V: res}, nil // append keeps the declared type
 		}

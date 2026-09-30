@@ -693,7 +693,7 @@ func (c *compiler) bindLocal(name string, pos token.Pos, isConst bool) int {
 func (c *compiler) localTypeDecl(ts *ast.TypeSpec) {
 	td := &runtime.TypeDef{
 		Pkg: c.pkg, File: c.file, Name: ts.Name.Name,
-		Spec: ts, Anon: ts.Type,
+		Spec: ts, Anon: ts.Type, Binds: c.binds,
 	}
 	if ts.TypeParams != nil {
 		for _, tp := range ts.TypeParams.List {
@@ -1965,16 +1965,17 @@ func (c *compiler) typeExpr(e ast.Expr) {
 		// named type: resolves through globals/imports at run time
 		c.expr(t)
 	case *ast.ArrayType:
-		// Anon/Pkg/File let OpElemType resolve the element typedef later.
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
+		// Anon/Pkg/File let OpElemType resolve the element typedef later;
+		// Binds carries the generic instantiation so `[]T` resolves T.
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindSlice, Anon: t, Pkg: c.pkg, File: c.file, Binds: c.binds}), 0, e.Pos())
 	case *ast.MapType:
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindMap, Anon: t, Pkg: c.pkg, File: c.file, Binds: c.binds}), 0, e.Pos())
 	case *ast.StarExpr:
 		// *T is a real typedef now: `var p *int` yields a TypedNil,
 		// `x.(*T)` asserts on pointer identity, `[]*T{{...}}` auto-takes &.
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindPointer, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindPointer, Anon: t, Pkg: c.pkg, File: c.file, Binds: c.binds}), 0, e.Pos())
 	case *ast.StructType:
-		td := &runtime.TypeDef{Kind: runtime.KindStruct}
+		td := &runtime.TypeDef{Kind: runtime.KindStruct, Anon: t, Pkg: c.pkg, File: c.file, Binds: c.binds}
 		for _, f := range t.Fields.List {
 			if len(f.Names) == 0 {
 				td.EmbedSpecs = append(td.EmbedSpecs, f.Type)
@@ -1990,7 +1991,7 @@ func (c *compiler) typeExpr(e ast.Expr) {
 	case *ast.FuncType:
 		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindFunc}), 0, e.Pos())
 	case *ast.InterfaceType:
-		td := &runtime.TypeDef{Kind: runtime.KindInterface}
+		td := &runtime.TypeDef{Kind: runtime.KindInterface, Anon: t, Pkg: c.pkg, File: c.file, Binds: c.binds}
 		for _, m := range t.Methods.List {
 			if len(m.Names) == 0 {
 				td.IEmbeds = append(td.IEmbeds, m.Type)
@@ -2017,9 +2018,9 @@ func (c *compiler) typeExpr(e ast.Expr) {
 	case *ast.Ellipsis:
 		// ...T binds as []T: a variadic param's declared type IS a slice,
 		// so a missing rest coerces to TypedNil{slice}, not the elem zero
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindSlice, Anon: &ast.ArrayType{Lbrack: t.Pos(), Elt: t.Elt}, Pkg: c.pkg, File: c.file}), 0, e.Pos())
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindSlice, Anon: &ast.ArrayType{Lbrack: t.Pos(), Elt: t.Elt}, Pkg: c.pkg, File: c.file, Binds: c.binds}), 0, e.Pos())
 	case *ast.ChanType:
-		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: c.pkg, File: c.file}), 0, e.Pos())
+		c.emit(bytecode.OpConst, c.constIdx(&runtime.TypeDef{Kind: runtime.KindChan, Anon: t, Pkg: c.pkg, File: c.file, Binds: c.binds}), 0, e.Pos())
 	default:
 		c.trap(e.Pos(), "unsupported type expression %T", e)
 	}

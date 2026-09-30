@@ -1782,6 +1782,12 @@ v, ok := pkg.Globals.Get("Patterns")             // read the global
 - **String-eval API was dropped**: v1 offered `EvalString`; minigo2 is
   file-oriented (`LoadFile`). `LoadPatternsFromSource` had no other
   callers, so it was removed rather than shimmed through a temp file.
+- **A latent v1 bug surfaced by review**: the analyzer looks method
+  calls up as `(pkg.Type).Method` / `(*pkg.Type).Method` (parens wrap
+  the whole receiver type), but the Fn key builder — v1's included —
+  emitted `pkg.(*Type).Method` / `pkg.Type.Method`, so method Fn
+  patterns could never match a call. The old test only pinned the
+  broken string. `buildKeyForMethod` now emits the lookup spelling.
 
 ### Remaining v1 consumers
 

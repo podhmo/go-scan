@@ -172,3 +172,40 @@ func FileWrite(dir string) string {
 	}
 	return string(data)
 }
+
+// MatchHit exercises filepath.Match with its real two-argument call.
+func MatchHit() bool {
+	ok, err := filepath.Match("*.txt", "a.txt")
+	if err != nil {
+		return false
+	}
+	return ok
+}
+
+// LookPathLocal resolves a separator-bearing executable name against the
+// engine's virtual cwd, not the host process's.
+func LookPathLocal(dir string) string {
+	old, err := os.Getwd()
+	if err != nil {
+		return "wd: " + err.Error()
+	}
+	if err := os.Chdir(dir); err != nil {
+		return "chdir: " + err.Error()
+	}
+	defer os.Chdir(old)
+	p, err := exec.LookPath("./tool.bin")
+	if err != nil {
+		return "lookpath: " + err.Error()
+	}
+	return filepath.Base(p)
+}
+
+// GlobStar widens via *: in a restricted engine a match that escapes the
+// roots through an in-root symlink must fail, not be returned.
+func GlobStar() (string, error) {
+	m, err := filepath.Glob("*/e.txt")
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(m, ","), nil
+}

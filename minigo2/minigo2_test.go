@@ -380,6 +380,7 @@ func TestFSIntrinsics(t *testing.T) {
 		{"GlobMatch", []runtime.Value{dir}, filepath.Join(dir, "a.txt")},
 		{"WalkCollect", []runtime.Value{dir}, int64(1)},
 		{"FileWrite", []runtime.Value{dir}, "rw"},
+		{"MatchHit", nil, true},
 	} {
 		// each case gets its own directory so writes do not leak between runs
 		args := make([]runtime.Value, len(c.args))
@@ -448,6 +449,15 @@ func TestExecIntrinsics(t *testing.T) {
 	if got != resolved {
 		t.Fatalf("ExecDirField: got %v, want %v", got, resolved)
 	}
+	// exec.LookPath with a separator-bearing relative name anchors at the
+	// engine's virtual cwd, not the host process's cwd
+	tool := filepath.Join(dir, "tool.bin")
+	if err := os.WriteFile(tool, []byte("#!"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, e, "./testdata/fsops", "LookPathLocal", dir); got != "tool.bin" {
+		t.Fatalf("LookPathLocal: got %v", got)
+	}
 }
 
 func TestFSRestricted(t *testing.T) {
@@ -458,6 +468,7 @@ func TestFSRestricted(t *testing.T) {
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func WriteInside(name string) string {
@@ -480,6 +491,14 @@ func WriteOutside(path string) string {
 		return "v:" + err.Error()
 	}
 	return "wrote"
+}
+
+func GlobStar() (string, error) {
+	m, err := filepath.Glob("*/e.txt")
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(m, ","), nil
 }
 `
 	fname := filepath.Join(root, "taskfile.go")
@@ -511,6 +530,21 @@ func WriteOutside(path string) string {
 			t.Fatalf("%s: expected outside-root rejection, got %v", tc.fn, err)
 		}
 	}
+	// a glob whose matches escape through an in-root symlink must fail:
+	// the pattern itself sits inside the roots, but expansion follows the
+	// link, so each match is re-checked per call
+	if err := os.WriteFile(filepath.Join(outside, "e.txt"), []byte("e"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.RunFile(context.Background(), fname, "GlobStar"); err == nil ||
+		!strings.Contains(err.Error(), "outside the allowed roots") {
+		t.Fatalf("GlobStar: expected outside-root rejection, got %v", err)
+	}
+	os.Remove(filepath.Join(root, "link"))
+
 	// os/exec must not be bound at all under AllowedRoots
 	execScript := `package main
 

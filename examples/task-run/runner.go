@@ -160,13 +160,25 @@ func taskShape(ft *ast.FuncType) ([]string, bool) {
 			if !ok || id.Name != "string" {
 				return nil, false
 			}
+			if len(f.Names) == 0 {
+				// an unnamed parameter still occupies a call slot
+				names = append(names, "arg")
+			}
 			for _, n := range f.Names {
 				names = append(names, n.Name)
 			}
 		}
 	}
 	if ft.Results != nil {
-		if len(ft.Results.List) != 1 {
+		nres := 0
+		for _, f := range ft.Results.List {
+			if len(f.Names) == 0 {
+				nres++
+			} else {
+				nres += len(f.Names)
+			}
+		}
+		if nres != 1 {
 			return nil, false
 		}
 		id, ok := ft.Results.List[0].Type.(*ast.Ident)
@@ -218,10 +230,8 @@ func (r *Runner) taskBinds() map[string]runtime.Value {
 			cmd.Dir = r.engine.WorkingDir()
 			cmd.Stderr = r.stderr
 			out, err := cmd.Output()
-			if err != nil {
-				return errOf(err)
-			}
-			return &runtime.Tuple{Elems: []runtime.Value{strings.TrimRight(string(out), "\n"), runtime.NIL}}, nil
+			ev, _ := errOf(err)
+			return &runtime.Tuple{Elems: []runtime.Value{strings.TrimRight(string(out), "\n"), ev}}, nil
 		}},
 		"Target": &runtime.BuiltinFunc{Name: "task.Target", Fn: func(v runtime.VMCaller, args []runtime.Value) (runtime.Value, error) {
 			return r.target(args)
@@ -289,7 +299,13 @@ func depOf(a runtime.Value) (runtime.Value, []runtime.Value, string, string) {
 	switch x := a.(type) {
 	case *runtime.GoValue:
 		if c, ok := x.V.(taskCall); ok {
-			return c.fn, c.args, fmt.Sprintf("%p|%v", c.fn, c.args), depLabel(c.fn)
+			// dedup key: length-prefixed args so distinct arg lists can't collide
+			key := fmt.Sprintf("%p", c.fn)
+			for _, a := range c.args {
+				s := strOf(a)
+				key += fmt.Sprintf("|%d:%s", len(s), s)
+			}
+			return c.fn, c.args, key, depLabel(c.fn)
 		}
 	case *runtime.Function:
 		return x, nil, fmt.Sprintf("%p", x), x.Name

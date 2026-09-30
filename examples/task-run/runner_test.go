@@ -249,3 +249,80 @@ func TestRunMainList(t *testing.T) {
 		t.Fatalf("list output missing tasks:\n%s", out.String())
 	}
 }
+
+func TestOutputError(t *testing.T) {
+	// task.Output must return (string, error) even on failure — a bare
+	// error value would break the two-value assignment in script
+	_, file := writeTaskfile(t, `package main
+
+import "task"
+
+func FailCap() {
+	v, err := task.Output("false")
+	if err != nil {
+		task.Log("caught:", v == "")
+		return
+	}
+	task.Log("v:", v)
+}
+`)
+	var errb bytes.Buffer
+	r := NewRunner(filepath.Dir(file), io.Discard, &errb)
+	if err := r.RunTask(context.Background(), file, "FailCap", nil); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff("caught: true\n", errb.String()); diff != "" {
+		t.Errorf("Output error path (-want +got):\n%s", diff)
+	}
+}
+
+func TestDepsArgKeyNoCollision(t *testing.T) {
+	// F(Emit2,"a b","c") and F(Emit2,"a","b c") must not dedup-collapse
+	_, file := writeTaskfile(t, `package main
+
+import "task"
+
+func Emit2(x, y string) { task.Log(x + "|" + y) }
+
+func Default() {
+	task.Deps(task.F(Emit2, "a b", "c"), task.F(Emit2, "a", "b c"))
+}
+`)
+	var errb bytes.Buffer
+	r := NewRunner(filepath.Dir(file), io.Discard, &errb)
+	if err := r.RunTask(context.Background(), file, "Default", nil); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff("a b|c\na|b c\n", errb.String()); diff != "" {
+		t.Errorf("dedup collision (-want +got):\n%s", diff)
+	}
+}
+
+func TestTaskShapeEdgeCases(t *testing.T) {
+	_, file := writeTaskfile(t, `package main
+
+import "task"
+
+func Pos(string) { task.Log("got arg") }
+
+func Two() (a, b error) { return nil, nil }
+`)
+	var errb bytes.Buffer
+	r := NewRunner(filepath.Dir(file), io.Discard, &errb)
+	ctx := context.Background()
+
+	// unnamed parameter still requires its arg
+	if err := r.RunTask(ctx, file, "Pos", []string{"x"}); err != nil {
+		t.Fatalf("Pos with arg: %v", err)
+	}
+	if diff := cmp.Diff("got arg\n", errb.String()); diff != "" {
+		t.Errorf("Pos output (-want +got):\n%s", diff)
+	}
+	if err := r.RunTask(ctx, file, "Pos", nil); err == nil || !strings.Contains(err.Error(), "takes 1") {
+		t.Fatalf("Pos without arg should demand 1, got %v", err)
+	}
+	// two error results is not a task
+	if err := r.RunTask(ctx, file, "Two", nil); err == nil || !strings.Contains(err.Error(), "not a task") {
+		t.Fatalf("Two() (a, b error) must not be a task, got %v", err)
+	}
+}

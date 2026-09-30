@@ -586,7 +586,7 @@ func (e *Engine) installStdlib() {
 		"ToSlash":       h.fn1("filepath.ToSlash", func(a []any) (any, error) { return filepath.ToSlash(str(a[0])), nil }),
 		"FromSlash":     h.fn1("filepath.FromSlash", func(a []any) (any, error) { return filepath.FromSlash(str(a[0])), nil }),
 		"SplitList":     h.fn1("filepath.SplitList", func(a []any) (any, error) { return filepath.SplitList(str(a[0])), nil }),
-		"Match":         h.fn3("filepath.Match", func(a []any) (any, error) { return retErr2(filepath.Match(str(a[0]), str(a[1]))) }),
+		"Match":         h.fn2("filepath.Match", func(a []any) (any, error) { return retErr2(filepath.Match(str(a[0]), str(a[1]))) }),
 		"Separator":     int64(os.PathSeparator),
 		"ListSeparator": int64(os.PathListSeparator),
 		// Abs/Rel anchor relative paths at the engine's virtual cwd, not the
@@ -611,6 +611,13 @@ func (e *Engine) installStdlib() {
 			m, err := filepath.Glob(ap)
 			if err != nil {
 				return retErr2([]string(nil), err)
+			}
+			// A pattern inside the roots can still expand through an in-root
+			// symlink into files outside them, so every match is re-checked.
+			for _, p := range m {
+				if err := e.cfg.CheckPath(p); err != nil {
+					return nil, err
+				}
 			}
 			if !filepath.IsAbs(pat) {
 				// Go returns matches in the shape of the pattern: keep
@@ -666,7 +673,15 @@ func (e *Engine) installStdlib() {
 				cmd.Dir = e.cwd
 				return &runtime.GoValue{V: cmd}, nil
 			}),
-			"LookPath":    h.fn1("exec.LookPath", func(a []any) (any, error) { return retErr2(exec.LookPath(str(a[0]))) }),
+			"LookPath": h.fn1("exec.LookPath", func(a []any) (any, error) {
+				name := str(a[0])
+				// LookPath checks a separator-bearing name against the caller's
+				// cwd; the engine's virtual cwd is the script-visible one.
+				if strings.ContainsRune(name, '/') && !filepath.IsAbs(name) {
+					name = e.cwdAbs(name)
+				}
+				return retErr2(exec.LookPath(name))
+			}),
 			"ErrNotFound": &runtime.GoValue{V: exec.ErrNotFound},
 			"ErrDot":      &runtime.GoValue{V: exec.ErrDot},
 		})

@@ -32,6 +32,11 @@ task-run [-f Taskfile.go] Name[:arg1,arg2] ...
 - no task name → `Default`
 - colon-args keep multi-task invocation unambiguous (`task-run Deploy:prod Lint`)
 
+Distribution: `go install` produces a standalone `task-run` binary in
+`$(go env GOPATH)/bin` — the interpreter is compiled in once, so day-to-day
+invocation is `task-run -f Taskfile.go <task>` with zero rebuild; `go run`
+remains the dependency-free dev path.
+
 ## 3. The `task` package (script-side API)
 
 `examples/task-run/task/task.go` is a **stub package**: every body is

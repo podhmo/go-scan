@@ -8,9 +8,14 @@ interpreted by [`minigo2`](../../minigo2/). See
 ## Usage
 
 ```sh
+# one-off (compiles via the build cache each call)
 go run ./ -f testdata/Taskfile.go -l      # list tasks (name + doc comment)
 go run ./ -f testdata/Taskfile.go Default # run a task
 go run ./ -f testdata/Taskfile.go Greet:world Clean
+
+# or install once, then run from anywhere with zero rebuild
+go install                                # into $(go env GOPATH)/bin
+task-run -f ./Taskfile.go Default
 ```
 
 Tasks are exported functions — `func Name()`, `func Name() error`, or
@@ -21,5 +26,7 @@ Taskfiles import the stub `task` package
 (`github.com/podhmo/go-scan/examples/task-run/task`, or just `task`); the
 engine binds every member to a host intrinsic, so the file typechecks under
 plain Go tooling but only executes inside `task-run`. Relative paths and
-shell commands anchor at the Taskfile's directory — the interpreter's
-virtual cwd — so a task that runs `os.Chdir` never moves your shell.
+shell commands anchor at the **Taskfile's directory** — the interpreter's
+virtual cwd — so the same relative path names the same file no matter
+where you invoke the binary from, and a task that runs `os.Chdir` never
+moves your shell.

@@ -109,7 +109,7 @@ From `docs/analysis-symgo-implementation.md` and the evaluator sources:
 | S8 | Lazy package vars | `object.Variable{Initializer, IsEvaluated}` + `forceEval`; package envs populated lazily by kind (consts/types/vars/funcs). |
 | S9 | Type switch per-case instances | Each case binds a **fresh symbolic instance of the case type**. |
 | S10 | Interface method calls | Calling a method on an interface-typed var records `calledInterfaceMethods` + returns a signature-typed placeholder; `Finalize()` post-pass maps to implementers across scanned packages via `scanner.Implements` and marks them used (find-orphans' core output). |
-| S11 | Branch returns are dropped | A `return` inside an if/switch arm does not abort the function — evaluation continues to the merge point (the `ReturnValue` is not propagated). |
+| S11 | Branch returns (inconsistent) | `return` inside an `if`/`for`/`range`/`type-switch`/`select` arm is dropped (evaluation continues); inside a `switch` case it **propagates and aborts the whole function** — an asymmetry §9.1 shows is sloppiness, normalized in symgo2 to uniform path-end absorb. |
 | S12 | Tracer | Per-AST-node `TraceEvent`s (docgen takes `WithTracer`). |
 | S13 | Cycle tolerance | `evaluating`/`evaluationInProgress`/`BoundCallStack` guards against package-load and initializer cycles. |
 
@@ -352,10 +352,25 @@ Plus: `defer f()`/`go f()` evaluate the call immediately (no deferral);
 evaluate **both** operands always (no short-circuit — `evalBinaryExpr` evals
 `Y` unconditionally).
 
-This table is the actual contract `compile.Trace` must implement. Notably it
-contains real quirks — `return` inside `if` is dropped but inside `switch`
-aborts exploration — that v1 symgo2 should **preserve verbatim** (the test
-suite likely depends on them); normalize later only if consumers ask.
+This table documents *observed* behavior. **The asymmetry is implementation
+sloppiness, not spec.** The principled criterion is whether a continuation
+exists in the function body after the construct: a `return` or `Error` inside
+an arm ends *that path only*. An early-return guard (`if err != nil { return
+}`) must keep tracing past the `if` — its continuation is live — while an
+`if/else` where both sides return ends the function anyway simply because
+nothing follows. Conversely, symgo's `switch` propagating `ReturnValue` out of
+a case arm kills exploration of the remaining cases *and* all code after the
+switch even though other paths still reach it — a real coverage bug.
+
+**symgo2 therefore normalizes on uniform path-end absorb semantics:** every
+branching construct absorbs `Return`/`Error` at its arm boundary (the signal
+ends that arm; remaining arms and the mainline continuation still run), and
+absorbed returns are *recorded* as possible function results. This preserves
+the early-return-guard case, fixes the switch-abort bug, and generalizes the
+type-switch/select swallow behavior to all constructs. Loop constructs
+additionally absorb unlabeled `break`/`continue` as before — those signals are
+lexically targeted, not path-related. Verification: the existing switch tests
+assert tracer/inspect counts, not abort behavior, so normalizing is low-risk.
 
 ### 9.2 Emission spec for `compile.Trace`
 
@@ -393,19 +408,25 @@ Fallthrough. Two new opcodes suffice for the whole matrix:
   bubble through nested `Eval` calls — the dispatch chain *is* symgo's
   per-construct `switch result.(type)`.
 
-One boundary rule completes it: when an `OpArmDispatch` propagates a
-`Return`/`Error` signal out of the *outermost* arm of the function, it unwraps
-to a real `OpReturn` value (or, for Error, the call's error result) instead of
-leaking the Signal to the caller.
+Under the uniform rule, `Return`/`Error` signals never propagate out of a
+construct boundary — only `Break`/`Continue` signals do (to their labeled
+owner). A `Break`/`Continue` reaching the function boundary with no owning
+construct is malformed input — trace-compile should reject it at compile time
+via the existing `ctrl`/`pendingGotos` checks, exactly as `compile.Func`
+already does for `break outside loop`. Mainline `return` keeps emitting
+`OpReturn` directly (it is not inside an arm), and a `return` inside mainline
+code is the function's final result; absorbed arm returns join it in the
+*possible-results* union rather than competing with it.
 
-The per-construct `consumeSet`s encode §9.1 directly — *including* symgo's
-label-handling quirks: `if` = {Return} (everything else propagates), `switch`
-= {Break} (symgo absorbs `break` in a case arm regardless of label — a `break
-L` to an outer loop inside a case is wrongly swallowed today; preserve or fix,
-deliberately), `type-switch`/`select` = {all kinds} (swallow), `for`/`range` =
-{unlabeled Break, unlabeled Continue} (labeled ones propagate). `fallthrough`
-never materializes — the parent emits the next case's body inline in the
-chain.
+With the normalized rule, `consumeSet`s become uniform: **every branching
+construct = {Return, Error}** — absorbed signals are appended to the frame's
+*possible-results* bag (the function's result is the union of the bag and the
+mainline result) and emitted as trace events — and loops additionally take
+{unlabeled Break, unlabeled Continue}. Labeled `break`/`continue` propagate
+until the construct that owns the label; symgo's quirk of absorbing labeled
+`break` inside a `switch` regardless of target is dropped (correctness win).
+`fallthrough` never materializes — the parent emits the next case's body
+inline in the chain.
 
 Other trace-mode deltas to `compile.Func` emission, all small and enumerable:
 
@@ -504,10 +525,13 @@ their methods.
 8. **Coverage-floor grind**: every node `compile.Func` traps on is a candidate
    "emit `Symbolic` push instead" conversion in trace mode. Expect a tail —
    the symgo test suite is the checklist.
-9. **Preserve-vs-normalize**: the §9.1 quirks (if-drops-return vs
-   switch-propagates-return, error swallow vs propagate) may themselves be
-   symgo bugs — decide deliberately: preserve in v1 for test parity, normalize
-   behind a flag later.
+9. **Preserve-vs-normalize**: resolved — the §9.1 asymmetries are symgo bugs,
+   not spec. The principled rule (a signal ends only its arm's path;
+   continuation liveness is decided by the mainline structure) gives uniform
+   absorb semantics for `Return`/`Error` everywhere, which also repairs the
+   switch coverage hole. Existing tests count tracer events, not abort
+   behavior — low regression risk; note it in the symgo2 changelog for
+   reviewers comparing behavior.
 10. **`Files()`/file-scope identity**: symgo's `FileScope` tracks per-file
     imports; minigo2's `p.Scopes[file]` is the same thing — direct map.
 

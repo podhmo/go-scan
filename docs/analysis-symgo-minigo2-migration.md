@@ -329,3 +329,195 @@ sessions; Phase 2 ~1–2 sessions; Phase 3 ~0.5–1 session + consumer validatio
 Total **~4–6 sessions**, dominated by the type-model port and test-suite
 conformance. Option B roughly doubles Phase 1–2. Option C alone is ~1–2
 sessions but leaves two engines to maintain.
+
+## 9. Option A deep dive — concrete challenges and design decisions
+
+### 9.1 The real spec: symgo's per-construct control-signal matrix
+
+symgo's evaluators do **not** share one "evaluate the arm" rule — each
+construct treats control signals differently, and the differences are
+asymmetric. Reading `evaluator_eval_{if,for,range,switch,type_switch,select}_stmt.go`:
+
+| Construct | Tag/cond evaluated? | Arms | `return` in arm | `Error` in arm | unlabeled `break`/`continue` |
+|---|---|---|---|---|---|
+| `if` | yes, result discarded | then + else, sequential | **dropped** (never propagates) | propagates (aborts fn) | propagate outward |
+| `for` | init + cond (errors abort) | body once | dropped | propagates | absorbed (labeled → propagate) |
+| `range` | `X` only | body once, fresh symbolic k/v | dropped | propagates | absorbed (labeled → propagate) |
+| `switch` | tag + **each case's list exprs, re-evaluated per fallthrough chain** | per-case-start paths | **propagates** (aborts the whole switch *and* the function) | propagates | `break` ends this chain only (next case still runs); `continue` propagates |
+| `type-switch` | guard | every case | dropped | **swallowed** (warn + continue) | n/a |
+| `select` | every comm expr | every clause | dropped | **swallowed** | n/a |
+
+Plus: `defer f()`/`go f()` evaluate the call immediately (no deferral);
+`ch <- v` evaluates both operands but performs no send; `a && b`/`a || b`
+evaluate **both** operands always (no short-circuit — `evalBinaryExpr` evals
+`Y` unconditionally).
+
+This table is the actual contract `compile.Trace` must implement. Notably it
+contains real quirks — `return` inside `if` is dropped but inside `switch`
+aborts exploration — that v1 symgo2 should **preserve verbatim** (the test
+suite likely depends on them); normalize later only if consumers ask.
+
+### 9.2 Emission spec for `compile.Trace`
+
+Two sub-decisions:
+
+**(a) Arm representation — recommend arm chunks.** Emit each arm body as a
+synthetic zero-arg `runtime.Function` proto invoked via `OpCall`:
+
+- env semantics map 1:1 onto the existing closure machinery — vars declared
+  before the branch and written inside the arm become **upval cells** (shared,
+  so `=` merges exactly like symgo's `Set` walk-up), `:=` inside the arm is a
+  local slot (isolated). No new scope machinery needed.
+- per-arm **panic/trap containment** comes free: the arm runs inside a
+  `v.call`, and symbolic-mode `v.call` recovers `Panic`/`Trap` into a signal
+  value — which is precisely what `type-switch`/`select`'s swallow-errors
+  semantics need.
+- `return` inside an arm can't use `OpReturn` (it would end the enclosing
+  function), so arms return **signal values** instead.
+
+Flat-inline emission (arm code spliced into the parent chunk, merge = shared
+slots) is cheaper per arm but gives no arm-level error containment — wrong for
+swallow-semantics constructs and asymmetric anyway. Uniform arm-chunks win.
+
+**(b) Signal encoding — mirror symgo's signal objects as runtime values.**
+`runtime.Signal{Kind, Value, Label}` with kinds Return/Error/Break/Continue/
+Fallthrough. Two new opcodes suffice for the whole matrix:
+
+- `OpSignal` — pop TOS, return `Signal{kind, v, label}` from the current frame
+  (used by trace-mode `return`/`break`/`continue`/`fallthrough` inside arms).
+- `OpArmDispatch{consumeSet}` — after each arm's `OpCall`: result not a signal
+  → pop; signal in `consumeSet` → pop (absorbed at this boundary — labeled
+  Break/Continue only match when their label names this construct); signal not
+  consumed → propagate by returning it from the enclosing frame. Signals thus
+  bubble up through nested arm frames exactly like symgo's signal objects
+  bubble through nested `Eval` calls — the dispatch chain *is* symgo's
+  per-construct `switch result.(type)`.
+
+One boundary rule completes it: when an `OpArmDispatch` propagates a
+`Return`/`Error` signal out of the *outermost* arm of the function, it unwraps
+to a real `OpReturn` value (or, for Error, the call's error result) instead of
+leaking the Signal to the caller.
+
+The per-construct `consumeSet`s encode §9.1 directly — *including* symgo's
+label-handling quirks: `if` = {Return} (everything else propagates), `switch`
+= {Break} (symgo absorbs `break` in a case arm regardless of label — a `break
+L` to an outer loop inside a case is wrongly swallowed today; preserve or fix,
+deliberately), `type-switch`/`select` = {all kinds} (swallow), `for`/`range` =
+{unlabeled Break, unlabeled Continue} (labeled ones propagate). `fallthrough`
+never materializes — the parent emits the next case's body inline in the
+chain.
+
+Other trace-mode deltas to `compile.Func` emission, all small and enumerable:
+
+- `if`/`for`/`switch` conditions: eval + `OpPop` (trace calls, discard result)
+- `for`: no back-edge, no `Post` (symgo skips `Post`)
+- `range`: `X` eval + `OpPop`; k/v bound as `Symbolic` (typed by elem-of-`X`
+  when `X`'s typedef is known — `ElemOf` hook)
+- `switch`: emit per-case-start chains — for i in 0..n-1: `[eval caseList[j] +
+  OpPop]` then `[body[j]]` for j = i.. while case j ends in `fallthrough`.
+  O(n²) emission, faithful to symgo's repeated case-expr evaluation
+- `type-switch`: guard eval; per case bind `Symbolic{Typ: caseTd}` (resolved
+  via the case expr's typeExpr → `TypeDef`); `StructKind` case → fresh empty
+  `*runtime.Struct` (matching symgo's `object.Instance`), `default` → copy of
+  the guard value (`valueCopy` already exists), unresolved/`UnknownKind` →
+  interface-ish `Symbolic` (symgo forces `UnknownKind`→`InterfaceKind`)
+- `defer`/`go` → plain `OpCall` + `OpPop` (evaluate now, discard)
+- `ch <- v`, `select` comms → operand evals + pops, no channel op
+- `&&`/`||` → `expr(X); expr(Y); OpBinary{LAnd|LOr}` (no short-circuit)
+- `v, ok :=` comma-ok / type-assert on a `Symbolic` → `Tuple{Symbolic{caseTd},
+  true}`; on concrete → normal op
+- `x := f()` where `f` is out-of-policy → symbolic callee result; `Typ` on the
+  cell from the declared type (the `Cell.Typ` declared-tag machinery already
+  exists)
+
+The compiler delta is therefore: a `trace bool` flag (or `Trace` entrypoint
+reusing `compiler`) flipping ~12 statement/expression forms, arm-chunk
+synthesis (reuse `funcLit` capture analysis), and two new ops. No VM
+control-flow changes beyond `v.call` behavior.
+
+### 9.3 Call-boundary pipeline (expanded N4)
+
+In symbolic mode, `v.call` runs this ordered pipeline — a direct transliteration
+of `evalCallExpr` + `applyFunction`:
+
+1. **lit-scan**: for each `*Closure`/`*Function` arg carrying `Lit`/`Decl`,
+   invoke it once with signature-typed `Symbolic` params (scanFunctionLiteral).
+   Runs *before* the witness so nested usage is marked first, as today.
+2. **`Hooks.CallWitness(fn, args)`** — the `defaultIntrinsic` replacement; also
+   the funnel for memoization.
+3. **Intrinsic dispatch**: registry lookup — `"pkg.Path.Fn"` (≈ `SymbolID`) and
+   `"pkg.T.M"`/`"(*pkg.T).M"` receiver forms; hit → run handler, return its
+   result. Handlers get a `VMCaller`-like context supporting reentrant `Apply`
+   (docgen's `pattern.Apply` needs it).
+4. **Policy dispatch**: callee's package out-of-policy → synthesize
+   `Symbolic`s from `Decl.Type.Results` (Tuple when >1), return without a frame.
+5. **Recursion bound**: frame scan for `Decl.Pos` collision + receiver-cell
+   identity (method recursion allowed on different receivers); HOF recursion
+   via closure identity (BoundCallStack analog). Hit → signature-typed
+   `Symbolic` result.
+6. Normal `prepFrame` + `loop`.
+7. **Recover**: `Panic`/`Trap` → `Signal{Error}` result (arm-call containment).
+
+Interface method on a symbolic receiver: `selectMember` yields a
+symbolic-method value carrying `{ifaceTd, name, PossibleTypes}`; `v.call` on it
+records `calledInterfaceMethods[iface.name]` and, for each concrete `T` in
+`PossibleTypes`, marks `T.m` used through the witness (symgo's per-member
+concrete call marking), then returns a signature-typed `Symbolic`.
+`Finalize()` = engine pass: for each recorded interface call, enumerate
+implementers across in-policy packages via `TypeMethods`+`IfaceReqs` and mark
+their methods.
+
+### 9.4 Facade mapping (`Eval`/`Apply`)
+
+- `Eval(fileAst, pkg)` ≈ `LoadFile` + a new `MaterializeFile(file)` driver:
+  force every decl of the file in order under trace mode — symgo's
+  `evalGenDecl` evaluates var initializers **eagerly** at `Eval` time (the
+  laziness is only for *imported* packages), so a global never touched by
+  traced code still gets traced today. Lazy `Globals.Get` alone would miss
+  those traces — the driver must force-eval, not wait for access.
+- `Apply(fn, args, pkg)` → `v.call(fn, symbolicArgs)`; args built from
+  `fn.Decl.Type.Params` → `typeExpr`→`TypeDef`→`Symbolic{Typ}` (the standalone
+  `podhmo/minigo` `Sig`/`TypeExpr` inspect accessors are exactly this).
+- `FindObjectInPackage` → index lookup + materialize. `CallStack` → VM frame
+  introspection. `Files()`/`EvaluatorForTest` → thin shims.
+
+### 9.5 Hard cases and open questions
+
+1. **Init/var cycles** (`var a = f(); f() reads a`): symgo's
+   `evaluationInProgress` guard → placeholder; minigo2's lazy `Globals` need
+   the same guard → `Symbolic`, not a trap.
+2. **`iota`/const specs**: symgo evaluates each spec with `iota` bound in env;
+   verify minigo2's const materialization matches.
+3. **Generics**: `inferBinds` on `Symbolic` args will fail — degrade to a
+   signature-typed `Symbolic` result rather than trapping.
+4. **Tracer granularity**: symgo emits per-AST-node events; the VM offers
+   per-instruction `Pos` + the call witness. Consumers use calls/stacks —
+   accept coarser visit granularity, validate against docgen's `WithTracer`.
+5. **Repeated case-expr evaluation**: faithful O(n²) emission reproduces
+   symgo's duplicate side effects — sets dedupe fine, but stateful intrinsics
+   (counters) see repeats; document.
+6. **`goto`/labels across arms**: `pendingGotos` resolve against emitted code;
+   a goto into a "dead" arm becomes a jump into arm-chunk — out of scope;
+   trap it (symgo has `evalLabeledStmt`, keep as coverage-floor item).
+7. **`recover()`**: symgo treats it as an unknown call → placeholder; on the
+   VM it's a builtin — under symbolic mode return `Symbolic`/false-equivalent.
+8. **Coverage-floor grind**: every node `compile.Func` traps on is a candidate
+   "emit `Symbolic` push instead" conversion in trace mode. Expect a tail —
+   the symgo test suite is the checklist.
+9. **Preserve-vs-normalize**: the §9.1 quirks (if-drops-return vs
+   switch-propagates-return, error swallow vs propagate) may themselves be
+   symgo bugs — decide deliberately: preserve in v1 for test parity, normalize
+   behind a flag later.
+10. **`Files()`/file-scope identity**: symgo's `FileScope` tracks per-file
+    imports; minigo2's `p.Scopes[file]` is the same thing — direct map.
+
+### 9.6 Spike order (what to build first to de-risk)
+
+1. `runtime.Symbolic` + flag-gated tolerance in the value ops + `OpSignal` /
+   `OpArmDispatch` + arm-chunks for **`if` only** — drive one fixture
+   end-to-end. If the env-merge and containment semantics hold here, the rest
+   is repetition.
+2. The `v.call` pipeline (witness + intrinsic keys + policy stub + recursion
+   bound) — this is where all consumer hooks converge.
+3. `MaterializeFile` + `Apply` facade; point `tools/goinspect` at it.
+4. Then the per-construct grind + conformance port, in the §6 order.
